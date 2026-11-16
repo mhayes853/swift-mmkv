@@ -69,6 +69,9 @@ jobs:
       - name: Test without traits
         run: swift test --disable-default-traits
 
+      - name: Test with swift-sharing
+        run: swift test --traits Sharing,Foundation
+
       - name: Check core symbols are renamed
         run: Scripts/check-symbols.sh
 

@@ -180,6 +180,50 @@ The library itself does not use Foundation. The `Foundation` trait, on by defaul
 
 Turn it off with `traits: []` on the package dependency.
 
+## The `Sharing` trait
+
+The `Sharing` trait, off by default, adds `MMKVStorageKey`, a
+[swift-sharing](https://github.com/pointfreeco/swift-sharing) key that keeps `@Shared` state in
+a store:
+
+```swift
+.package(
+  url: "https://github.com/mhayes853/swift-mmkv",
+  branch: "main",
+  traits: ["Foundation", "Sharing"]
+)
+```
+
+```swift
+@Shared(.mmkv("volume")) var volume = 1.0
+@Shared(.mmkv("username")) var username: String?
+@Shared(.mmkv("settings", encoder: JSONEncoder(), decoder: JSONDecoder()))
+var settings = Settings()
+```
+
+A property with a default uses it while the store has no value for the key. An optional
+property is `nil` then, and setting it to `nil` removes the key. `Codable` values need both
+coders, and a coder's error or a rejected write shows up in `loadError` or `saveError`.
+
+The keys use the store in the `defaultMMKVStore` dependency unless one is passed as `store:`.
+Set it once when the app launches:
+
+```swift
+prepareDependencies {
+  $0.defaultMMKVStore = try! MMKVStore(
+    MMKVConfiguration(rootDirectory: directory, mode: .multiProcess)
+  )
+}
+```
+
+Tests and previews get an empty store in a temporary directory.
+
+Shared state follows writes made through this package as they happen. A write from JavaScript
+is only seen when the store is next read or written, or when the app calls
+`checkForExternalChanges()`.
+
+swift-sharing and its dependencies use Foundation, whether or not the `Foundation` trait is on.
+
 ## Platforms
 
 | Platform | Status |

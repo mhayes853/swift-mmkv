@@ -68,11 +68,18 @@ let libraryTarget: Target = .target(
   name: "SwiftMMKV",
   dependencies: [
     "CSwiftMMKVCore",
-    .target(name: "_SwiftMMKVFoundation", condition: .when(traits: ["Foundation"]))
+    .target(name: "_SwiftMMKVFoundation", condition: .when(traits: ["Foundation"])),
+    .product(name: "Sharing", package: "swift-sharing", condition: .when(traits: ["Sharing"])),
+    .product(
+      name: "Dependencies",
+      package: "swift-dependencies",
+      condition: .when(traits: ["Sharing"])
+    )
   ],
   swiftSettings: [
     .enableExperimentalFeature("Lifetimes"),
-    .define("Foundation", .when(traits: ["Foundation"]))
+    .define("Foundation", .when(traits: ["Foundation"])),
+    .define("Sharing", .when(traits: ["Sharing"]))
   ]
 )
 
@@ -84,11 +91,18 @@ let testTarget: Target = .testTarget(
   name: "SwiftMMKVTests",
   dependencies: [
     "SwiftMMKV",
-    .target(name: "_SwiftMMKVFoundation", condition: .when(traits: ["Foundation"]))
+    .target(name: "_SwiftMMKVFoundation", condition: .when(traits: ["Foundation"])),
+    .product(name: "Sharing", package: "swift-sharing", condition: .when(traits: ["Sharing"])),
+    .product(
+      name: "Dependencies",
+      package: "swift-dependencies",
+      condition: .when(traits: ["Sharing"])
+    )
   ],
   swiftSettings: [
     .enableExperimentalFeature("Lifetimes"),
-    .define("Foundation", .when(traits: ["Foundation"]))
+    .define("Foundation", .when(traits: ["Foundation"])),
+    .define("Sharing", .when(traits: ["Sharing"]))
   ]
 )
 
@@ -111,7 +125,17 @@ let package = Package(
       description:
         "Adds `Data`, `URL`, and the JSON and property list coders, using FoundationEssentials "
         + "where the toolchain provides it."
+    ),
+    .trait(
+      name: "Sharing",
+      description:
+        "Adds `MMKVStorageKey`, a swift-sharing key that keeps `@Shared` state in a store. "
+        + "swift-sharing uses Foundation."
     )
+  ],
+  dependencies: [
+    .package(url: "https://github.com/pointfreeco/swift-sharing", from: "2.0.0"),
+    .package(url: "https://github.com/pointfreeco/swift-dependencies", from: "1.5.1")
   ],
   targets: [coreTarget, foundationTarget, libraryTarget, testTarget],
   swiftLanguageModes: [.v6],

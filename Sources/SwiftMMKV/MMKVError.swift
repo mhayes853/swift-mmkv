@@ -13,4 +13,8 @@ public enum MMKVError: Error, Sendable, Hashable {
   /// The app group named by the `AppGroupIdentifier` key of the app's `Info.plist` has no
   /// container this process can reach.
   case appGroupContainerUnavailable(identifier: String)
+
+  /// The store did not accept a write to `key`. A write fails when the key is empty, the store
+  /// is read-only, or the pair exceeds the store's item size limit.
+  case writeFailed(key: String)
 }
