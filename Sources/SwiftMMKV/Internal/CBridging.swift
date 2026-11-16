@@ -78,11 +78,11 @@ func withCallbackBytes<R, E: Error>(
   return try result?.get()
 }
 
-extension Duration {
+extension Duration? {
   /// The whole number of seconds MMKV should keep a key for, rounding up so that a key never
   /// expires early. MMKV reserves zero for "never", so the shortest expiry is one second.
   var mmkvExpirySeconds: UInt32 {
-    let components = self.components
+    guard let components = self?.components else { return 0 }
     let seconds = components.attoseconds > 0 ? components.seconds + 1 : components.seconds
     return UInt32(clamping: Swift.max(seconds, 1))
   }

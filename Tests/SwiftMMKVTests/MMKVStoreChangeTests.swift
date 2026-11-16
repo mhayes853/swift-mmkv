@@ -231,6 +231,24 @@ import Testing
     subscription.cancel()
   }
 
+  @Test func `External Changes Are Reported After An Exclusive Lock Is Released`() throws {
+    let (first, second) = try self.makeStores(mode: .multiProcess)
+    first.set("initial", forKey: "a")
+    _ = second.value(forKey: "a", as: String.self)
+    let recorder = ChangeRecorder()
+    let subscription = second.subscribe(recorder.record)
+
+    first.set("changed", forKey: "a")
+    second.withExclusiveLock { second in
+      #expect(second.value(forKey: "a", as: String.self) == "changed")
+      second.withExclusiveLock { _ in }
+      #expect(recorder.all.isEmpty)
+    }
+
+    #expect(recorder.all == [.external])
+    subscription.cancel()
+  }
+
   @Test func `Single Process Stores Do Not See Each Other's Writes`() throws {
     let (first, second) = try self.makeStores(mode: .singleProcess)
     _ = second.count

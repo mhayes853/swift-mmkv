@@ -161,7 +161,7 @@ extension UInt8: _MMKVArrayElement {
   public static func _writeArray(_ array: [UInt8], to writer: inout MMKVValueWriter) -> Bool {
     // `Array.span` needs a newer OS than this package supports, so the bytes are borrowed the
     // older way.
-    array.withUnsafeBytes { writer.set(buffer: $0) }
+    array.withUnsafeBytes { writer.set(bytes: $0.bytes) }
   }
 }
 

@@ -49,14 +49,9 @@
       _ type: T.Type = T.self,
       numbers: NumberDecodingStrategy = .exact
     ) throws -> T {
-      defer { self.operationDidFinish() }
-      return try self.locked {
-        try T(from: MMKVStoreDecoder(store: self, numbers: numbers))
+      try self.withExclusiveLock { store in
+        try T(from: MMKVStoreDecoder(store: store, numbers: numbers))
       }
-    }
-
-    fileprivate func unnotifiedValue<V: MMKVValue>(forKey key: String, as type: V.Type) -> V? {
-      V(from: MMKVValueReader(store: self, key: key))
     }
   }
 
@@ -98,11 +93,11 @@
     var codingPath: [any CodingKey] { [] }
 
     var allKeys: [Key] {
-      self.store.unnotifiedKeys.compactMap { Key(stringValue: $0) }
+      self.store.keys.compactMap { Key(stringValue: $0) }
     }
 
     func contains(_ key: Key) -> Bool {
-      self.store.unnotifiedContains(key.stringValue)
+      self.store.contains(key.stringValue)
     }
 
     func decodeNil(forKey key: Key) throws -> Bool {
@@ -112,7 +107,7 @@
     // MARK: Reading
 
     private func read<V: MMKVValue>(_ type: V.Type, forKey key: Key) throws -> V {
-      if let value = self.store.unnotifiedValue(forKey: key.stringValue, as: type) {
+      if let value = self.store.value(forKey: key.stringValue, as: type) {
         return value
       }
       guard self.contains(key) else {
@@ -271,7 +266,10 @@
     let data: Data
 
     init?(from reader: borrowing MMKVValueReader) {
-      guard let data = reader.withStringBytes({ Data($0) }) else { return nil }
+      let data = reader.withBytes { span in
+        span.withUnsafeBytes { Data($0) }
+      }
+      guard let data else { return nil }
       self.data = data
     }
 

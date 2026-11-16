@@ -11,6 +11,7 @@ final class MMKVStoreState: Sendable {
     var nextIdentifier: UInt64 = 0
     var listeners = [UInt64: Listener]()
     var hasPendingExternalChange = false
+    var deferralDepth = 0
   }
 
   let id: String
@@ -48,10 +49,22 @@ final class MMKVStoreState: Sendable {
     self.registrations.withLock { $0.hasPendingExternalChange = true }
   }
 
-  /// Tells listeners about an external change the core noticed during an earlier operation.
+  /// Holds external changes back until a matching ``endDeferringExternalChanges()``.
+  func beginDeferringExternalChanges() {
+    self.registrations.withLock { $0.deferralDepth += 1 }
+  }
+
+  func endDeferringExternalChanges() {
+    self.registrations.withLock { $0.deferralDepth -= 1 }
+  }
+
+  /// Tells listeners about an external change the core noticed during an earlier operation,
+  /// unless changes are being deferred.
   func deliverPendingExternalChange() {
     let listeners: [Listener]? = self.registrations.withLock { registrations in
-      guard registrations.hasPendingExternalChange else { return nil }
+      guard registrations.hasPendingExternalChange, registrations.deferralDepth == 0 else {
+        return nil
+      }
       registrations.hasPendingExternalChange = false
       return Array(registrations.listeners.values)
     }

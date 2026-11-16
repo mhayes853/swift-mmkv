@@ -11,7 +11,7 @@
     }
 
     public func write(to writer: inout MMKVValueWriter) -> Bool {
-      self.withUnsafeBytes { writer.set(buffer: $0) }
+      self.withUnsafeBytes { writer.set(bytes: $0.bytes) }
     }
   }
 
@@ -101,8 +101,9 @@
       expiringIn: Duration? = nil
     ) -> Bool {
       guard let data = try? encoder.encode(value) else { return false }
+      // MMKV stores a string as its UTF-8 bytes, so this is read back as a string.
       return data.withUnsafeBytes { buffer in
-        self.write(forKey: key, expiringIn: expiringIn) { $0.set(utf8: buffer) }
+        self.set(bytes: buffer.bytes, forKey: key, expiringIn: expiringIn)
       }
     }
 
@@ -114,18 +115,16 @@
       asJSON type: V.Type = V.self,
       decoder: JSONDecoder = JSONDecoder()
     ) -> V? {
-      guard let data = self.jsonData(forKey: key) else { return nil }
+      let data = self.withBytes(forKey: key) { span in
+        span.withUnsafeBytes { Data($0) }
+      }
+      guard let data else { return nil }
       return try? decoder.decode(type, from: data)
     }
 
     /// The store's identifier and keys as JSON. See ``toJSON()``.
     public func toJSONData() -> Data {
       Data(self.toJSON())
-    }
-
-    func jsonData(forKey key: String) -> Data? {
-      defer { self.operationDidFinish() }
-      return MMKVValueReader(store: self, key: key).withStringBytes { Data($0) }
     }
   }
 #endif

@@ -117,19 +117,6 @@ extension MMKVConfiguration {
     public static func aes256(key: String) -> Self {
       .aes256(key: Array(key.utf8))
     }
-
-    var key: [UInt8] {
-      switch self {
-      case .aes128(let key), .aes256(let key): key
-      }
-    }
-
-    var isValid: Bool {
-      switch self {
-      case .aes128(let key): (1...16).contains(key.count)
-      case .aes256(let key): (1...32).contains(key.count)
-      }
-    }
   }
 
   /// What to do when a store's file fails its integrity check, which can happen after the

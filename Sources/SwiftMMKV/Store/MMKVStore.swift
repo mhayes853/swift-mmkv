@@ -1,5 +1,3 @@
-import CSwiftMMKVCore
-
 /// A key-value store backed by MMKV's memory-mapped files.
 ///
 /// A store is safe to use from any thread. Values are read and written by naming a type that
@@ -28,8 +26,7 @@ import CSwiftMMKVCore
 /// JavaScript, and write the types JavaScript reads: `Double` for numbers, `Bool`, `String`, and
 /// raw bytes for an `ArrayBuffer`.
 public final class MMKVStore: Sendable {
-  nonisolated(unsafe) let handle: OpaquePointer
-  let state: MMKVStoreState
+  private let core: MMKVCore
   private let currentConfiguration: Lock<MMKVConfiguration>
 
   /// Opens the store described by `configuration`, creating its files if they do not exist.
@@ -37,21 +34,13 @@ public final class MMKVStore: Sendable {
   /// - Throws: ``MMKVError/invalidEncryptionKey`` if the encryption key is empty or too long,
   ///   or ``MMKVError/openFailed(id:rootDirectory:)`` if the store cannot be opened.
   public init(_ configuration: MMKVConfiguration) throws(MMKVError) {
-    if let encryption = configuration.encryption, !encryption.isValid {
-      throw .invalidEncryptionKey
-    }
-    let handle = configuration.withCConfiguration { mmkv_open(&$0) }
-    guard let handle else {
-      throw .openFailed(id: configuration.id, rootDirectory: configuration.rootDirectory)
-    }
-    self.handle = handle
-    self.state = MMKVStoreState.shared(for: handle, id: configuration.id)
+    self.core = try MMKVCore(configuration)
     self.currentConfiguration = Lock(configuration)
   }
 
   /// The store's identifier.
   public var id: String {
-    self.state.id
+    self.core.state.id
   }
 
   /// The configuration this store was opened with, updated by ``rekey(_:)``.
@@ -60,12 +49,6 @@ public final class MMKVStore: Sendable {
   /// first open, which this value does not reflect.
   public var configuration: MMKVConfiguration {
     self.currentConfiguration.withLock { $0 }
-  }
-
-  /// Runs once an operation has returned, to tell listeners about anything the core noticed
-  /// while it held its locks.
-  func operationDidFinish() {
-    self.state.deliverPendingExternalChange()
   }
 }
 
@@ -94,7 +77,9 @@ extension MMKVStore {
     forKey key: String,
     expiringIn: Duration? = nil
   ) -> Bool {
-    self.write(forKey: key, expiringIn: expiringIn) { value.write(to: &$0) }
+    self.write(forKey: key) {
+      self.core.set(value, forKey: key, expiresInSeconds: expiringIn.mmkvExpirySeconds)
+    }
   }
 
   /// Reads the value stored under `key` as a `V`.
@@ -104,8 +89,8 @@ extension MMKVStore {
   ///
   /// - Returns: The value, or `nil` if the key has no value or its value is not a valid `V`.
   public func value<V: MMKVValue>(forKey key: String, as type: V.Type = V.self) -> V? {
-    defer { self.operationDidFinish() }
-    return V(from: MMKVValueReader(store: self, key: key))
+    defer { self.core.operationDidFinish() }
+    return self.core.value(forKey: key, as: type)
   }
 
   /// Reads or writes the value stored under `key` as a `V`. Assigning `nil` removes the key.
@@ -132,8 +117,8 @@ extension MMKVStore {
   /// - Returns: Whether the bytes were stored.
   @discardableResult
   public func set(bytes: RawSpan, forKey key: String, expiringIn: Duration? = nil) -> Bool {
-    bytes.withUnsafeBytes { buffer in
-      self.write(forKey: key, expiringIn: expiringIn) { $0.set(buffer: buffer) }
+    self.write(forKey: key) {
+      self.core.set(bytes: bytes, forKey: key, expiresInSeconds: expiringIn.mmkvExpirySeconds)
     }
   }
 
@@ -148,24 +133,15 @@ extension MMKVStore {
     forKey key: String,
     _ body: (RawSpan) throws(E) -> R
   ) throws(E) -> R? {
-    defer { self.operationDidFinish() }
-    return try MMKVValueReader(store: self, key: key).withBytes(body)
+    defer { self.core.operationDidFinish() }
+    return try self.core.withBytes(forKey: key, body)
   }
 
-  func write(
-    forKey key: String,
-    expiringIn: Duration?,
-    _ body: (inout MMKVValueWriter) -> Bool
-  ) -> Bool {
-    var writer = MMKVValueWriter(
-      store: self,
-      key: key,
-      expiresInSeconds: expiringIn?.mmkvExpirySeconds ?? 0
-    )
-    let didWrite = body(&writer)
-    self.operationDidFinish()
+  private func write(forKey key: String, _ body: () -> Bool) -> Bool {
+    let didWrite = body()
+    self.core.operationDidFinish()
     if didWrite {
-      self.state.notify(.key(key))
+      self.core.state.notify(.key(key))
     }
     return didWrite
   }
@@ -176,35 +152,20 @@ extension MMKVStore {
 extension MMKVStore {
   /// Every key in the store. MMKV keeps keys in no particular order.
   public var keys: Set<String> {
-    defer { self.operationDidFinish() }
-    return self.unnotifiedKeys
+    defer { self.core.operationDidFinish() }
+    return self.core.keys
   }
 
   /// The number of keys in the store.
   public var count: Int {
-    defer { self.operationDidFinish() }
-    return mmkv_count(self.handle)
+    defer { self.core.operationDidFinish() }
+    return self.core.count
   }
 
   /// Whether `key` has a value.
   public func contains(_ key: String) -> Bool {
-    defer { self.operationDidFinish() }
-    return self.unnotifiedContains(key)
-  }
-
-  func unnotifiedContains(_ key: String) -> Bool {
-    key.withMMKVBytes { mmkv_contains(self.handle, $0) }
-  }
-
-  var unnotifiedKeys: Set<String> {
-    var keys = Set<String>()
-    _ = forEachCallbackBytes { context, callback in
-      mmkv_keys(self.handle, context, callback)
-      return true
-    } _: { buffer in
-      keys.insert(String(decoding: buffer, as: UTF8.self))
-    }
-    return keys
+    defer { self.core.operationDidFinish() }
+    return self.core.contains(key)
   }
 }
 
@@ -217,22 +178,21 @@ extension MMKVStore {
   ///   that had no value.
   @discardableResult
   public func removeValue(forKey key: String) -> Bool {
-    let (didRemove, didExist) = self.locked {
-      let didExist = self.unnotifiedContains(key)
-      return (key.withMMKVBytes { mmkv_remove(self.handle, $0) }, didExist)
+    let (didRemove, didExist) = self.core.locked {
+      let didExist = self.core.contains(key)
+      return (self.core.remove(key), didExist)
     }
-    self.operationDidFinish()
     if didRemove && didExist {
-      self.state.notify(.key(key))
+      self.core.state.notify(.key(key))
     }
     return didRemove
   }
 
   /// Removes every key in `keys` and its value.
   public func removeValues(forKeys keys: some Sequence<String>) {
-    let removed = self.locked {
-      let existing = keys.filter { self.unnotifiedContains($0) }
-      self.remove(existing)
+    let removed = self.core.locked {
+      let existing = keys.filter { self.core.contains($0) }
+      self.core.remove(existing)
       return existing
     }
     self.didRemove(removed)
@@ -243,10 +203,10 @@ extension MMKVStore {
   /// - Parameter keepingCapacity: Whether to keep the file at its current size, which is faster
   ///   and saves growing it again. By default the file shrinks back to its initial size.
   public func removeAll(keepingCapacity: Bool = false) {
-    let removed = self.locked {
+    let removed = self.core.locked {
       // The keys are only needed to tell listeners what changed.
-      let keys = self.state.hasListeners ? Array(self.unnotifiedKeys) : []
-      mmkv_remove_all(self.handle, keepingCapacity)
+      let keys = self.core.state.hasListeners ? Array(self.core.keys) : []
+      self.core.removeAll(keepingCapacity: keepingCapacity)
       return keys
     }
     self.didRemove(removed)
@@ -269,31 +229,23 @@ extension MMKVStore {
     keepingCapacity: Bool = false,
     where shouldRemove: (String) throws(E) -> Bool
   ) throws(E) {
-    let removed = try self.locked { () throws(E) -> [String] in
+    let removed = try self.core.locked { () throws(E) -> [String] in
       var matches = [String]()
-      for key in self.unnotifiedKeys where try shouldRemove(key) {
+      for key in self.core.keys where try shouldRemove(key) {
         matches.append(key)
       }
-      self.remove(matches)
+      self.core.remove(matches)
       if !keepingCapacity && !matches.isEmpty {
-        mmkv_trim(self.handle)
+        self.core.trim()
       }
       return matches
     }
     self.didRemove(removed)
   }
 
-  private func remove(_ keys: [String]) {
-    guard !keys.isEmpty else { return }
-    keys.withMMKVBytes { keys in
-      _ = mmkv_remove_many(self.handle, keys.baseAddress, keys.count)
-    }
-  }
-
   private func didRemove(_ keys: [String]) {
-    self.operationDidFinish()
     for key in keys {
-      self.state.notify(.key(key))
+      self.core.state.notify(.key(key))
     }
   }
 }
@@ -319,13 +271,7 @@ extension MMKVStore {
   public func withExclusiveLock<R, E: Error>(
     _ body: (MMKVStore) throws(E) -> R
   ) throws(E) -> R {
-    try self.locked { () throws(E) -> R in try body(self) }
-  }
-
-  func locked<R, E: Error>(_ body: () throws(E) -> R) throws(E) -> R {
-    mmkv_lock(self.handle)
-    defer { mmkv_unlock(self.handle) }
-    return try body()
+    try self.core.locked { () throws(E) -> R in try body(self) }
   }
 }
 
@@ -364,7 +310,7 @@ extension MMKVStore {
   public func subscribe(
     _ onChange: @escaping @Sendable (Change) -> Void
   ) -> MMKVSubscription {
-    self.state.subscribe(onChange)
+    self.core.state.subscribe(onChange)
   }
 
   /// Checks whether another process, or another copy of MMKV, changed the store, reloading it
@@ -373,8 +319,8 @@ extension MMKVStore {
   /// Reads and writes make the same check, so this is only needed to notice a change while the
   /// store is otherwise idle. It does nothing for a single-process store.
   public func checkForExternalChanges() {
-    mmkv_check_content_changed(self.handle)
-    self.operationDidFinish()
+    self.core.checkContentChanged()
+    self.core.operationDidFinish()
   }
 }
 
@@ -383,8 +329,8 @@ extension MMKVStore {
 extension MMKVStore {
   /// Rewrites the store's file without the space left behind by removed and overwritten values.
   public func trim() {
-    mmkv_trim(self.handle)
-    self.operationDidFinish()
+    self.core.trim()
+    self.core.operationDidFinish()
   }
 
   /// Blocks until the store's contents are flushed to disk.
@@ -392,8 +338,8 @@ extension MMKVStore {
   /// The operating system flushes a memory-mapped file by itself, even if the process crashes,
   /// so this only matters when the device may lose power.
   public func sync() {
-    mmkv_sync(self.handle)
-    self.operationDidFinish()
+    self.core.sync()
+    self.core.operationDidFinish()
   }
 
   /// Re-encrypts the store with `encryption`, or decrypts it when `encryption` is `nil`.
@@ -401,56 +347,8 @@ extension MMKVStore {
   /// - Throws: ``MMKVError/invalidEncryptionKey`` if the key is empty or too long, or
   ///   ``MMKVError/rekeyFailed`` if the store could not be rewritten.
   public func rekey(_ encryption: MMKVConfiguration.Encryption?) throws(MMKVError) {
-    if let encryption, !encryption.isValid {
-      throw .invalidEncryptionKey
-    }
-    let key = encryption?.key ?? []
-    let didRekey = key.withUnsafeBytes { key in
-      mmkv_rekey(
-        self.handle,
-        encryption.cValue,
-        mmkv_bytes(bytes: key.baseAddress, count: key.count)
-      )
-    }
-    self.operationDidFinish()
-    guard didRekey else { throw .rekeyFailed }
+    defer { self.core.operationDidFinish() }
+    try self.core.rekey(encryption)
     self.currentConfiguration.withLock { $0.encryption = encryption }
-  }
-}
-
-// MARK: - C configuration
-
-extension MMKVConfiguration.Encryption? {
-  fileprivate var cValue: Int32 {
-    switch self {
-    case nil: Int32(MMKV_ENCRYPTION_NONE)
-    case .aes128: Int32(MMKV_ENCRYPTION_AES128)
-    case .aes256: Int32(MMKV_ENCRYPTION_AES256)
-    }
-  }
-}
-
-extension MMKVConfiguration {
-  fileprivate func withCConfiguration<R>(_ body: (inout mmkv_configuration) -> R) -> R {
-    self.id.withMMKVBytes { id in
-      self.rootDirectory.withMMKVBytes { rootDirectory in
-        (self.encryption?.key ?? [])
-          .withUnsafeBytes { key in
-            var configuration = mmkv_configuration(
-              id: id,
-              root_directory: rootDirectory,
-              multi_process: self.mode == .multiProcess,
-              read_only: self.isReadOnly,
-              encryption: self.encryption.cValue,
-              encryption_key: mmkv_bytes(bytes: key.baseAddress, count: key.count),
-              expected_capacity: Swift.max(self.expectedCapacity, 0),
-              recover_on_error: self.recovery == .recover,
-              compare_before_set: self.compareBeforeSet,
-              item_size_limit: UInt32(clamping: self.itemSizeLimit ?? 0)
-            )
-            return body(&configuration)
-          }
-      }
-    }
   }
 }

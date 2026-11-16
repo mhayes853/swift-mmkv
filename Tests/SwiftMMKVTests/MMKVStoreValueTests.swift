@@ -29,6 +29,16 @@ import Testing
     #expect(store.value(forKey: "strings", as: [String].self) == ["a", "", "ç"])
   }
 
+  @Test func `Strings And Their UTF-8 Bytes Are Stored The Same Way`() throws {
+    let store = try makeStore()
+
+    store.set(Array("héllo".utf8), forKey: "bytes")
+    store.set("wörld", forKey: "string")
+
+    #expect(store.value(forKey: "bytes", as: String.self) == "héllo")
+    #expect(store.value(forKey: "string", as: [UInt8].self) == Array("wörld".utf8))
+  }
+
   @Test func `Missing Keys Read As Nil For Every Type`() throws {
     let store = try makeStore()
 
