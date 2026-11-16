@@ -76,6 +76,24 @@ let count = store.withBytes(forKey: "avatar") { $0.byteCount }
 `set(unsafeBytes:forKey:)` and `withUnsafeBytes(forKey:)` do the same with an
 `UnsafeRawBufferPointer`, for handing bytes to and from C.
 
+## Codable values
+
+A `Codable` value is stored whole under one key, in whatever form a coder gives it:
+
+```swift
+try store.encode(Settings(fontSize: 16), forKey: "settings")
+let settings = try store.decode(Settings.self, forKey: "settings")
+
+try store.encode(feed, forKey: "feed", with: PropertyListEncoder())
+let feed = try store.decode(Feed.self, forKey: "feed", with: PropertyListDecoder())
+```
+
+With the `Foundation` trait the coder defaults to JSON, which is how React Native apps store
+objects. Any coder works if it conforms to `MMKVTopLevelEncoder` or `MMKVTopLevelDecoder` and
+its output is an `MMKVValue`, such as `Data`, `String`, or `[UInt8]`. On Apple platforms, so
+does any Combine `TopLevelEncoder` or `TopLevelDecoder`. Both methods throw the coder's errors,
+and `decode` returns `nil` only when the key has no value.
+
 ## Keys, removal, and locking
 
 ```swift
@@ -139,7 +157,7 @@ single-process mode.
 | `boolean` | `Bool` |
 | `string` | `String` |
 | `ArrayBuffer` | `[UInt8]`, `Data`, or `withBytes(forKey:)` |
-| `JSON.stringify(object)` | `value(forKey:asJSON:)` and `set(json:forKey:)` |
+| `JSON.stringify(object)` | `decode(_:forKey:)` and `encode(_:forKey:)` |
 
 Things to know while both sides are live:
 
@@ -158,19 +176,8 @@ built on this package, and checks on iOS and Android that both sides agree about
 The library itself does not use Foundation. The `Foundation` trait, on by default, adds:
 
 - `Data` as an `MMKVValue`, and `URL` root directories.
-- `set(json:forKey:)` and `value(forKey:asJSON:)` for `Codable` values stored as JSON strings.
-- `decode(_:numbers:)`, which decodes the whole store into one `Decodable` value:
-
-```swift
-struct AppState: Decodable {
-  var hasOnboarded: Bool
-  var launchCount: Int
-  var username: String?
-  var settings: Settings
-}
-
-let state = try store.decode(AppState.self, numbers: .javaScript)
-```
+- `JSONEncoder`, `JSONDecoder`, and the property list coders as coders for `encode` and
+  `decode`, with JSON as the default when no coder is passed.
 
 Turn it off with `traits: []` on the package dependency.
 

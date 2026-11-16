@@ -109,8 +109,8 @@ let package = Package(
     .trait(
       name: "Foundation",
       description:
-        "Adds `Data`, `URL`, and `Codable` conveniences, using FoundationEssentials where the "
-        + "toolchain provides it."
+        "Adds `Data`, `URL`, and the JSON and property list coders, using FoundationEssentials "
+        + "where the toolchain provides it."
     )
   ],
   targets: [coreTarget, foundationTarget, libraryTarget, testTarget],

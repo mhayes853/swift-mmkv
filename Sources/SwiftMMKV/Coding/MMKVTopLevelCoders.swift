@@ -1,0 +1,125 @@
+/// An encoder that turns a whole `Encodable` value into one output, such as `JSONEncoder`.
+///
+/// It has the shape of Combine's `TopLevelEncoder`, which is not available on every platform
+/// this package supports. An encoder with an `encode(_:)` method of this shape conforms with an
+/// empty extension:
+///
+/// ```swift
+/// extension MessagePackEncoder: MMKVTopLevelEncoder {}
+/// ```
+public protocol MMKVTopLevelEncoder {
+  /// What the encoder produces. A store can hold it when it is an ``MMKVValue``.
+  associatedtype Output
+
+  /// Encodes `value`.
+  func encode<T: Encodable>(_ value: T) throws -> Output
+}
+
+/// A decoder that reads a whole `Decodable` value from one input, such as `JSONDecoder`.
+///
+/// It has the shape of Combine's `TopLevelDecoder`. See ``MMKVTopLevelEncoder``.
+public protocol MMKVTopLevelDecoder {
+  /// What the decoder reads. A store can supply it when it is an ``MMKVValue``.
+  associatedtype Input
+
+  /// Decodes a `T` from `input`.
+  func decode<T: Decodable>(_ type: T.Type, from input: Input) throws -> T
+}
+
+extension MMKVStore {
+  /// Encodes `value` with `encoder` and stores the result under `key`, replacing any existing
+  /// value.
+  ///
+  /// The whole value is stored under the one key, as whatever the encoder produces.
+  ///
+  /// ```swift
+  /// try store.encode(Settings(fontSize: 16), forKey: "settings", with: JSONEncoder())
+  /// ```
+  ///
+  /// - Parameters:
+  ///   - value: The value to encode.
+  ///   - key: The key, which must not be empty.
+  ///   - expiringIn: How long to keep the value. See ``set(_:forKey:expiringIn:)``.
+  ///   - encoder: The encoder to use.
+  /// - Returns: Whether the encoded value was stored.
+  /// - Throws: Whatever `encoder` throws, in which case nothing is stored.
+  @discardableResult
+  public func encode<T: Encodable, Encoder: MMKVTopLevelEncoder>(
+    _ value: T,
+    forKey key: String,
+    expiringIn: Duration? = nil,
+    with encoder: Encoder
+  ) throws -> Bool where Encoder.Output: MMKVValue {
+    self.set(try encoder.encode(value), forKey: key, expiringIn: expiringIn)
+  }
+
+  /// Reads the value stored under `key` and decodes it as a `T` with `decoder`.
+  ///
+  /// ```swift
+  /// let settings = try store.decode(Settings.self, forKey: "settings", with: JSONDecoder())
+  /// ```
+  ///
+  /// - Returns: The value, or `nil` if the key has no value.
+  /// - Throws: Whatever `decoder` throws when the stored value does not decode.
+  public func decode<T: Decodable, Decoder: MMKVTopLevelDecoder>(
+    _ type: T.Type = T.self,
+    forKey key: String,
+    with decoder: Decoder
+  ) throws -> T? where Decoder.Input: MMKVValue {
+    guard let input = self.value(forKey: key, as: Decoder.Input.self) else { return nil }
+    return try decoder.decode(type, from: input)
+  }
+}
+
+#if canImport(Combine)
+  import Combine
+
+  extension MMKVStore {
+    /// Encodes `value` with any Combine `TopLevelEncoder` and stores the result under `key`.
+    ///
+    /// See ``encode(_:forKey:expiringIn:with:)``.
+    @_disfavoredOverload
+    @discardableResult
+    public func encode<T: Encodable, Encoder: TopLevelEncoder>(
+      _ value: T,
+      forKey key: String,
+      expiringIn: Duration? = nil,
+      with encoder: Encoder
+    ) throws -> Bool where Encoder.Output: MMKVValue {
+      try self.encode(
+        value,
+        forKey: key,
+        expiringIn: expiringIn,
+        with: CombineEncoder(base: encoder)
+      )
+    }
+
+    /// Reads the value stored under `key` and decodes it with any Combine `TopLevelDecoder`.
+    ///
+    /// See ``decode(_:forKey:with:)``.
+    @_disfavoredOverload
+    public func decode<T: Decodable, Decoder: TopLevelDecoder>(
+      _ type: T.Type = T.self,
+      forKey key: String,
+      with decoder: Decoder
+    ) throws -> T? where Decoder.Input: MMKVValue {
+      try self.decode(type, forKey: key, with: CombineDecoder(base: decoder))
+    }
+  }
+
+  private struct CombineEncoder<Base: TopLevelEncoder>: MMKVTopLevelEncoder {
+    let base: Base
+
+    func encode<T: Encodable>(_ value: T) throws -> Base.Output {
+      try self.base.encode(value)
+    }
+  }
+
+  private struct CombineDecoder<Base: TopLevelDecoder>: MMKVTopLevelDecoder {
+    let base: Base
+
+    func decode<T: Decodable>(_ type: T.Type, from input: Base.Input) throws -> T {
+      try self.base.decode(type, from: input)
+    }
+  }
+#endif

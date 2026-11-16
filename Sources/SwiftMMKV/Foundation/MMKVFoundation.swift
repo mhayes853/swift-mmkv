@@ -82,44 +82,38 @@
     }
   #endif
 
-  // MARK: - JSON values
+  // MARK: - Coders
+
+  extension JSONEncoder: MMKVTopLevelEncoder {}
+  extension JSONDecoder: MMKVTopLevelDecoder {}
+  extension PropertyListEncoder: MMKVTopLevelEncoder {}
+  extension PropertyListDecoder: MMKVTopLevelDecoder {}
 
   extension MMKVStore {
     /// Stores `value` under `key` as a JSON string, which is how React Native apps store objects.
     ///
     /// ```swift
-    /// store.set(json: Settings(fontSize: 16), forKey: "settings")
+    /// try store.encode(Settings(fontSize: 16), forKey: "settings")
     /// // JavaScript: JSON.parse(storage.getString('settings'))
     /// ```
     ///
-    /// - Returns: Whether the value was encoded and stored.
+    /// - Returns: Whether the encoded value was stored.
+    /// - Throws: An `EncodingError` if `value` does not encode, in which case nothing is stored.
     @discardableResult
-    public func set<V: Encodable>(
-      json value: V,
+    public func encode<T: Encodable>(
+      _ value: T,
       forKey key: String,
-      encoder: JSONEncoder = JSONEncoder(),
       expiringIn: Duration? = nil
-    ) -> Bool {
-      guard let data = try? encoder.encode(value) else { return false }
-      // MMKV stores a string as its UTF-8 bytes, so this is read back as a string.
-      return data.withUnsafeBytes { buffer in
-        self.set(bytes: buffer.bytes, forKey: key, expiringIn: expiringIn)
-      }
+    ) throws -> Bool {
+      try self.encode(value, forKey: key, expiringIn: expiringIn, with: JSONEncoder())
     }
 
-    /// Reads the JSON string stored under `key` and decodes it as a `V`.
+    /// Reads the JSON string stored under `key` and decodes it as a `T`.
     ///
-    /// - Returns: The value, or `nil` if the key has no value or its value does not decode.
-    public func value<V: Decodable>(
-      forKey key: String,
-      asJSON type: V.Type = V.self,
-      decoder: JSONDecoder = JSONDecoder()
-    ) -> V? {
-      let data = self.withBytes(forKey: key) { span in
-        span.withUnsafeBytes { Data($0) }
-      }
-      guard let data else { return nil }
-      return try? decoder.decode(type, from: data)
+    /// - Returns: The value, or `nil` if the key has no value.
+    /// - Throws: A `DecodingError` if the stored value does not decode.
+    public func decode<T: Decodable>(_ type: T.Type = T.self, forKey key: String) throws -> T? {
+      try self.decode(type, forKey: key, with: JSONDecoder())
     }
 
     /// The store's identifier and keys as JSON. See ``toJSON()``.

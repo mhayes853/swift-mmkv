@@ -157,6 +157,29 @@ import Testing
     #expect(store.value(forKey: "short", as: Fingerprint.self) == nil)
   }
 
+  @Test func `Encodes And Decodes With A Custom Coder`() throws {
+    let store = try makeStore()
+
+    #expect(try store.encode(42, forKey: "answer", with: DescriptionEncoder()))
+
+    #expect(store.value(forKey: "answer", as: String.self) == "42")
+    #expect(try store.decode(Int.self, forKey: "answer", with: DescriptionDecoder()) == 42)
+    #expect(try store.decode(Int.self, forKey: "missing", with: DescriptionDecoder()) == nil)
+  }
+
+  @Test func `Coder Errors Are Thrown`() throws {
+    let store = try makeStore()
+    store.set("not a number", forKey: "answer")
+
+    #expect(throws: DescriptionCodingError()) {
+      try store.decode(Int.self, forKey: "answer", with: DescriptionDecoder())
+    }
+    #expect(throws: DescriptionCodingError()) {
+      try store.encode([1], forKey: "list", with: DescriptionEncoder())
+    }
+    #expect(!store.contains("list"))
+  }
+
   @Test func `Stores A Large Value That Grows The File`() throws {
     let store = try makeStore()
     let large = String(repeating: "x", count: 1_000_000)
@@ -340,5 +363,29 @@ private struct Fingerprint: MMKVValue {
 
   func write(to writer: inout MMKVValueWriter) -> Bool {
     withUnsafeBytes(of: self.value) { writer.set(unsafeBytes: $0) }
+  }
+}
+
+private struct DescriptionCodingError: Error, Equatable {}
+
+/// Encodes a value as its description, to stand in for a coder this package knows nothing about.
+private struct DescriptionEncoder: MMKVTopLevelEncoder {
+  func encode<T: Encodable>(_ value: T) throws -> String {
+    guard let value = value as? any LosslessStringConvertible else {
+      throw DescriptionCodingError()
+    }
+    return value.description
+  }
+}
+
+private struct DescriptionDecoder: MMKVTopLevelDecoder {
+  func decode<T: Decodable>(_ type: T.Type, from input: String) throws -> T {
+    guard
+      let type = type as? any LosslessStringConvertible.Type,
+      let value = type.init(input) as? T
+    else {
+      throw DescriptionCodingError()
+    }
+    return value
   }
 }
