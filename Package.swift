@@ -43,7 +43,10 @@ let coreDefines: [CSetting] =
     // On Apple platforms the core defaults to an Objective-C++ build that needs Foundation and
     // manual reference counting. Its POSIX build is plain C++ and reads the same files.
     .define("FORCE_POSIX", .when(platforms: applePlatforms)),
-    .define("NDEBUG", .when(configuration: .release))
+    // The core's debug assertions abort on something its release build handles: in multi-process
+    // mode, reloading a file that another instance grew before this one first read it. That is
+    // routine when sharing a store, so the assertions are off in every configuration.
+    .define("NDEBUG")
   ]
 
 let coreTarget: Target = .target(
