@@ -1,0 +1,116 @@
+// swift-tools-version: 6.2
+
+import PackageDescription
+
+// React Native apps link their own copy of MMKV's core through react-native-mmkv, and this
+// package has to be able to sit beside it during a migration. Every symbol the vendored core
+// defines outside a namespace, and the namespaces themselves, are therefore renamed with the
+// preprocessor so that neither copy can be mistaken for the other at link or load time.
+// `Scripts/check-symbols.sh` fails if the core gains a global symbol that is not listed here.
+let renamedCoreSymbols = [
+  "mmkv",
+  "openssl",
+  "MMKV",
+  "MMKVConfig",
+  "_MMKVLogWithLevel",
+  "g_currentLogLevel",
+  "g_handler",
+  "g_instanceDic",
+  "g_instanceLock",
+  "g_realRootDir",
+  "g_rootDir",
+  "t_status",
+  "ashmemMMKVPathWithID",
+  "crcPathWithPath",
+  "filename",
+  "getFileModifyTimeInMS",
+  "legacyMmapedKVKey",
+  "mappedKVPathWithID",
+  "mmapedKVKey",
+  "onMMKVCRCCheckFail",
+  "onMMKVFileLengthError",
+  "tryMigrateLegacyMMKVFile",
+  "openssl_aes_arm_decrypt",
+  "openssl_aes_arm_encrypt",
+  "openssl_aes_arm_set_decrypt_key",
+  "openssl_aes_arm_set_encrypt_key"
+]
+
+let applePlatforms: [Platform] = [.macOS, .iOS, .tvOS, .watchOS, .visionOS, .macCatalyst]
+
+let coreDefines: [CSetting] =
+  renamedCoreSymbols.map { .define($0, to: "swiftmmkv_\($0)") } + [
+    // On Apple platforms the core defaults to an Objective-C++ build that needs Foundation and
+    // manual reference counting. Its POSIX build is plain C++ and reads the same files.
+    .define("FORCE_POSIX", .when(platforms: applePlatforms)),
+    .define("NDEBUG", .when(configuration: .release))
+  ]
+
+let coreTarget: Target = .target(
+  name: "CSwiftMMKVCore",
+  exclude: [
+    "mmkv/LICENSE.TXT",
+    "mmkv.version",
+    // Assembled through `SwiftMMKVAESv8.S`, which enables the instructions it uses.
+    "mmkv/aes/openssl/openssl_aesv8-armx.S"
+  ],
+  cSettings: coreDefines + [.headerSearchPath("mmkv"), .headerSearchPath(".")],
+  linkerSettings: [
+    .linkedLibrary("z"),
+    .linkedLibrary("log", .when(platforms: [.android]))
+  ]
+)
+
+let libraryTarget: Target = .target(
+  name: "SwiftMMKV",
+  dependencies: [
+    "CSwiftMMKVCore",
+    .target(name: "_SwiftMMKVFoundation", condition: .when(traits: ["Foundation"]))
+  ],
+  swiftSettings: [
+    .enableExperimentalFeature("Lifetimes"),
+    .define("Foundation", .when(traits: ["Foundation"]))
+  ]
+)
+
+// Imports FoundationEssentials where the toolchain has it, and all of Foundation elsewhere, so the
+// `Foundation` trait never links more than the package uses.
+let foundationTarget: Target = .target(name: "_SwiftMMKVFoundation")
+
+let testTarget: Target = .testTarget(
+  name: "SwiftMMKVTests",
+  dependencies: [
+    "SwiftMMKV",
+    .target(name: "_SwiftMMKVFoundation", condition: .when(traits: ["Foundation"]))
+  ],
+  swiftSettings: [
+    .enableExperimentalFeature("Lifetimes"),
+    .define("Foundation", .when(traits: ["Foundation"]))
+  ]
+)
+
+let package = Package(
+  name: "swift-mmkv",
+  platforms: [
+    .macOS(.v13),
+    .iOS(.v16),
+    .tvOS(.v16),
+    .watchOS(.v9),
+    .visionOS(.v1)
+  ],
+  products: [
+    .library(name: "SwiftMMKV", targets: ["SwiftMMKV"])
+  ],
+  traits: [
+    .default(enabledTraits: ["Foundation"]),
+    .trait(
+      name: "Foundation",
+      description:
+        "Adds `Data`, `URL`, and `Codable` conveniences, using FoundationEssentials where the "
+        + "toolchain provides it."
+    )
+  ],
+  targets: [coreTarget, foundationTarget, libraryTarget, testTarget],
+  swiftLanguageModes: [.v6],
+  cxxLanguageStandard: .cxx20
+)
