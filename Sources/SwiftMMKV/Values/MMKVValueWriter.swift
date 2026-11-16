@@ -20,42 +20,42 @@ public struct MMKVValueWriter: ~Copyable, ~Escapable {
   /// Stores a Boolean.
   public mutating func set(_ value: Bool) -> Bool {
     self.key.withMMKVBytes {
-      swiftmmkv_set_bool(self.store.handle, $0, value, self.expiresInSeconds)
+      mmkv_set_bool(self.store.handle, $0, value, self.expiresInSeconds)
     }
   }
 
   /// Stores a signed 32-bit integer.
   public mutating func set(_ value: Int32) -> Bool {
     self.key.withMMKVBytes {
-      swiftmmkv_set_int32(self.store.handle, $0, value, self.expiresInSeconds)
+      mmkv_set_int32(self.store.handle, $0, value, self.expiresInSeconds)
     }
   }
 
   /// Stores an unsigned 32-bit integer.
   public mutating func set(_ value: UInt32) -> Bool {
     self.key.withMMKVBytes {
-      swiftmmkv_set_uint32(self.store.handle, $0, value, self.expiresInSeconds)
+      mmkv_set_uint32(self.store.handle, $0, value, self.expiresInSeconds)
     }
   }
 
   /// Stores a signed 64-bit integer.
   public mutating func set(_ value: Int64) -> Bool {
     self.key.withMMKVBytes {
-      swiftmmkv_set_int64(self.store.handle, $0, value, self.expiresInSeconds)
+      mmkv_set_int64(self.store.handle, $0, value, self.expiresInSeconds)
     }
   }
 
   /// Stores an unsigned 64-bit integer.
   public mutating func set(_ value: UInt64) -> Bool {
     self.key.withMMKVBytes {
-      swiftmmkv_set_uint64(self.store.handle, $0, value, self.expiresInSeconds)
+      mmkv_set_uint64(self.store.handle, $0, value, self.expiresInSeconds)
     }
   }
 
   /// Stores a single-precision floating-point number.
   public mutating func set(_ value: Float) -> Bool {
     self.key.withMMKVBytes {
-      swiftmmkv_set_float(self.store.handle, $0, value, self.expiresInSeconds)
+      mmkv_set_float(self.store.handle, $0, value, self.expiresInSeconds)
     }
   }
 
@@ -63,7 +63,7 @@ public struct MMKVValueWriter: ~Copyable, ~Escapable {
   /// stored.
   public mutating func set(_ value: Double) -> Bool {
     self.key.withMMKVBytes {
-      swiftmmkv_set_double(self.store.handle, $0, value, self.expiresInSeconds)
+      mmkv_set_double(self.store.handle, $0, value, self.expiresInSeconds)
     }
   }
 
@@ -71,7 +71,7 @@ public struct MMKVValueWriter: ~Copyable, ~Escapable {
   public mutating func set(_ value: String) -> Bool {
     value.withMMKVBytes { value in
       self.key.withMMKVBytes {
-        swiftmmkv_set_string(self.store.handle, $0, value, self.expiresInSeconds)
+        mmkv_set_string(self.store.handle, $0, value, self.expiresInSeconds)
       }
     }
   }
@@ -80,7 +80,7 @@ public struct MMKVValueWriter: ~Copyable, ~Escapable {
   public mutating func set(_ value: [String]) -> Bool {
     value.withMMKVBytes { values in
       self.key.withMMKVBytes {
-        swiftmmkv_set_strings(
+        mmkv_set_strings(
           self.store.handle,
           $0,
           values.baseAddress,
@@ -99,10 +99,10 @@ public struct MMKVValueWriter: ~Copyable, ~Escapable {
   /// Stores raw bytes as a string value, for bytes that are already UTF-8.
   mutating func set(utf8 buffer: UnsafeRawBufferPointer) -> Bool {
     self.key.withMMKVBytes {
-      swiftmmkv_set_string(
+      mmkv_set_string(
         self.store.handle,
         $0,
-        swiftmmkv_bytes(bytes: buffer.baseAddress, count: buffer.count),
+        mmkv_bytes(bytes: buffer.baseAddress, count: buffer.count),
         self.expiresInSeconds
       )
     }
@@ -110,10 +110,10 @@ public struct MMKVValueWriter: ~Copyable, ~Escapable {
 
   mutating func set(buffer: UnsafeRawBufferPointer) -> Bool {
     self.key.withMMKVBytes {
-      swiftmmkv_set_bytes(
+      mmkv_set_bytes(
         self.store.handle,
         $0,
-        swiftmmkv_bytes(bytes: buffer.baseAddress, count: buffer.count),
+        mmkv_bytes(bytes: buffer.baseAddress, count: buffer.count),
         self.expiresInSeconds
       )
     }

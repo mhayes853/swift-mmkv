@@ -83,7 +83,7 @@ extension MMKVStoreState {
   // marked. Stores with the same identifier in different directories are over-notified, which
   // only costs a spurious `.external`.
   private static let installContentChangedCallback: Void = {
-    swiftmmkv_set_content_changed_callback { id in
+    mmkv_set_content_changed_callback { id in
       let id = String(
         decoding: UnsafeRawBufferPointer(start: id.bytes, count: id.count),
         as: UTF8.self
