@@ -133,7 +133,9 @@ import Testing
     store.set("blob", forKey: "username")
 
     #expect(store.description == "MMKV (described): [username, volume]")
-    #expect(String(decoding: store.toJSON(), as: UTF8.self) == #"{"described":["username","volume"]}"#)
+    #expect(
+      String(decoding: store.toJSON(), as: UTF8.self) == #"{"described":["username","volume"]}"#
+    )
   }
 
   @Test func `Escapes Keys In JSON`() throws {

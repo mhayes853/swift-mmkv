@@ -90,15 +90,17 @@ public struct MMKVValueReader: ~Copyable, ~Escapable {
   ///
   /// - Returns: The result of `body`, or `nil` if the key has no value.
   public func withBytes<R, E: Error>(_ body: (RawSpan) throws(E) -> R) throws(E) -> R? {
-    try self.key.withMMKVBytes { key in
-      Result { () throws(E) -> R? in
-        try withCallbackBytes { context, callback in
-          swiftmmkv_get_bytes(self.store.handle, key, context, callback)
-        } _: { (buffer: UnsafeRawBufferPointer) throws(E) -> R in
-          try body(buffer.bytes)
+    try self.key
+      .withMMKVBytes { key in
+        Result { () throws(E) -> R? in
+          try withCallbackBytes { context, callback in
+            swiftmmkv_get_bytes(self.store.handle, key, context, callback)
+          } _: { (buffer: UnsafeRawBufferPointer) throws(E) -> R in
+            try body(buffer.bytes)
+          }
         }
       }
-    }.get()
+      .get()
   }
 
   /// Reads the key as a string, handing over its UTF-8 bytes without building a `String`.

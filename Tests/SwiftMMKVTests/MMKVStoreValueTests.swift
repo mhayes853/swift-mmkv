@@ -90,7 +90,8 @@ import Testing
     #expect(didSet)
 
     let sum = store.withBytes(forKey: "raw") { span in
-      (0..<span.byteCount).reduce(0) { $0 + Int(span.unsafeLoad(fromByteOffset: $1, as: UInt8.self)) }
+      (0..<span.byteCount)
+        .reduce(0) { $0 + Int(span.unsafeLoad(fromByteOffset: $1, as: UInt8.self)) }
     }
     #expect(sum == 15)
     #expect(store.value(forKey: "raw", as: [UInt8].self) == bytes)

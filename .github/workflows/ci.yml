@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-linux:
+    name: Linux (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    container: swift:6.3.3
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default traits
+            traits: ""
+          # The store alone. Nothing in the library may load Foundation without its trait.
+          - name: lean
+            traits: "--disable-default-traits"
+            forbidden-modules: "Foundation|FoundationEssentials|FoundationInternationalization"
+    steps:
+      - uses: actions/checkout@v4
+
+      # The MMKV core computes its checksums with the system zlib.
+      - name: Install zlib
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends zlib1g-dev
+
+      - name: Test
+        run: swift test ${{ matrix.traits }}
+
+      # A symbol the core defines under its upstream name would collide with the copy of MMKV
+      # that react-native-mmkv links into the same app.
+      - name: Check core symbols are renamed
+        run: Scripts/check-symbols.sh
+
+      # The compiler's dependency files list every module the library's sources loaded, which is
+      # what shows the trait kept Foundation out.
+      - name: Check loaded Foundation modules
+        if: matrix.forbidden-modules
+        run: |
+          loaded=$(cat .build/debug/SwiftMMKV.build/*.d | tr ' ' '\n' \
+            | grep -oE '[A-Za-z_]+\.swiftmodule' | sed 's/\.swiftmodule$//' | sort -u)
+          if echo "$loaded" | grep -xE '${{ matrix.forbidden-modules }}'; then
+            echo "SwiftMMKV loaded a Foundation module this configuration must not use." >&2
+            exit 1
+          fi
+
+  test-macos:
+    name: macOS
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Test
+        run: swift test
+
+      - name: Test without traits
+        run: swift test --disable-default-traits
+
+      - name: Check core symbols are renamed
+        run: Scripts/check-symbols.sh
+
+  test-ios:
+    name: iOS
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Test
+        run: |
+          xcodebuild test \
+            -scheme swift-mmkv \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
+
+  build-android:
+    name: Android (aarch64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Swift package for Android
+        uses: swift-android-sdk/swift-android-action@v2
+        with:
+          swift-version: '6.4.0'
+          build-tests: false
+          run-tests: false

@@ -434,21 +434,22 @@ extension MMKVConfiguration {
   fileprivate func withCConfiguration<R>(_ body: (inout swiftmmkv_configuration) -> R) -> R {
     self.id.withMMKVBytes { id in
       self.rootDirectory.withMMKVBytes { rootDirectory in
-        (self.encryption?.key ?? []).withUnsafeBytes { key in
-          var configuration = swiftmmkv_configuration(
-            id: id,
-            root_directory: rootDirectory,
-            multi_process: self.mode == .multiProcess,
-            read_only: self.isReadOnly,
-            encryption: self.encryption.cValue,
-            encryption_key: swiftmmkv_bytes(bytes: key.baseAddress, count: key.count),
-            expected_capacity: Swift.max(self.expectedCapacity, 0),
-            recover_on_error: self.recovery == .recover,
-            compare_before_set: self.compareBeforeSet,
-            item_size_limit: UInt32(clamping: self.itemSizeLimit ?? 0)
-          )
-          return body(&configuration)
-        }
+        (self.encryption?.key ?? [])
+          .withUnsafeBytes { key in
+            var configuration = swiftmmkv_configuration(
+              id: id,
+              root_directory: rootDirectory,
+              multi_process: self.mode == .multiProcess,
+              read_only: self.isReadOnly,
+              encryption: self.encryption.cValue,
+              encryption_key: swiftmmkv_bytes(bytes: key.baseAddress, count: key.count),
+              expected_capacity: Swift.max(self.expectedCapacity, 0),
+              recover_on_error: self.recovery == .recover,
+              compare_before_set: self.compareBeforeSet,
+              item_size_limit: UInt32(clamping: self.itemSizeLimit ?? 0)
+            )
+            return body(&configuration)
+          }
       }
     }
   }
