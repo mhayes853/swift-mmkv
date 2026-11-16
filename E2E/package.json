@@ -17,6 +17,7 @@
   },
   "scripts": {
     "ios": "scripts/run-ios.sh",
+    "android": "scripts/run-android.sh",
     "typecheck": "tsc --noEmit"
   },
   "private": true

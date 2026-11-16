@@ -1,0 +1,5 @@
+# Built by scripts/build-android-swift.sh.
+src/main/jniLibs/
+
+# Gradle output.
+build/

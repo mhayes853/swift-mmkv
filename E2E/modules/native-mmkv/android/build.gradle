@@ -1,0 +1,17 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.swiftmmkv'
+version = '1.0.0'
+
+// The Swift half of this module is built by scripts/build-android-swift.sh, which leaves its
+// shared libraries in src/main/jniLibs for Gradle to package.
+android {
+  namespace "expo.modules.nativemmkv"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}

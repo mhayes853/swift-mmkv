@@ -23,16 +23,25 @@ The results are shown on screen and written to a file that the run script reads 
 ```sh
 npm install
 scripts/run-ios.sh            # or: scripts/run-ios.sh "iPhone 17"
+scripts/run-android.sh        # uses the connected device or running emulator
 ```
 
-The script generates the native project with `expo prebuild`, builds it in the Release
-configuration so that no Metro server is needed, runs it in a simulator, and exits non-zero if
-any check fails.
+Each script generates the native project with `expo prebuild`, makes a release build so that no
+Metro server is needed, runs it, and exits non-zero if any check fails.
+
+The Android script also builds the module's Swift code, which needs a Swift toolchain with the
+matching [Swift SDK for Android](https://www.swift.org/documentation/articles/swift-sdk-for-android-getting-started.html)
+and the Android NDK. Set `SWIFT` to use a toolchain other than the default one. The app's minimum
+Android API level is 28, the level the Swift SDK targets.
 
 ## Layout
 
 - `checks.ts`: the checks, written against both APIs.
-- `modules/native-mmkv`: a local Expo module that exposes swift-mmkv to JavaScript. Its podspec
-  depends on the package at the root of this repository through React Native's
-  `spm_dependency`, so the app always tests the working tree.
+- `modules/native-mmkv`: a local Expo module that exposes swift-mmkv to JavaScript. Both
+  platforms build the package at the root of this repository, so the app always tests the
+  working tree.
+  - `ios`: a Swift module whose podspec depends on the package through React Native's
+    `spm_dependency`.
+  - `android`: a Kotlin module that calls a Swift shared library through JNI. The library is the
+    package in `android/swift`, which uses swift-mmkv without its `Foundation` trait.
 - `scripts`: builds, runs, and reports.

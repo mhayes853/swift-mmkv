@@ -147,6 +147,9 @@ Things to know while both sides are live:
 - Avoid `expiringIn:` on a shared store. The first expiring write changes the file's format, and
   react-native-mmkv has no option for it.
 
+The [`E2E`](E2E) directory holds an Expo app that links react-native-mmkv beside a native module
+built on this package, and checks on iOS and Android that both sides agree about the same files.
+
 ## The `Foundation` trait
 
 The library itself does not use Foundation. The `Foundation` trait, on by default, adds:
