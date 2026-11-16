@@ -103,21 +103,6 @@
       }
     }
 
-    #if canImport(Combine)
-      @Test func `Accepts Combine Top Level Coders`() throws {
-        let store = try makeStore()
-        let settings = Settings(notificationsEnabled: true, fontSize: 16)
-
-        try store.encode(settings, forKey: "settings", with: CombineOnlyEncoder())
-
-        #expect(
-          try store.decode(Settings.self, forKey: "settings", with: CombineOnlyDecoder())
-            == settings
-        )
-        #expect(try store.decode(Settings.self, forKey: "settings") == settings)
-      }
-    #endif
-
     @Test func `Encoding Notifies Listeners`() throws {
       let store = try makeStore()
       let recorder = ChangeRecorder()
@@ -136,20 +121,4 @@
       #expect(store.toJSONData() == Data(#"{"json":["a"]}"#.utf8))
     }
   }
-
-  #if canImport(Combine)
-    import Combine
-
-    private struct CombineOnlyEncoder: TopLevelEncoder {
-      func encode<T: Encodable>(_ value: T) throws -> Data {
-        try JSONEncoder().encode(value)
-      }
-    }
-
-    private struct CombineOnlyDecoder: TopLevelDecoder {
-      func decode<T: Decodable>(_ type: T.Type, from input: Data) throws -> T {
-        try JSONDecoder().decode(type, from: input)
-      }
-    }
-  #endif
 #endif

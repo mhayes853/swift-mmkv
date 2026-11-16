@@ -90,9 +90,8 @@ let feed = try store.decode(Feed.self, forKey: "feed", with: PropertyListDecoder
 
 With the `Foundation` trait the coder defaults to JSON, which is how React Native apps store
 objects. Any coder works if it conforms to `MMKVTopLevelEncoder` or `MMKVTopLevelDecoder` and
-its output is an `MMKVValue`, such as `Data`, `String`, or `[UInt8]`. On Apple platforms, so
-does any Combine `TopLevelEncoder` or `TopLevelDecoder`. Both methods throw the coder's errors,
-and `decode` returns `nil` only when the key has no value.
+its output is an `MMKVValue`, such as `Data`, `String`, or `[UInt8]`. Both methods throw the
+coder's errors, and `decode` returns `nil` only when the key has no value.
 
 ## Keys, removal, and locking
 
