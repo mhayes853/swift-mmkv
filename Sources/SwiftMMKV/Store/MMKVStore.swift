@@ -137,6 +137,43 @@ extension MMKVStore {
     return try self.core.withBytes(forKey: key, body)
   }
 
+  /// Stores the raw bytes in `unsafeBytes` under `key`, replacing any existing value.
+  ///
+  /// MMKV copies the bytes into its file before this returns, so the buffer only has to be
+  /// valid for the duration of the call.
+  ///
+  /// - Returns: Whether the bytes were stored.
+  @discardableResult
+  public func set(
+    unsafeBytes: UnsafeRawBufferPointer,
+    forKey key: String,
+    expiringIn: Duration? = nil
+  ) -> Bool {
+    self.set(bytes: RawSpan(_unsafeBytes: unsafeBytes), forKey: key, expiringIn: expiringIn)
+  }
+
+  /// Reads the raw bytes stored under `key` through a buffer pointer, which is only valid for
+  /// the duration of `body`.
+  ///
+  /// Prefer ``withBytes(forKey:_:)`` unless the bytes are being handed to an API that takes a
+  /// pointer.
+  ///
+  /// ```swift
+  /// store.withUnsafeBytes(forKey: "avatar") { buffer in
+  ///   write(fileDescriptor, buffer.baseAddress, buffer.count)
+  /// }
+  /// ```
+  ///
+  /// - Returns: The result of `body`, or `nil` if the key has no value.
+  public func withUnsafeBytes<R, E: Error>(
+    forKey key: String,
+    _ body: (UnsafeRawBufferPointer) throws(E) -> R
+  ) throws(E) -> R? {
+    try self.withBytes(forKey: key) { (bytes: RawSpan) throws(E) -> R in
+      try bytes.withUnsafeBytes(body)
+    }
+  }
+
   private func write(forKey key: String, _ body: () -> Bool) -> Bool {
     let didWrite = body()
     self.core.operationDidFinish()

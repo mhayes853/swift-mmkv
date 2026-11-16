@@ -117,6 +117,46 @@ import Testing
     }
   }
 
+  @Test func `Reads And Writes Raw Bytes Through Unsafe Buffers`() throws {
+    let store = try makeStore()
+    let bytes: [UInt8] = [1, 2, 3, 4, 5]
+
+    let didSet = bytes.withUnsafeBytes { store.set(unsafeBytes: $0, forKey: "raw") }
+    #expect(didSet)
+
+    #expect(store.withUnsafeBytes(forKey: "raw") { Array($0) } == bytes)
+    #expect(store.value(forKey: "raw", as: [UInt8].self) == bytes)
+    #expect(store.withUnsafeBytes(forKey: "missing") { $0.count } == nil)
+  }
+
+  @Test func `An Empty Unsafe Buffer Stores An Empty Value`() throws {
+    let store = try makeStore()
+
+    #expect(store.set(unsafeBytes: UnsafeRawBufferPointer(start: nil, count: 0), forKey: "raw"))
+    #expect(store.withUnsafeBytes(forKey: "raw") { $0.count } == 0)
+  }
+
+  @Test func `With Unsafe Bytes Propagates The Body's Error`() throws {
+    struct Failure: Error, Equatable {}
+    let store = try makeStore()
+    store.set([UInt8]([1]), forKey: "raw")
+
+    #expect(throws: Failure()) {
+      try store.withUnsafeBytes(forKey: "raw") { _ throws(Failure) in throw Failure() }
+    }
+  }
+
+  @Test func `A Value Type Reads And Writes Through Unsafe Buffers`() throws {
+    let store = try makeStore()
+
+    #expect(store.set(Fingerprint(value: 0x0102_0304), forKey: "fingerprint"))
+    #expect(store.value(forKey: "fingerprint", as: Fingerprint.self)?.value == 0x0102_0304)
+    #expect(store.value(forKey: "fingerprint", as: [UInt8].self)?.count == 4)
+
+    store.set([UInt8]([1, 2]), forKey: "short")
+    #expect(store.value(forKey: "short", as: Fingerprint.self) == nil)
+  }
+
   @Test func `Stores A Large Value That Grows The File`() throws {
     let store = try makeStore()
     let large = String(repeating: "x", count: 1_000_000)
@@ -279,5 +319,26 @@ import Testing
     #expect(store.value(forKey: "accent", as: Color.self) == Color(red: 255, green: 128, blue: 0))
     #expect(store.value(forKey: "accent", as: [UInt8].self) == [255, 128, 0])
     #expect(store.value(forKey: "malformed", as: Color.self) == nil)
+  }
+}
+
+private struct Fingerprint: MMKVValue {
+  var value: UInt32
+
+  init(value: UInt32) {
+    self.value = value
+  }
+
+  init?(from reader: borrowing MMKVValueReader) {
+    let value = reader.withUnsafeBytes { buffer -> UInt32? in
+      guard buffer.count == MemoryLayout<UInt32>.size else { return nil }
+      return buffer.loadUnaligned(as: UInt32.self)
+    }
+    guard let value, let value else { return nil }
+    self.value = value
+  }
+
+  func write(to writer: inout MMKVValueWriter) -> Bool {
+    withUnsafeBytes(of: self.value) { writer.set(unsafeBytes: $0) }
   }
 }

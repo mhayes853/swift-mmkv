@@ -112,13 +112,20 @@ public func getBoolean(env: Env, class: jclass?, handle: jlong, key: jbyteArray?
 public func setBytes(
   env: Env, class: jclass?, handle: jlong, key: jbyteArray?, value: jbyteArray?
 ) -> jboolean {
-  jboolean(entry(handle).store.set(env.bytes(value), forKey: env.string(key)))
+  guard let value else { return 0 }
+  let jni = env.pointee!.pointee
+  let count = Int(jni.GetArrayLength(env, value))
+  guard let elements = jni.GetByteArrayElements(env, value, nil) else { return 0 }
+  defer { jni.ReleaseByteArrayElements(env, value, elements, JNI_ABORT) }
+  let buffer = UnsafeRawBufferPointer(start: elements, count: count)
+  return jboolean(entry(handle).store.set(unsafeBytes: buffer, forKey: env.string(key)))
 }
 
 @_cdecl("Java_expo_modules_nativemmkv_NativeBridge_getBytes")
 public func getBytes(env: Env, class: jclass?, handle: jlong, key: jbyteArray?) -> jbyteArray? {
-  entry(handle).store.value(forKey: env.string(key), as: [UInt8].self)
-    .flatMap { env.byteArray($0) }
+  entry(handle).store
+    .withUnsafeBytes(forKey: env.string(key)) { env.byteArray($0) }
+    .flatMap { $0 }
 }
 
 /// Returns the keys, sorted and separated by NUL bytes.
@@ -187,16 +194,18 @@ extension Env {
   }
 
   fileprivate func byteArray(_ bytes: [UInt8]) -> jbyteArray? {
-    let array = self.pointee!.pointee.NewByteArray(self, jsize(bytes.count))
-    bytes.withUnsafeBytes { buffer in
-      self.pointee!.pointee.SetByteArrayRegion(
-        self,
-        array,
-        0,
-        jsize(buffer.count),
-        buffer.bindMemory(to: jbyte.self).baseAddress
-      )
-    }
+    bytes.withUnsafeBytes { self.byteArray($0) }
+  }
+
+  fileprivate func byteArray(_ buffer: UnsafeRawBufferPointer) -> jbyteArray? {
+    let array = self.pointee!.pointee.NewByteArray(self, jsize(buffer.count))
+    self.pointee!.pointee.SetByteArrayRegion(
+      self,
+      array,
+      0,
+      jsize(buffer.count),
+      buffer.bindMemory(to: jbyte.self).baseAddress
+    )
     return array
   }
 }

@@ -67,6 +67,12 @@ public struct MMKVValueWriter: ~Copyable, ~Escapable {
   public mutating func set(bytes: RawSpan) -> Bool {
     self.core.set(bytes: bytes, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
   }
+
+  /// Stores the raw bytes in `unsafeBytes`, which MMKV copies into its file before this
+  /// returns.
+  public mutating func set(unsafeBytes: UnsafeRawBufferPointer) -> Bool {
+    self.set(bytes: RawSpan(_unsafeBytes: unsafeBytes))
+  }
 }
 
 extension MMKVCore {

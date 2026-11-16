@@ -73,6 +73,9 @@ Raw bytes are read through a `RawSpan` without this package copying them:
 let count = store.withBytes(forKey: "avatar") { $0.byteCount }
 ```
 
+`set(unsafeBytes:forKey:)` and `withUnsafeBytes(forKey:)` do the same with an
+`UnsafeRawBufferPointer`, for handing bytes to and from C.
+
 ## Keys, removal, and locking
 
 ```swift

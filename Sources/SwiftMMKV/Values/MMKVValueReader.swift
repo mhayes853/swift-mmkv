@@ -68,6 +68,18 @@ public struct MMKVValueReader: ~Copyable, ~Escapable {
   public func withBytes<R, E: Error>(_ body: (RawSpan) throws(E) -> R) throws(E) -> R? {
     try self.core.withBytes(forKey: self.key, body)
   }
+
+  /// Reads the key as raw bytes through a buffer pointer, which is only valid for the duration
+  /// of `body`.
+  ///
+  /// - Returns: The result of `body`, or `nil` if the key has no value.
+  public func withUnsafeBytes<R, E: Error>(
+    _ body: (UnsafeRawBufferPointer) throws(E) -> R
+  ) throws(E) -> R? {
+    try self.withBytes { (bytes: RawSpan) throws(E) -> R in
+      try bytes.withUnsafeBytes(body)
+    }
+  }
 }
 
 extension MMKVCore {
