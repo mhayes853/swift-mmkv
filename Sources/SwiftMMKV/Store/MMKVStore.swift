@@ -189,7 +189,11 @@ extension MMKVStore {
   /// Whether `key` has a value.
   public func contains(_ key: String) -> Bool {
     defer { self.operationDidFinish() }
-    return key.withMMKVBytes { swiftmmkv_contains(self.handle, $0) }
+    return self.unnotifiedContains(key)
+  }
+
+  func unnotifiedContains(_ key: String) -> Bool {
+    key.withMMKVBytes { swiftmmkv_contains(self.handle, $0) }
   }
 
   var unnotifiedKeys: Set<String> {
@@ -214,7 +218,7 @@ extension MMKVStore {
   @discardableResult
   public func removeValue(forKey key: String) -> Bool {
     let (didRemove, didExist) = self.locked {
-      let didExist = key.withMMKVBytes { swiftmmkv_contains(self.handle, $0) }
+      let didExist = self.unnotifiedContains(key)
       return (key.withMMKVBytes { swiftmmkv_remove(self.handle, $0) }, didExist)
     }
     self.operationDidFinish()
@@ -227,9 +231,7 @@ extension MMKVStore {
   /// Removes every key in `keys` and its value.
   public func removeValues(forKeys keys: some Sequence<String>) {
     let removed = self.locked {
-      let existing = keys.filter { key in
-        key.withMMKVBytes { swiftmmkv_contains(self.handle, $0) }
-      }
+      let existing = keys.filter { self.unnotifiedContains($0) }
       self.remove(existing)
       return existing
     }
