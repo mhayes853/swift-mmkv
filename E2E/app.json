@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "SwiftMMKV E2E",
+    "slug": "swift-mmkv-e2e",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "bundleIdentifier": "dev.swiftmmkv.e2e",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "dev.swiftmmkv.e2e"
+    },
+    "plugins": [
+      "expo-build-properties"
+    ]
+  }
+}
