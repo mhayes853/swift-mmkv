@@ -3,6 +3,7 @@
 #include "MMBuffer.h"
 #include "MMKV.h"
 #include "MMKVHandler.h"
+#include "MMKVLog.h"
 #include "MemoryFile.h"
 
 #include <atomic>
@@ -47,7 +48,6 @@ void installHandlerOnce() {
   static std::once_flag once;
   std::call_once(once, [] {
     static Handler handler;
-    MMKV::setLogLevel(MMKVLogWarning);
     MMKV::registerHandler(&handler);
   });
 }
@@ -65,6 +65,11 @@ inline std::string string(swiftmmkv_bytes bytes) { return std::string(view(bytes
 template <typename Value>
 bool set(swiftmmkv_store *store, swiftmmkv_bytes key, const Value &value, uint32_t expiresIn) {
   auto kv = core(store);
+  // The core rejects a read-only write only when it has to grow the file. Overwriting a key in
+  // place writes straight into the read-only mapping and crashes, so writes are refused here.
+  if (kv->isReadOnly()) {
+    return false;
+  }
   if (expiresIn == MMKV::ExpireNever) {
     return kv->set(value, view(key));
   }
@@ -100,7 +105,10 @@ swiftmmkv_store *swiftmmkv_open(const swiftmmkv_configuration *configuration) {
   }
 
   // Resolving a namespace performs the core's minimal initialization, so no global root
-  // directory ever has to be chosen.
+  // directory ever has to be chosen. Initializing logs at the info level, and the core's own
+  // setter does nothing until it is initialized, so the level is assigned directly first.
+  static std::once_flag logLevelOnce;
+  std::call_once(logLevelOnce, [] { g_currentLogLevel = MMKVLogWarning; });
   auto nameSpace = MMKV::nameSpace(rootDirectory);
   installHandlerOnce();
 
@@ -262,10 +270,16 @@ void swiftmmkv_keys(swiftmmkv_store *store, void *context, swiftmmkv_bytes_callb
 }
 
 bool swiftmmkv_remove(swiftmmkv_store *store, swiftmmkv_bytes key) {
+  if (core(store)->isReadOnly()) {
+    return false;
+  }
   return core(store)->removeValueForKey(view(key));
 }
 
 bool swiftmmkv_remove_many(swiftmmkv_store *store, const swiftmmkv_bytes *keys, size_t count) {
+  if (core(store)->isReadOnly()) {
+    return false;
+  }
   std::vector<std::string> strings;
   strings.reserve(count);
   for (size_t index = 0; index < count; index++) {
