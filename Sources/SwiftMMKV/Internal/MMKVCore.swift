@@ -223,6 +223,14 @@ extension MMKVCore {
     return try body()
   }
 
+  var totalSize: Int {
+    mmkv_total_size(self.handle)
+  }
+
+  var actualSize: Int {
+    mmkv_actual_size(self.handle)
+  }
+
   func checkContentChanged() {
     mmkv_check_content_changed(self.handle)
   }

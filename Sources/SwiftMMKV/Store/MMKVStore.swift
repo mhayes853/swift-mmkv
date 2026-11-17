@@ -418,6 +418,24 @@ extension MMKVStore {
 // MARK: - Maintenance
 
 extension MMKVStore {
+  /// The size of the store's file in bytes, including the space no value occupies.
+  ///
+  /// The file grows as values are written and only shrinks when it is trimmed, by ``trim()``
+  /// or by removing every key.
+  public var byteSize: Int {
+    defer { self.core.operationDidFinish() }
+    return self.core.totalSize
+  }
+
+  /// The number of bytes of the store's file that hold data.
+  ///
+  /// This includes the values that removed and overwritten keys leave behind until the file is
+  /// next rewritten, so it is not the size of the store's current values.
+  public var usedByteSize: Int {
+    defer { self.core.operationDidFinish() }
+    return self.core.actualSize
+  }
+
   /// Rewrites the store's file without the space left behind by removed and overwritten values.
   public func trim() {
     self.core.trim()

@@ -111,6 +111,16 @@ store.withExclusiveLock { store in
 }
 ```
 
+A store's file grows as values are written and does not shrink by itself. `byteSize` is the size
+of the file, `usedByteSize` is how much of it holds data, and `trim()` rewrites the file without
+the space that removed and overwritten values left behind:
+
+```swift
+if store.byteSize > 4 * 1024 * 1024 {
+  store.trim()
+}
+```
+
 ## Store directories
 
 An `MMKVDirectory` names the directory a store's files live in, and answers questions about the

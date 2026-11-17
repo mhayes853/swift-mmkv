@@ -209,6 +209,13 @@ void mmkv_unlock(mmkv_store *_Nonnull store)
 
 // Maintenance.
 
+/// The size of the store's file in bytes.
+size_t mmkv_total_size(mmkv_store *_Nonnull store)
+  CSWIFTMMKV_SYMBOL(total_size);
+/// The number of bytes of the store's file that hold data.
+size_t mmkv_actual_size(mmkv_store *_Nonnull store)
+  CSWIFTMMKV_SYMBOL(actual_size);
+
 void mmkv_trim(mmkv_store *_Nonnull store)
   CSWIFTMMKV_SYMBOL(trim);
 void mmkv_sync(mmkv_store *_Nonnull store)

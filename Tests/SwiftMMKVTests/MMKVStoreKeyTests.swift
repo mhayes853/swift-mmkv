@@ -67,6 +67,28 @@ import Testing
     #expect(store.value(forKey: "settings.volume", as: Double.self) == 3)
   }
 
+  @Test func `Reports The Size Of Its File And Of The Data In It`() throws {
+    let rootDirectory = temporaryRootDirectory()
+    let store = try makeStore(rootDirectory: rootDirectory)
+    let path = "\(rootDirectory)/\(MMKVConfiguration.defaultID)"
+    #expect(store.byteSize == (try fileSize(atPath: path)))
+    #expect(store.byteSize > 0)
+    let emptySize = store.byteSize
+    let emptyUsedSize = store.usedByteSize
+
+    for index in 0..<64 {
+      store.set(String(repeating: "x", count: 16_384), forKey: "blob\(index)")
+    }
+    #expect(store.byteSize == (try fileSize(atPath: path)))
+    #expect(store.byteSize > emptySize)
+    #expect(store.usedByteSize >= 64 * 16_384)
+    #expect(store.usedByteSize <= store.byteSize)
+
+    store.removeAll()
+    #expect(store.byteSize == emptySize)
+    #expect(store.usedByteSize == emptyUsedSize)
+  }
+
   @Test func `Trimming After A Filtered Removal Shrinks The File`() throws {
     let rootDirectory = temporaryRootDirectory()
     let store = try makeStore(rootDirectory: rootDirectory)
