@@ -22,7 +22,23 @@ struct MMKVCore: Sendable {
       throw .openFailed(id: configuration.id, directory: configuration.directory)
     }
     self.handle = handle
-    self.state = MMKVStoreState.shared(for: handle, id: configuration.id)
+    self.state = MMKVStoreState.shared(
+      for: handle,
+      id: configuration.id,
+      isMultiProcess: configuration.mode == .multiProcess
+    )
+  }
+
+  /// Runs an operation that takes the store's file lock, unless the store is suspended.
+  ///
+  /// - Returns: `nil`, without running `body`, if the store is suspended.
+  private func perform<R, E: Error>(
+    _ body: (OpaquePointer) throws(E) -> R
+  ) throws(E) -> R? {
+    guard let gate = self.state.suspensionGate else { return try body(self.handle) }
+    guard gate.enter() else { return nil }
+    defer { gate.leave() }
+    return try body(self.handle)
   }
 
   /// Tells listeners about anything the core noticed while it held its locks. Called once an
@@ -36,77 +52,97 @@ struct MMKVCore: Sendable {
 
 extension MMKVCore {
   func bool(forKey key: String) -> Bool? {
-    var value = false
-    return key.withMMKVBytes { mmkv_get_bool(self.handle, $0, &value) } ? value : nil
+    self.perform { handle in
+      var value = false
+      return key.withMMKVBytes { mmkv_get_bool(handle, $0, &value) } ? value : nil
+    } ?? nil
   }
 
   func int32(forKey key: String) -> Int32? {
-    var value: Int32 = 0
-    return key.withMMKVBytes { mmkv_get_int32(self.handle, $0, &value) } ? value : nil
+    self.perform { handle in
+      var value: Int32 = 0
+      return key.withMMKVBytes { mmkv_get_int32(handle, $0, &value) } ? value : nil
+    } ?? nil
   }
 
   func uint32(forKey key: String) -> UInt32? {
-    var value: UInt32 = 0
-    return key.withMMKVBytes { mmkv_get_uint32(self.handle, $0, &value) } ? value : nil
+    self.perform { handle in
+      var value: UInt32 = 0
+      return key.withMMKVBytes { mmkv_get_uint32(handle, $0, &value) } ? value : nil
+    } ?? nil
   }
 
   func int64(forKey key: String) -> Int64? {
-    var value: Int64 = 0
-    return key.withMMKVBytes { mmkv_get_int64(self.handle, $0, &value) } ? value : nil
+    self.perform { handle in
+      var value: Int64 = 0
+      return key.withMMKVBytes { mmkv_get_int64(handle, $0, &value) } ? value : nil
+    } ?? nil
   }
 
   func uint64(forKey key: String) -> UInt64? {
-    var value: UInt64 = 0
-    return key.withMMKVBytes { mmkv_get_uint64(self.handle, $0, &value) } ? value : nil
+    self.perform { handle in
+      var value: UInt64 = 0
+      return key.withMMKVBytes { mmkv_get_uint64(handle, $0, &value) } ? value : nil
+    } ?? nil
   }
 
   func float(forKey key: String) -> Float? {
-    var value: Float = 0
-    return key.withMMKVBytes { mmkv_get_float(self.handle, $0, &value) } ? value : nil
+    self.perform { handle in
+      var value: Float = 0
+      return key.withMMKVBytes { mmkv_get_float(handle, $0, &value) } ? value : nil
+    } ?? nil
   }
 
   func double(forKey key: String) -> Double? {
-    var value: Double = 0
-    return key.withMMKVBytes { mmkv_get_double(self.handle, $0, &value) } ? value : nil
+    self.perform { handle in
+      var value: Double = 0
+      return key.withMMKVBytes { mmkv_get_double(handle, $0, &value) } ? value : nil
+    } ?? nil
   }
 
   func string(forKey key: String) -> String? {
-    key.withMMKVBytes { key in
-      withCallbackBytes { context, callback in
-        mmkv_get_string(self.handle, key, context, callback)
-      } _: { buffer in
-        String(decoding: buffer, as: UTF8.self)
+    self.perform { handle in
+      key.withMMKVBytes { key in
+        withCallbackBytes { context, callback in
+          mmkv_get_string(handle, key, context, callback)
+        } _: { buffer in
+          String(decoding: buffer, as: UTF8.self)
+        }
       }
-    }
+    } ?? nil
   }
 
   func strings(forKey key: String) -> [String]? {
     var strings = [String]()
-    let hasValue = key.withMMKVBytes { key in
-      forEachCallbackBytes { context, callback in
-        mmkv_get_strings(self.handle, key, context, callback)
-      } _: { buffer in
-        strings.append(String(decoding: buffer, as: UTF8.self))
+    let hasValue = self.perform { handle in
+      key.withMMKVBytes { key in
+        forEachCallbackBytes { context, callback in
+          mmkv_get_strings(handle, key, context, callback)
+        } _: { buffer in
+          strings.append(String(decoding: buffer, as: UTF8.self))
+        }
       }
     }
-    return hasValue ? strings : nil
+    return hasValue == true ? strings : nil
   }
 
   func withBytes<R, E: Error>(
     forKey key: String,
     _ body: (RawSpan) throws(E) -> R
   ) throws(E) -> R? {
-    try key
-      .withMMKVBytes { key in
-        Result { () throws(E) -> R? in
-          try withCallbackBytes { context, callback in
-            mmkv_get_bytes(self.handle, key, context, callback)
-          } _: { (buffer: UnsafeRawBufferPointer) throws(E) -> R in
-            try body(buffer.bytes)
+    try self.perform { (handle: OpaquePointer) throws(E) -> R? in
+      try key
+        .withMMKVBytes { key in
+          Result { () throws(E) -> R? in
+            try withCallbackBytes { context, callback in
+              mmkv_get_bytes(handle, key, context, callback)
+            } _: { (buffer: UnsafeRawBufferPointer) throws(E) -> R in
+              try body(buffer.bytes)
+            }
           }
         }
-      }
-      .get()
+        .get()
+    } ?? nil
   }
 }
 
@@ -114,58 +150,78 @@ extension MMKVCore {
 
 extension MMKVCore {
   func set(_ value: Bool, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    key.withMMKVBytes { mmkv_set_bool(self.handle, $0, value, expiresInSeconds) }
+    self.perform { handle in
+      key.withMMKVBytes { mmkv_set_bool(handle, $0, value, expiresInSeconds) }
+    } ?? false
   }
 
   func set(_ value: Int32, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    key.withMMKVBytes { mmkv_set_int32(self.handle, $0, value, expiresInSeconds) }
+    self.perform { handle in
+      key.withMMKVBytes { mmkv_set_int32(handle, $0, value, expiresInSeconds) }
+    } ?? false
   }
 
   func set(_ value: UInt32, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    key.withMMKVBytes { mmkv_set_uint32(self.handle, $0, value, expiresInSeconds) }
+    self.perform { handle in
+      key.withMMKVBytes { mmkv_set_uint32(handle, $0, value, expiresInSeconds) }
+    } ?? false
   }
 
   func set(_ value: Int64, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    key.withMMKVBytes { mmkv_set_int64(self.handle, $0, value, expiresInSeconds) }
+    self.perform { handle in
+      key.withMMKVBytes { mmkv_set_int64(handle, $0, value, expiresInSeconds) }
+    } ?? false
   }
 
   func set(_ value: UInt64, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    key.withMMKVBytes { mmkv_set_uint64(self.handle, $0, value, expiresInSeconds) }
+    self.perform { handle in
+      key.withMMKVBytes { mmkv_set_uint64(handle, $0, value, expiresInSeconds) }
+    } ?? false
   }
 
   func set(_ value: Float, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    key.withMMKVBytes { mmkv_set_float(self.handle, $0, value, expiresInSeconds) }
+    self.perform { handle in
+      key.withMMKVBytes { mmkv_set_float(handle, $0, value, expiresInSeconds) }
+    } ?? false
   }
 
   func set(_ value: Double, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    key.withMMKVBytes { mmkv_set_double(self.handle, $0, value, expiresInSeconds) }
+    self.perform { handle in
+      key.withMMKVBytes { mmkv_set_double(handle, $0, value, expiresInSeconds) }
+    } ?? false
   }
 
   func set(_ value: String, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    value.withMMKVBytes { value in
-      key.withMMKVBytes { mmkv_set_string(self.handle, $0, value, expiresInSeconds) }
-    }
+    self.perform { handle in
+      value.withMMKVBytes { value in
+        key.withMMKVBytes { mmkv_set_string(handle, $0, value, expiresInSeconds) }
+      }
+    } ?? false
   }
 
   func set(_ value: [String], forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    value.withMMKVBytes { values in
-      key.withMMKVBytes {
-        mmkv_set_strings(self.handle, $0, values.baseAddress, values.count, expiresInSeconds)
+    self.perform { handle in
+      value.withMMKVBytes { values in
+        key.withMMKVBytes {
+          mmkv_set_strings(handle, $0, values.baseAddress, values.count, expiresInSeconds)
+        }
       }
-    }
+    } ?? false
   }
 
   func set(bytes: RawSpan, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    bytes.withUnsafeBytes { buffer in
-      key.withMMKVBytes {
-        mmkv_set_bytes(
-          self.handle,
-          $0,
-          mmkv_bytes(bytes: buffer.baseAddress, count: buffer.count),
-          expiresInSeconds
-        )
+    self.perform { handle in
+      bytes.withUnsafeBytes { buffer in
+        key.withMMKVBytes {
+          mmkv_set_bytes(
+            handle,
+            $0,
+            mmkv_bytes(bytes: buffer.baseAddress, count: buffer.count),
+            expiresInSeconds
+          )
+        }
       }
-    }
+    } ?? false
   }
 }
 
@@ -173,37 +229,41 @@ extension MMKVCore {
 
 extension MMKVCore {
   var count: Int {
-    mmkv_count(self.handle)
+    self.perform { mmkv_count($0) } ?? 0
   }
 
   var keys: Set<String> {
     var keys = Set<String>()
-    _ = forEachCallbackBytes { context, callback in
-      mmkv_keys(self.handle, context, callback)
-      return true
-    } _: { buffer in
-      keys.insert(String(decoding: buffer, as: UTF8.self))
+    self.perform { handle in
+      _ = forEachCallbackBytes { context, callback in
+        mmkv_keys(handle, context, callback)
+        return true
+      } _: { buffer in
+        keys.insert(String(decoding: buffer, as: UTF8.self))
+      }
     }
     return keys
   }
 
   func contains(_ key: String) -> Bool {
-    key.withMMKVBytes { mmkv_contains(self.handle, $0) }
+    self.perform { handle in key.withMMKVBytes { mmkv_contains(handle, $0) } } ?? false
   }
 
   func remove(_ key: String) -> Bool {
-    key.withMMKVBytes { mmkv_remove(self.handle, $0) }
+    self.perform { handle in key.withMMKVBytes { mmkv_remove(handle, $0) } } ?? false
   }
 
   func remove(_ keys: [String]) {
     guard !keys.isEmpty else { return }
-    keys.withMMKVBytes { keys in
-      _ = mmkv_remove_many(self.handle, keys.baseAddress, keys.count)
+    self.perform { handle in
+      keys.withMMKVBytes { keys in
+        _ = mmkv_remove_many(handle, keys.baseAddress, keys.count)
+      }
     }
   }
 
   func removeAll(keepingCapacity: Bool) {
-    mmkv_remove_all(self.handle, keepingCapacity)
+    self.perform { mmkv_remove_all($0, keepingCapacity) }
   }
 }
 
@@ -212,7 +272,26 @@ extension MMKVCore {
 extension MMKVCore {
   /// - Returns: The number of keys copied from `source`.
   func importAll(from source: MMKVCore) -> Int {
-    mmkv_import(self.handle, source.handle)
+    self.perform { handle in
+      source.perform { mmkv_import(handle, $0) } ?? 0
+    } ?? 0
+  }
+}
+
+// MARK: - Suspension
+
+extension MMKVCore {
+  var isSuspended: Bool {
+    self.state.suspensionGate?.isSuspended ?? false
+  }
+
+  func suspend() {
+    self.state.suspensionGate?.suspend()
+  }
+
+  /// - Returns: Whether the store was suspended.
+  func resume() -> Bool {
+    self.state.suspensionGate?.resume() ?? false
   }
 }
 
@@ -224,49 +303,58 @@ extension MMKVCore {
   /// Listeners are not told about an external change while the lock is held, because a listener
   /// that waits on another thread would deadlock against it. They are told once the outermost
   /// call releases the lock.
+  ///
+  /// While the store is suspended `body` runs without the lock, and every operation in it is
+  /// turned away.
   func locked<R, E: Error>(_ body: () throws(E) -> R) throws(E) -> R {
+    let gate = self.state.suspensionGate
+    guard gate?.enter() ?? true else { return try body() }
     mmkv_lock(self.handle)
     self.state.beginDeferringExternalChanges()
     defer {
       self.state.endDeferringExternalChanges()
       mmkv_unlock(self.handle)
+      gate?.leave()
       self.state.deliverPendingExternalChange()
     }
     return try body()
   }
 
   var totalSize: Int {
-    mmkv_total_size(self.handle)
+    self.perform { mmkv_total_size($0) } ?? 0
   }
 
   var actualSize: Int {
-    mmkv_actual_size(self.handle)
+    self.perform { mmkv_actual_size($0) } ?? 0
   }
 
   func checkContentChanged() {
-    mmkv_check_content_changed(self.handle)
+    self.perform { mmkv_check_content_changed($0) }
   }
 
   func trim() {
-    mmkv_trim(self.handle)
+    self.perform { mmkv_trim($0) }
   }
 
   func sync() {
-    mmkv_sync(self.handle)
+    self.perform { mmkv_sync($0) }
   }
 
   func rekey(_ encryption: MMKVConfiguration.Encryption?) throws(MMKVError) {
     if let encryption, !encryption.isValid {
       throw .invalidEncryptionKey
     }
-    let didRekey = (encryption?.key ?? [])
-      .withUnsafeBytes { key in
-        mmkv_rekey(
-          self.handle,
-          encryption.cValue,
-          mmkv_bytes(bytes: key.baseAddress, count: key.count)
-        )
-      }
+    let didRekey = self.perform { handle in
+      (encryption?.key ?? [])
+        .withUnsafeBytes { key in
+          mmkv_rekey(
+            handle,
+            encryption.cValue,
+            mmkv_bytes(bytes: key.baseAddress, count: key.count)
+          )
+        }
+    }
+    guard let didRekey else { throw .storeIsSuspended(id: self.state.id) }
     guard didRekey else { throw .rekeyFailed }
   }
 }

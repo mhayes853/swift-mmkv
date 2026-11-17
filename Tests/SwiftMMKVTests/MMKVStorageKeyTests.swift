@@ -109,6 +109,25 @@
       #expect(username == "blob jr")
     }
 
+    @Test func `Keeps Its Value And Reports Errors While The Store Is Suspended`() throws {
+      let store = try makeStore(mode: .multiProcess)
+      store.set("blob", forKey: "username")
+      @Shared(.mmkv("username", store: store)) var username = "default"
+      #expect(username == "blob")
+
+      store.suspend()
+      $username.withLock { $0 = "blob jr" }
+      #expect($username.saveError as? MMKVError == .storeIsSuspended(id: store.id))
+
+      @Shared(.mmkv("username", store: store)) var loadedWhileSuspended = "default"
+      #expect(loadedWhileSuspended == "blob jr")
+
+      store.resume()
+      #expect(username == "blob")
+      #expect($username.loadError == nil)
+      #expect(store["username", as: String.self] == "blob")
+    }
+
     @Test func `A Rejected Write Is Reported As A Save Error`() throws {
       let store = try makeStore(itemSizeLimit: 16)
       @Shared(.mmkv("text", store: store)) var text = ""

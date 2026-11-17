@@ -18,6 +18,9 @@ extension MMKVStore {
   /// once, and by several tasks at a time. A consumer that falls behind skips to the newest
   /// value rather than receiving every one in between.
   ///
+  /// While the store is suspended the sequence produces nothing, and it produces the store's
+  /// value again when the store resumes.
+  ///
   /// ## Repeated values
   ///
   /// The sequence produces an element whenever `key` is written, even with the value it
@@ -98,14 +101,25 @@ public struct MMKVValues<Value: MMKVValue & Sendable>: AsyncSequence, Sendable {
     }
 
     public mutating func next() async -> Value?? {
-      guard await self.signals.next() else { return nil }
-      return .some(self.store.value(forKey: self.key, as: Value.self))
+      while await self.signals.next() {
+        if let element = self.read() { return element }
+      }
+      return nil
     }
 
     @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
     public mutating func next(isolation actor: isolated (any Actor)?) async -> Value?? {
-      guard await self.signals.next(isolation: actor) else { return nil }
-      return .some(self.store.value(forKey: self.key, as: Value.self))
+      while await self.signals.next(isolation: actor) {
+        if let element = self.read() { return element }
+      }
+      return nil
+    }
+
+    /// Reads the value, or returns `nil` if the store is suspended and turned the read away.
+    /// Resuming the store signals a change, which reads the value again.
+    private func read() -> Value?? {
+      let value = self.store.value(forKey: self.key, as: Value.self)
+      return value == nil && self.store.isSuspended ? nil : .some(value)
     }
   }
 }
@@ -148,20 +162,29 @@ public struct MMKVDecodedValues<
     }
 
     public mutating func next() async throws -> Value?? {
-      guard await self.signals?.next() == true else { return nil }
-      return .some(try self.decodeOrFinish())
+      while await self.signals?.next() == true {
+        if let element = try self.decodeOrFinish() { return element }
+      }
+      return nil
     }
 
     @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
     public mutating func next(isolation actor: isolated (any Actor)?) async throws -> Value?? {
-      guard await self.signals?.next(isolation: actor) == true else { return nil }
-      return .some(try self.decodeOrFinish())
+      while await self.signals?.next(isolation: actor) == true {
+        if let element = try self.decodeOrFinish() { return element }
+      }
+      return nil
     }
 
     /// Decodes the value, ending the sequence if it cannot be decoded.
-    private mutating func decodeOrFinish() throws -> Value? {
+    ///
+    /// - Returns: `nil` if the store is suspended and turned the read away. Resuming the store
+    ///   signals a change, which reads the value again.
+    private mutating func decodeOrFinish() throws -> Value?? {
       do {
-        return try self.store.decode(Value.self, forKey: self.key, with: self.decoder)
+        return .some(try self.store.decode(Value.self, forKey: self.key, with: self.decoder))
+      } catch MMKVError.storeIsSuspended {
+        return nil
       } catch {
         self.signals = nil
         throw error

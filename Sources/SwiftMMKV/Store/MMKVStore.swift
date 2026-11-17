@@ -451,6 +451,50 @@ extension MMKVStore {
   }
 }
 
+// MARK: - Suspension
+
+extension MMKVStore {
+  /// Whether the store is suspended.
+  public var isSuspended: Bool {
+    self.core.isSuspended
+  }
+
+  /// Stops the store from taking its file lock, so that the process can be suspended safely.
+  ///
+  /// iOS terminates an app that is suspended while it holds a lock on a file in a container it
+  /// shares with other processes, such as an app group's. A multi-process store takes such a
+  /// lock for the length of every read and write. Suspend the store when the app is about to
+  /// stop running, and resume it when the app runs again.
+  ///
+  /// This turns new operations away, waits for those other threads have under way, and
+  /// returns once nothing holds the lock. Until ``resume()``:
+  ///
+  /// - Reads return `nil`, and ``keys`` and ``count`` are empty.
+  /// - Writes and removals do nothing, and return `false` where they return a result.
+  /// - Throwing operations throw ``MMKVError/storeIsSuspended(id:)``.
+  /// - ``withExclusiveLock(_:)`` runs its body without the lock.
+  ///
+  /// Every ``MMKVStore`` over the same files is suspended together. Suspending twice has no
+  /// further effect. A single-process store takes no file lock, so suspending one does nothing
+  /// and it never reports being suspended.
+  ///
+  /// Do not call this from inside ``withExclusiveLock(_:)``: the lock is then held until the
+  /// body returns.
+  public func suspend() {
+    self.core.suspend()
+  }
+
+  /// Lets the store take its file lock again.
+  ///
+  /// Listeners are told with ``Change/external`` if the store was suspended, because reads
+  /// were turned away in the meantime and another process may have changed the store.
+  public func resume() {
+    if self.core.resume() {
+      self.core.state.notify(.external)
+    }
+  }
+}
+
 // MARK: - Maintenance
 
 extension MMKVStore {
@@ -489,8 +533,9 @@ extension MMKVStore {
 
   /// Re-encrypts the store with `encryption`, or decrypts it when `encryption` is `nil`.
   ///
-  /// - Throws: ``MMKVError/invalidEncryptionKey`` if the key is empty or too long, or
-  ///   ``MMKVError/rekeyFailed`` if the store could not be rewritten.
+  /// - Throws: ``MMKVError/invalidEncryptionKey`` if the key is empty or too long,
+  ///   ``MMKVError/rekeyFailed`` if the store could not be rewritten, or
+  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
   public func rekey(_ encryption: MMKVConfiguration.Encryption?) throws(MMKVError) {
     defer { self.core.operationDidFinish() }
     try self.core.rekey(encryption)

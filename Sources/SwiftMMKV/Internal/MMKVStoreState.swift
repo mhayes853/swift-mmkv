@@ -15,10 +15,14 @@ final class MMKVStoreState: Sendable {
   }
 
   let id: String
+  /// Turns operations away while the store is suspended. A single-process store takes no file
+  /// lock, so it has nothing to suspend.
+  let suspensionGate: SuspensionGate?
   private let registrations = Lock(Registrations())
 
-  private init(id: String) {
+  private init(id: String, isMultiProcess: Bool) {
     self.id = id
+    self.suspensionGate = isMultiProcess ? SuspensionGate() : nil
   }
 
   var hasListeners: Bool {
@@ -79,14 +83,20 @@ extension MMKVStoreState {
   private static let all = Lock([UInt: MMKVStoreState]())
 
   /// Returns the state shared by every store over `handle`.
-  static func shared(for handle: OpaquePointer, id: String) -> MMKVStoreState {
+  ///
+  /// The first open of an instance decides its mode, as it does in the core.
+  static func shared(
+    for handle: OpaquePointer,
+    id: String,
+    isMultiProcess: Bool
+  ) -> MMKVStoreState {
     Self.installContentChangedCallback
     return Self.all.withLock { states in
       let key = UInt(bitPattern: handle)
       if let state = states[key] {
         return state
       }
-      let state = MMKVStoreState(id: id)
+      let state = MMKVStoreState(id: id, isMultiProcess: isMultiProcess)
       states[key] = state
       return state
     }

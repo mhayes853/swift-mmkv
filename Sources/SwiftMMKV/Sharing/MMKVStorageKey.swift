@@ -18,6 +18,10 @@
   /// It follows writes made through this package as they happen. A write made by another
   /// process, or by another copy of MMKV such as react-native-mmkv's, is only seen when the
   /// store is next read or written, or when ``MMKVStore/checkForExternalChanges()`` is called.
+  ///
+  /// While the store is suspended the state keeps its value, and loading or saving reports
+  /// ``MMKVError/storeIsSuspended(id:)`` through `loadError` or `saveError`. The state loads
+  /// again when the store resumes.
   public struct MMKVStorageKey<Value: Sendable>: SharedKey {
     private let store: MMKVStore
     private let key: String
@@ -42,7 +46,7 @@
     }
 
     public func load(context: LoadContext<Value>, continuation: LoadContinuation<Value>) {
-      continuation.resume(with: Result { try self.loadValue(self.store, self.key) })
+      continuation.resume(with: Result { try self.loadUnlessSuspended() })
     }
 
     public func subscribe(
@@ -50,13 +54,24 @@
       subscriber: SharedSubscriber<Value>
     ) -> SharedSubscription {
       let subscription = self.store.subscribe(forKey: self.key) {
-        subscriber.yield(with: Result { try self.loadValue(self.store, self.key) })
+        subscriber.yield(with: Result { try self.loadUnlessSuspended() })
       }
       return SharedSubscription { subscription.cancel() }
     }
 
     public func save(_ value: Value, context: SaveContext, continuation: SaveContinuation) {
       continuation.resume(with: Result { try self.saveValue(value, self.store, self.key) })
+    }
+
+    /// A suspended store turns reads away, which looks like the key having no value. The store
+    /// is asked afterwards, so that the state keeps what it has instead of losing it. Resuming
+    /// the store notifies the subscription, which loads the value again.
+    private func loadUnlessSuspended() throws -> Value? {
+      let value = try self.loadValue(self.store, self.key)
+      if self.store.isSuspended {
+        throw MMKVError.storeIsSuspended(id: self.store.id)
+      }
+      return value
     }
   }
 
@@ -189,7 +204,10 @@
   extension MMKVStore {
     /// Runs a write to `key`, turning a write the store did not accept into an error.
     fileprivate func write(_ key: String, _ body: () throws -> Bool) throws {
-      guard try body() else { throw MMKVError.writeFailed(key: key) }
+      guard try body() else {
+        throw self.isSuspended
+          ? MMKVError.storeIsSuspended(id: self.id) : MMKVError.writeFailed(key: key)
+      }
     }
   }
 

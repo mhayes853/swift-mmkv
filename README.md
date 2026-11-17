@@ -268,6 +268,35 @@ let store = try MMKVStore(
 The app and each extension are separate processes, so every one of them must open the store in
 multi-process mode.
 
+### Suspending a shared store
+
+iOS terminates an app, with the code `0xDEAD10CC`, if it is suspended while it holds a lock on a
+file in a container it shares with other processes. A multi-process store takes such a lock for
+the length of every read and write, so a write on a background thread at the wrong moment is
+enough.
+
+`suspend()` stops a store from taking its lock. It turns new operations away, waits for the ones
+already under way, and returns once nothing holds the lock. `resume()` lets operations through
+again:
+
+```swift
+store.suspend()  // The app is about to stop running.
+store.resume()   // The app is running again.
+```
+
+While a store is suspended:
+
+- Reads return `nil`, and `keys` and `count` are empty. `isSuspended` tells this apart from a
+  store that has no value.
+- Writes and removals do nothing, and return `false` where they return a result.
+- Throwing operations, such as `decode(_:forKey:)`, throw `MMKVError.storeIsSuspended`.
+- Async sequences of a key's values produce nothing.
+- `@Shared` state keeps its value and reports the error through `loadError` or `saveError`. A
+  change made to the state is not saved, and is replaced by the store's value on resuming.
+
+Resuming notifies listeners with `.external`, so sequences and shared state read the store again.
+A single-process store takes no file lock, so suspending one does nothing.
+
 ## The `Foundation` trait
 
 The library itself does not use Foundation. The `Foundation` trait, on by default, adds:
@@ -336,8 +365,6 @@ swift-sharing and its dependencies use Foundation, whether or not the `Foundatio
 - On iOS the store's files keep the default file protection. Upstream's Objective-C++ build
   relaxes it to "until first user authentication" so a store can be read while the device is
   locked; this package builds the core's POSIX variant, which does not.
-- There is no handling for a store in an App Group container being locked while the app is
-  suspended.
 - Backup and restore, log and recovery handlers, and encoding an `Encodable` value into store
   keys are not implemented yet.
 

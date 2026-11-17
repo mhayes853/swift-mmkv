@@ -42,7 +42,8 @@ extension MMKVStore {
   ///   - expiringIn: How long to keep the value. See ``set(_:forKey:expiringIn:)``.
   ///   - encoder: The encoder to use.
   /// - Returns: Whether the encoded value was stored.
-  /// - Throws: Whatever `encoder` throws, in which case nothing is stored.
+  /// - Throws: Whatever `encoder` throws, in which case nothing is stored, or
+  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
   @discardableResult
   public func encode<T: Encodable, Encoder: MMKVTopLevelEncoder>(
     _ value: T,
@@ -50,7 +51,11 @@ extension MMKVStore {
     expiringIn: Duration? = nil,
     with encoder: Encoder
   ) throws -> Bool where Encoder.Output: MMKVValue {
-    self.set(try encoder.encode(value), forKey: key, expiringIn: expiringIn)
+    let didStore = self.set(try encoder.encode(value), forKey: key, expiringIn: expiringIn)
+    if !didStore && self.isSuspended {
+      throw MMKVError.storeIsSuspended(id: self.id)
+    }
+    return didStore
   }
 
   /// Reads the value stored under `key` and decodes it as a `T` with `decoder`.
@@ -60,13 +65,20 @@ extension MMKVStore {
   /// ```
   ///
   /// - Returns: The value, or `nil` if the key has no value.
-  /// - Throws: Whatever `decoder` throws when the stored value does not decode.
+  /// - Throws: Whatever `decoder` throws when the stored value does not decode, or
+  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
   public func decode<T: Decodable, Decoder: MMKVTopLevelDecoder>(
     _ type: T.Type = T.self,
     forKey key: String,
     with decoder: Decoder
   ) throws -> T? where Decoder.Input: MMKVValue {
-    guard let input = self.value(forKey: key, as: Decoder.Input.self) else { return nil }
+    guard let input = self.value(forKey: key, as: Decoder.Input.self) else {
+      // A read that was turned away looks like a missing value, so the store is asked afterwards.
+      if self.isSuspended {
+        throw MMKVError.storeIsSuspended(id: self.id)
+      }
+      return nil
+    }
     return try decoder.decode(type, from: input)
   }
 }

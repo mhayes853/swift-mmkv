@@ -26,4 +26,8 @@ public enum MMKVError: Error, Sendable, Hashable {
 
   /// The directory exists but its contents cannot be listed.
   case directoryUnreadable(MMKVDirectory)
+
+  /// The store is suspended, so it turned the operation away rather than take its file lock.
+  /// The operation can be tried again once the store is resumed.
+  case storeIsSuspended(id: String)
 }
