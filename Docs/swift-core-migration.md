@@ -138,7 +138,7 @@ differential tests and the benchmarks, so they keep running in CI. The README is
 
 | Phase | State |
 | --- | --- |
-| 0a. Benchmarks | Not started |
+| 0a. Benchmarks | Done: `Benchmarks/`, C++ results only until the Swift core opens stores |
 | 0b. Upstream tests | Not started |
 | 1. `CSwiftMMKVCrypto` | Not started |
 | 2. Format primitives | Not started |

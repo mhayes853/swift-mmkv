@@ -82,6 +82,12 @@ jobs:
       - name: Check core symbols are renamed
         run: Scripts/check-symbols.sh
 
+      # Keeps the benchmarks compiling. They are run by hand; see Benchmarks/README.md.
+      - name: Build benchmarks
+        run: swift build --package-path Benchmarks -c release
+        env:
+          BENCHMARK_DISABLE_JEMALLOC: "1"
+
   test-ios:
     name: iOS
     runs-on: macos-26
