@@ -1,4 +1,4 @@
-/// An error from opening or re-encrypting an ``MMKVStore``.
+/// An error from opening, re-encrypting, or removing an ``MMKVStore``.
 public enum MMKVError: Error, Sendable, Hashable {
   /// The store could not be opened, for example because its identifier or its directory's path
   /// is empty.
@@ -17,4 +17,7 @@ public enum MMKVError: Error, Sendable, Hashable {
   /// The store did not accept a write to `key`. A write fails when the key is empty, the store
   /// is read-only, or the pair exceeds the store's item size limit.
   case writeFailed(key: String)
+
+  /// The store is open in this process, so its files cannot be removed.
+  case storeIsOpen(id: String, directory: MMKVDirectory)
 }

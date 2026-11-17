@@ -3,6 +3,7 @@
 #include "MMBuffer.h"
 #include "MMKV.h"
 #include "MMKVHandler.h"
+#include "MMKV_IO.h"
 #include "MMKVLog.h"
 #include "MemoryFile.h"
 
@@ -11,6 +12,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 #ifdef __ANDROID__
@@ -50,6 +52,38 @@ void installHandlerOnce() {
     static Handler handler;
     MMKV::registerHandler(&handler);
   });
+}
+
+// Resolving a namespace performs the core's minimal initialization, so no global root directory
+// ever has to be chosen. Initializing logs at the info level, and the core's own setter does
+// nothing until it is initialized, so the level is assigned directly first.
+mmkv::NameSpace nameSpace(const std::string &rootDirectory) {
+  static std::once_flag logLevelOnce;
+  std::call_once(logLevelOnce, [] { g_currentLogLevel = MMKVLogWarning; });
+  auto nameSpace = MMKV::nameSpace(rootDirectory);
+  installHandlerOnce();
+  return nameSpace;
+}
+
+// The data files of every instance this shim has opened. The core frees an open instance when
+// its storage is removed, which would leave the Swift side holding a dangling pointer, so
+// removal is refused for these. Guarded by `g_openLock`, which is held across opening and
+// removing so that a store cannot be opened while it is being removed.
+std::mutex g_openLock;
+std::unordered_set<std::string> g_openPaths;
+
+// The paths a store's data file may have. Android may still be using the file name of an older
+// MMKV, which the core migrates away from when it can.
+std::vector<std::string> dataPaths(const std::string &id, const MMKVPath_t &rootDirectory) {
+#ifdef MMKV_ANDROID
+  return {
+    mappedKVPathWithID(id, &rootDirectory, MMKV_MULTI_PROCESS, true),
+    mappedKVPathWithID(
+      legacyMmapedKVKey(id, &rootDirectory), &rootDirectory, MMKV_MULTI_PROCESS, true),
+  };
+#else
+  return {mappedKVPathWithID(id, &rootDirectory, true)};
+#endif
 }
 
 inline MMKV *core(mmkv_store *store) { return reinterpret_cast<MMKV *>(store); }
@@ -104,13 +138,7 @@ mmkv_store *mmkv_open(const mmkv_configuration *configuration) {
     return nullptr;
   }
 
-  // Resolving a namespace performs the core's minimal initialization, so no global root
-  // directory ever has to be chosen. Initializing logs at the info level, and the core's own
-  // setter does nothing until it is initialized, so the level is assigned directly first.
-  static std::once_flag logLevelOnce;
-  std::call_once(logLevelOnce, [] { g_currentLogLevel = MMKVLogWarning; });
-  auto nameSpace = MMKV::nameSpace(rootDirectory);
-  installHandlerOnce();
+  auto nameSpace = ::nameSpace(rootDirectory);
 
   if (!configuration->read_only) {
     mmkv::mkPath(nameSpace.getRootDir());
@@ -132,7 +160,38 @@ mmkv_store *mmkv_open(const mmkv_configuration *configuration) {
   config.enableCompareBeforeSet = configuration->compare_before_set;
   config.itemSizeLimit = configuration->item_size_limit;
 
-  return reinterpret_cast<mmkv_store *>(nameSpace.mmkvWithID(id, config));
+  std::lock_guard lock(g_openLock);
+  auto kv = nameSpace.mmkvWithID(id, config);
+  if (kv) {
+    for (auto &path : dataPaths(id, nameSpace.getRootDir())) {
+      g_openPaths.insert(std::move(path));
+    }
+  }
+  return reinterpret_cast<mmkv_store *>(kv);
+}
+
+bool mmkv_storage_exists(mmkv_bytes id, mmkv_bytes rootDirectory) {
+  if (id.count == 0 || rootDirectory.count == 0) {
+    return false;
+  }
+  return nameSpace(string(rootDirectory)).checkExist(string(id));
+}
+
+int32_t mmkv_remove_storage(mmkv_bytes id, mmkv_bytes rootDirectory) {
+  if (id.count == 0 || rootDirectory.count == 0) {
+    return MMKV_REMOVE_STORAGE_MISSING;
+  }
+  auto nameSpace = ::nameSpace(string(rootDirectory));
+  auto storeID = string(id);
+
+  std::lock_guard lock(g_openLock);
+  for (const auto &path : dataPaths(storeID, nameSpace.getRootDir())) {
+    if (g_openPaths.contains(path)) {
+      return MMKV_REMOVE_STORAGE_OPEN;
+    }
+  }
+  return nameSpace.removeStorage(storeID) ? MMKV_REMOVE_STORAGE_REMOVED
+                                          : MMKV_REMOVE_STORAGE_MISSING;
 }
 
 bool mmkv_set_bool(

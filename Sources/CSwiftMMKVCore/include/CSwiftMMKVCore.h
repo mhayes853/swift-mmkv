@@ -67,6 +67,24 @@ void mmkv_set_content_changed_callback(mmkv_content_changed_callback _Nullable c
 mmkv_store *_Nullable mmkv_open(const mmkv_configuration *_Nonnull configuration)
   CSWIFTMMKV_SYMBOL(open);
 
+// Stores on disk.
+
+enum {
+  /// The store had no files to remove.
+  MMKV_REMOVE_STORAGE_MISSING = 0,
+  MMKV_REMOVE_STORAGE_REMOVED = 1,
+  /// The store is open in this process, so nothing was removed.
+  MMKV_REMOVE_STORAGE_OPEN = 2,
+};
+
+/// Whether both of a store's files exist. Does not open the store.
+bool mmkv_storage_exists(mmkv_bytes id, mmkv_bytes root_directory)
+  CSWIFTMMKV_SYMBOL(storage_exists);
+/// Deletes a store's files while holding its file lock, unless `mmkv_open` has returned an
+/// instance for it. Returns one of the `MMKV_REMOVE_STORAGE` values.
+int32_t mmkv_remove_storage(mmkv_bytes id, mmkv_bytes root_directory)
+  CSWIFTMMKV_SYMBOL(remove_storage);
+
 // Writes. Each returns whether the value was stored. A `expires_in_seconds` of zero never expires.
 
 bool mmkv_set_bool(

@@ -111,6 +111,23 @@ store.withExclusiveLock { store in
 }
 ```
 
+## Store directories
+
+An `MMKVDirectory` names the directory a store's files live in, and answers questions about the
+stores in it without opening them.
+
+```swift
+let directory = MMKVDirectory(path: "/path/to/app/files/mmkv")
+
+directory.containsStore(id: "session")  // false until the store has been written to
+try directory.removeStore(id: "session")
+```
+
+A store that is open in this process cannot be removed: `removeStore(id:)` throws
+`MMKVError.storeIsOpen`. A store stays open for the rest of the process once an `MMKVStore` has
+been created for it, so remove a store before opening it, or empty an open one with
+`removeAll()`.
+
 ## Change listeners
 
 ```swift
@@ -271,8 +288,7 @@ swift-sharing and its dependencies use Foundation, whether or not the `Foundatio
   locked; this package builds the core's POSIX variant, which does not.
 - There is no handling for a store in an App Group container being locked while the app is
   suspended.
-- Static operations (existence checks, removing a store's files, backup and restore), log and
-  recovery handlers, and encoding an `Encodable` value into store keys are not implemented yet.
+- Backup and restore, log and recovery handlers, and encoding an `Encodable` value into store keys are not implemented yet.
 
 ## The vendored core
 
