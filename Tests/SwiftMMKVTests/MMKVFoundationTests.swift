@@ -22,17 +22,13 @@
       #expect(store.value(forKey: "missing", as: Data.self) == nil)
     }
 
-    @Test func `A URL Root Directory Opens The Same Store As Its Path`() throws {
+    @Test func `A URL Directory Opens The Same Store As Its Path`() throws {
       let rootDirectory = temporaryRootDirectory()
-      let configuration = MMKVConfiguration(
-        rootDirectory: URL(fileURLWithPath: rootDirectory),
-        mode: .singleProcess
-      )
-      #expect(
-        configuration == MMKVConfiguration(rootDirectory: rootDirectory, mode: .singleProcess)
-      )
+      let directory = MMKVDirectory(url: URL(fileURLWithPath: rootDirectory))
+      #expect(directory == MMKVDirectory(path: rootDirectory))
 
-      try MMKVStore(configuration).set("value", forKey: "key")
+      try MMKVStore(MMKVConfiguration(directory: directory, mode: .singleProcess))
+        .set("value", forKey: "key")
       #expect(try makeStore(rootDirectory: rootDirectory)["key", as: String.self] == "value")
     }
 

@@ -24,7 +24,7 @@ func makeStore(
   try MMKVStore(
     MMKVConfiguration(
       id: id,
-      rootDirectory: rootDirectory,
+      directory: MMKVDirectory(path: rootDirectory),
       mode: mode,
       isReadOnly: isReadOnly,
       encryption: encryption,

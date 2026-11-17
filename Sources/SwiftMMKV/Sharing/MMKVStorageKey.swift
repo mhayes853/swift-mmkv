@@ -207,7 +207,7 @@
     ///   init() {
     ///     prepareDependencies {
     ///       $0.defaultMMKVStore = try! MMKVStore(
-    ///         MMKVConfiguration(rootDirectory: directory, mode: .multiProcess)
+    ///         MMKVConfiguration(directory: directory, mode: .multiProcess)
     ///       )
     ///     }
     ///   }
@@ -239,11 +239,12 @@
   extension MMKVStore {
     /// An empty store in a directory of its own, which the system cleans up.
     fileprivate static func temporary() -> MMKVStore {
-      let directory =
-        temporaryDirectory() + "swift-mmkv-sharing-"
-        + String(UInt64.random(in: .min ... .max), radix: 16)
+      let directory = MMKVDirectory(
+        path: temporaryDirectory() + "swift-mmkv-sharing-"
+          + String(UInt64.random(in: .min ... .max), radix: 16)
+      )
       do {
-        return try MMKVStore(MMKVConfiguration(rootDirectory: directory, mode: .singleProcess))
+        return try MMKVStore(MMKVConfiguration(directory: directory, mode: .singleProcess))
       } catch {
         fatalError("A temporary MMKV store could not be opened: \(error)")
       }

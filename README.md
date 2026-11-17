@@ -11,7 +11,10 @@ Swift, in the same app and at the same time, without converting any data.
 import SwiftMMKV
 
 let store = try MMKVStore(
-  MMKVConfiguration(rootDirectory: "/path/to/app/files/mmkv", mode: .singleProcess)
+  MMKVConfiguration(
+    directory: MMKVDirectory(path: "/path/to/app/files/mmkv"),
+    mode: .singleProcess
+  )
 )
 
 store.set("blob", forKey: "username")
@@ -168,7 +171,7 @@ export const storage = createMMKV({ id: 'mmkv.default', mode: 'multi-process' })
 let store = try MMKVStore(
   MMKVConfiguration(
     id: "mmkv.default",
-    rootDirectory: try MMKVConfiguration.reactNativeRootDirectory(),
+    directory: try .reactNative(),
     mode: .multiProcess
   )
 )
@@ -189,8 +192,9 @@ Things to know while both sides are live:
 
 - Neither side learns which key the other changed. Swift receives `.external`, and JavaScript
   listeners do not fire for native writes.
-- `reactNativeRootDirectory()` is only available on Apple platforms. On Android, pass
-  `context.filesDir` followed by `/mmkv`.
+- `MMKVDirectory.reactNative()` is only available on Apple platforms, and needs the `Foundation`
+  trait. On Android, pass the path of `context.filesDir` to
+  `MMKVDirectory.reactNative(filesDirectory:)`.
 - Avoid `expiringIn:` on a shared store. The first expiring write changes the file's format, and
   react-native-mmkv has no option for it.
 
@@ -238,7 +242,7 @@ Set it once when the app launches:
 ```swift
 prepareDependencies {
   $0.defaultMMKVStore = try! MMKVStore(
-    MMKVConfiguration(rootDirectory: directory, mode: .multiProcess)
+    MMKVConfiguration(directory: directory, mode: .multiProcess)
   )
 }
 ```

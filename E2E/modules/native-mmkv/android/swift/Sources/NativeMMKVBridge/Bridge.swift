@@ -42,7 +42,7 @@ public func open(
   // multi-process mode on both sides.
   let configuration = MMKVConfiguration(
     id: env.string(id),
-    rootDirectory: env.string(rootDirectory),
+    directory: MMKVDirectory(path: env.string(rootDirectory)),
     mode: .multiProcess,
     encryption: encryptionKey.map { .aes128(key: env.bytes($0)) }
   )

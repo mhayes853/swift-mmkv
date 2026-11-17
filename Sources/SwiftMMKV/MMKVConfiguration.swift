@@ -1,12 +1,12 @@
 /// Describes which MMKV store to open and how to open it.
 ///
-/// A store is a pair of files named after ``id`` inside ``rootDirectory``. Opening the same pair
+/// A store is a pair of files named after ``id`` inside ``directory``. Opening the same pair
 /// twice in one process returns the same underlying store, and the configuration of the first
 /// open wins.
 ///
 /// ```swift
 /// let configuration = MMKVConfiguration(
-///   rootDirectory: "/path/to/app/files/mmkv",
+///   directory: MMKVDirectory(path: "/path/to/app/files/mmkv"),
 ///   mode: .singleProcess
 /// )
 /// let store = try MMKVStore(configuration)
@@ -15,12 +15,12 @@ public struct MMKVConfiguration: Sendable, Hashable {
   /// The identifier react-native-mmkv, and MMKV itself, use for the default store.
   public static let defaultID = "mmkv.default"
 
-  /// The store's identifier, which names its files inside ``rootDirectory``.
+  /// The store's identifier, which names its files inside ``directory``.
   public var id: String
 
   /// The directory holding the store's files. It is created if it does not exist, unless the
   /// store is read-only.
-  public var rootDirectory: String
+  public var directory: MMKVDirectory
 
   /// Whether anything else may have the store's files open.
   public var mode: Mode
@@ -48,7 +48,7 @@ public struct MMKVConfiguration: Sendable, Hashable {
   ///
   /// - Parameters:
   ///   - id: The store's identifier.
-  ///   - rootDirectory: The directory holding the store's files.
+  ///   - directory: The directory holding the store's files.
   ///   - mode: Whether anything else may have the store's files open. There is no default
   ///     because the wrong choice corrupts data: see ``Mode``.
   ///   - isReadOnly: Whether writes are rejected.
@@ -59,7 +59,7 @@ public struct MMKVConfiguration: Sendable, Hashable {
   ///   - itemSizeLimit: The largest key-value pair the store accepts, in bytes.
   public init(
     id: String = MMKVConfiguration.defaultID,
-    rootDirectory: String,
+    directory: MMKVDirectory,
     mode: Mode,
     isReadOnly: Bool = false,
     encryption: Encryption? = nil,
@@ -69,7 +69,7 @@ public struct MMKVConfiguration: Sendable, Hashable {
     itemSizeLimit: Int? = nil
   ) {
     self.id = id
-    self.rootDirectory = rootDirectory
+    self.directory = directory
     self.mode = mode
     self.isReadOnly = isReadOnly
     self.encryption = encryption

@@ -15,48 +15,28 @@
     }
   }
 
-  extension MMKVConfiguration {
-    /// Creates a configuration whose root directory is a file URL. The parameters are those of
-    /// the initializer that takes the directory as a path.
-    public init(
-      id: String = MMKVConfiguration.defaultID,
-      rootDirectory: URL,
-      mode: Mode,
-      isReadOnly: Bool = false,
-      encryption: Encryption? = nil,
-      expectedCapacity: Int = 0,
-      recovery: Recovery = .discard,
-      compareBeforeSet: Bool = false,
-      itemSizeLimit: Int? = nil
-    ) {
-      self.init(
-        id: id,
-        rootDirectory: rootDirectory.path,
-        mode: mode,
-        isReadOnly: isReadOnly,
-        encryption: encryption,
-        expectedCapacity: expectedCapacity,
-        recovery: recovery,
-        compareBeforeSet: compareBeforeSet,
-        itemSizeLimit: itemSizeLimit
-      )
+  extension MMKVDirectory {
+    /// Creates a directory from a file URL.
+    public init(url: URL) {
+      self.init(path: url.path)
     }
   }
 
   #if canImport(Darwin)
-    extension MMKVConfiguration {
-      /// The directory react-native-mmkv keeps its stores in when its `path` option is not set.
+    extension MMKVDirectory {
+      /// The directory react-native-mmkv keeps its stores in on Apple platforms when its `path`
+      /// option is not set.
       ///
       /// That is the app group's container when the app's `Info.plist` has an
       /// `AppGroupIdentifier` key, and otherwise the `mmkv` directory inside the app's Documents
       /// directory, or inside its Caches directory on tvOS.
       ///
-      /// On Android the directory depends on the app's `Context`, so the app passes it instead:
-      /// react-native-mmkv uses `context.filesDir` followed by `/mmkv`.
+      /// On Android the directory depends on the app's `Context`, so the app passes its files
+      /// directory to ``reactNative(filesDirectory:)`` instead.
       ///
       /// - Throws: ``MMKVError/appGroupContainerUnavailable(identifier:)`` if the app group named
       ///   in `Info.plist` has no container this process can reach.
-      public static func reactNativeRootDirectory() throws(MMKVError) -> String {
+      public static func reactNative() throws(MMKVError) -> MMKVDirectory {
         if let identifier = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier")
           as? String
         {
@@ -67,7 +47,7 @@
           else {
             throw .appGroupContainerUnavailable(identifier: identifier)
           }
-          return container.path
+          return MMKVDirectory(url: container)
         }
         #if os(tvOS)
           let directory = FileManager.SearchPathDirectory.cachesDirectory
@@ -77,7 +57,7 @@
         let base =
           FileManager.default.urls(for: directory, in: .userDomainMask).first
           ?? FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("mmkv", isDirectory: true).path
+        return MMKVDirectory(url: base.appendingPathComponent("mmkv", isDirectory: true))
       }
     }
   #endif

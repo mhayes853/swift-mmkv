@@ -16,7 +16,7 @@ struct MMKVCore: Sendable {
     }
     let handle = configuration.withCConfiguration { mmkv_open(&$0) }
     guard let handle else {
-      throw .openFailed(id: configuration.id, rootDirectory: configuration.rootDirectory)
+      throw .openFailed(id: configuration.id, directory: configuration.directory)
     }
     self.handle = handle
     self.state = MMKVStoreState.shared(for: handle, id: configuration.id)
@@ -281,7 +281,7 @@ extension MMKVConfiguration.Encryption? {
 extension MMKVConfiguration {
   fileprivate func withCConfiguration<R>(_ body: (inout mmkv_configuration) -> R) -> R {
     self.id.withMMKVBytes { id in
-      self.rootDirectory.withMMKVBytes { rootDirectory in
+      self.directory.path.withMMKVBytes { rootDirectory in
         (self.encryption?.key ?? [])
           .withUnsafeBytes { key in
             var configuration = mmkv_configuration(

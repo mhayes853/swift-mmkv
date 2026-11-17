@@ -11,7 +11,7 @@ public final class NativeMMKVModule: Module {
     Name("NativeMMKV")
 
     Function("rootDirectory") { () -> String in
-      try MMKVConfiguration.reactNativeRootDirectory()
+      try MMKVDirectory.reactNative().path
     }
 
     Function("setString") { (store: StoreOptions, key: String, value: String) -> Bool in
@@ -111,7 +111,7 @@ private final class Stores: @unchecked Sendable {
       let store = try MMKVStore(
         MMKVConfiguration(
           id: options.id,
-          rootDirectory: MMKVConfiguration.reactNativeRootDirectory(),
+          directory: .reactNative(),
           mode: .multiProcess,
           encryption: options.encryptionKey.map { .aes128(key: $0) }
         )

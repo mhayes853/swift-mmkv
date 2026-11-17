@@ -5,7 +5,10 @@
 ///
 /// ```swift
 /// let store = try MMKVStore(
-///   MMKVConfiguration(rootDirectory: "/path/to/app/files/mmkv", mode: .singleProcess)
+///   MMKVConfiguration(
+///     directory: MMKVDirectory(path: "/path/to/app/files/mmkv"),
+///     mode: .singleProcess
+///   )
 /// )
 ///
 /// store.set("blob", forKey: "username")
@@ -32,7 +35,7 @@ public final class MMKVStore: Sendable {
   /// Opens the store described by `configuration`, creating its files if they do not exist.
   ///
   /// - Throws: ``MMKVError/invalidEncryptionKey`` if the encryption key is empty or too long,
-  ///   or ``MMKVError/openFailed(id:rootDirectory:)`` if the store cannot be opened.
+  ///   or ``MMKVError/openFailed(id:directory:)`` if the store cannot be opened.
   public init(_ configuration: MMKVConfiguration) throws(MMKVError) {
     self.core = try MMKVCore(configuration)
     self.currentConfiguration = Lock(configuration)

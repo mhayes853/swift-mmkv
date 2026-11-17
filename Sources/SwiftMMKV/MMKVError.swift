@@ -1,8 +1,8 @@
 /// An error from opening or re-encrypting an ``MMKVStore``.
 public enum MMKVError: Error, Sendable, Hashable {
-  /// The store could not be opened, for example because its identifier or root directory is
-  /// empty.
-  case openFailed(id: String, rootDirectory: String)
+  /// The store could not be opened, for example because its identifier or its directory's path
+  /// is empty.
+  case openFailed(id: String, directory: MMKVDirectory)
 
   /// The encryption key is empty or longer than its cipher allows.
   case invalidEncryptionKey
