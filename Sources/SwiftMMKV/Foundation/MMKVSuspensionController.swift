@@ -64,11 +64,11 @@
     ///   - notificationCenter: The center the lifecycle notifications are posted to. Pass
     ///     another to test lifecycle handling in isolation, posting on the main thread.
     public init(
-      stores: [MMKVStore],
+      stores: some Sequence<MMKVStore>,
       observing scope: MMKVSuspensionScope = .manual,
       notificationCenter: NotificationCenter = .default
     ) {
-      self.stores = stores
+      self.stores = Array(stores)
       self.observation = Observation(notificationCenter: notificationCenter)
       switch scope.kind {
       case .manual:
@@ -172,7 +172,23 @@
       ///
       /// Apply this to a view that stays on screen for as long as the stores are in use.
       public func mmkvSuspension(_ stores: MMKVStore..., isActive: Bool) -> some View {
-        self.modifier(SuspensionModifier(stores: stores, isActive: isActive))
+        self.mmkvSuspension(stores, isActive: isActive)
+      }
+
+      /// Suspends every store in `stores` whenever `isActive` is `false`, and resumes them
+      /// when it is `true`. See ``MMKVStore/suspend()``.
+      ///
+      /// ```swift
+      /// ContentView()
+      ///   .mmkvSuspension(stores, isActive: scenePhase != .background)
+      /// ```
+      ///
+      /// Apply this to a view that stays on screen for as long as the stores are in use.
+      public func mmkvSuspension(
+        _ stores: some Sequence<MMKVStore>,
+        isActive: Bool
+      ) -> some View {
+        self.modifier(SuspensionModifier(stores: Array(stores), isActive: isActive))
       }
     }
 
@@ -190,7 +206,22 @@
         ///
         /// Apply this to a view that stays on screen for as long as the stores are in use.
         public func mmkvSuspension(_ stores: MMKVStore...) -> some View {
-          self.modifier(SuspensionModifier(stores: stores, isActive: nil))
+          self.mmkvSuspension(stores)
+        }
+
+        /// Suspends every store in `stores` when the app enters the background, and resumes
+        /// them when it returns to the foreground. See ``MMKVStore/suspend()``.
+        ///
+        /// ```swift
+        /// WindowGroup {
+        ///   ContentView()
+        ///     .mmkvSuspension(stores)
+        /// }
+        /// ```
+        ///
+        /// Apply this to a view that stays on screen for as long as the stores are in use.
+        public func mmkvSuspension(_ stores: some Sequence<MMKVStore>) -> some View {
+          self.modifier(SuspensionModifier(stores: Array(stores), isActive: nil))
         }
       }
     #endif

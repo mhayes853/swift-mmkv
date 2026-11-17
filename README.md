@@ -313,6 +313,9 @@ WindowGroup {
 }
 ```
 
+The controller and the modifiers take several stores at once, either listed or as any sequence:
+`.mmkvSuspension(settings, session)` or `.mmkvSuspension(stores)`.
+
 Things to know:
 
 - The stores stay usable while the app is only inactive, as it is under the app switcher, because
