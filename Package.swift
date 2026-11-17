@@ -71,10 +71,19 @@ let cryptoTarget: Target = .target(
   exclude: ["LICENSE.TXT", "README.md"]
 )
 
+// The Swift implementation of MMKV's core that is replacing CSwiftMMKVCore. See
+// Docs/swift-core-migration.md.
+let swiftCoreTarget: Target = .target(
+  name: "_SwiftMMKVCore",
+  dependencies: ["CSwiftMMKVCrypto"],
+  swiftSettings: [.enableExperimentalFeature("Lifetimes")]
+)
+
 let libraryTarget: Target = .target(
   name: "SwiftMMKV",
   dependencies: [
     "CSwiftMMKVCore",
+    "_SwiftMMKVCore",
     .target(name: "_SwiftMMKVFoundation", condition: .when(traits: ["Foundation"])),
     .product(name: "Sharing", package: "swift-sharing", condition: .when(traits: ["Sharing"])),
     .product(
@@ -116,7 +125,7 @@ let testTarget: Target = .testTarget(
 // Tests of the Swift core's internals, which the store-level tests in SwiftMMKVTests cannot reach.
 let coreTestTarget: Target = .testTarget(
   name: "SwiftMMKVCoreTests",
-  dependencies: ["CSwiftMMKVCrypto"]
+  dependencies: ["_SwiftMMKVCore", "CSwiftMMKVCrypto", "SwiftMMKV"]
 )
 
 let package = Package(
@@ -151,7 +160,8 @@ let package = Package(
     .package(url: "https://github.com/pointfreeco/swift-dependencies", from: "1.5.1")
   ],
   targets: [
-    coreTarget, cryptoTarget, foundationTarget, libraryTarget, testTarget, coreTestTarget
+    coreTarget, cryptoTarget, swiftCoreTarget, foundationTarget, libraryTarget, testTarget,
+    coreTestTarget
   ],
   swiftLanguageModes: [.v6],
   cxxLanguageStandard: .cxx20

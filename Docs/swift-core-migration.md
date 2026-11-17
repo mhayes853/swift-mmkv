@@ -27,6 +27,12 @@ where that work stands.
   written by the Swift core must therefore be byte-for-byte identical to the one the C++ core
   writes for the same operations. That is the strongest compatibility check available, and it is
   a hard requirement. Optimization comes after.
+
+  There is one exception. Whenever MMKV rewrites a file from the start, it writes a random
+  4-byte varint where the data begins (`AESCrypt::randomItemSizeHolder`, seeded from the time), a
+  placeholder that readers skip. Those four bytes, at offset 4 of the data file, and the checksums
+  in the `.crc` file that cover them, are excluded from the comparison: the tests overwrite the
+  placeholder in both files and recompute the checksums before comparing.
 - **Cryptography stays vendored C.** AES (with the ARMv8 instructions), CFB128, and MD5 come from
   the OpenSSL-derived sources MMKV already ships, moved into a C target of their own
   (`CSwiftMMKVCrypto`) with their symbols prefixed in source. The Swift core only holds the
@@ -141,7 +147,7 @@ differential tests and the benchmarks, so they keep running in CI. The README is
 | 0a. Benchmarks | Done: `Benchmarks/`, C++ results only until the Swift core opens stores |
 | 0b. Upstream tests | Not started |
 | 1. `CSwiftMMKVCrypto` | Done: tested against NIST and RFC 1321 vectors, the assembly against the portable code |
-| 2. Format primitives | Not started |
+| 2. Format primitives | Done: in `Sources/_SwiftMMKVCore`, checked against files the C++ core writes |
 | 3. `MemoryFile` | Not started |
 | 4. Single-process core | Not started |
 | 5. Multi-process | Not started |
