@@ -53,6 +53,24 @@ func makeLinkedStores(
   return (first, try makeStore(id: "link", rootDirectory: rootDirectory, mode: mode))
 }
 
+/// Creates the two files of a store at `path` without opening that store in this process, by
+/// copying those of a store that is opened elsewhere.
+func makeUnopenedStoreFiles(at path: String) throws {
+  let sourceDirectory = temporaryRootDirectory()
+  let source = try makeStore(id: "source", rootDirectory: sourceDirectory)
+  source.set("value", forKey: "key")
+  try FileManager.default.createDirectory(
+    atPath: (path as NSString).deletingLastPathComponent,
+    withIntermediateDirectories: true
+  )
+  for suffix in ["", ".crc"] {
+    try FileManager.default.copyItem(
+      atPath: "\(sourceDirectory)/source\(suffix)",
+      toPath: path + suffix
+    )
+  }
+}
+
 /// Collects the changes a store reports.
 final class ChangeRecorder: Sendable {
   private let changes = NSLock()

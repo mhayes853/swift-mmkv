@@ -119,14 +119,29 @@ stores in it without opening them.
 ```swift
 let directory = MMKVDirectory(path: "/path/to/app/files/mmkv")
 
-directory.containsStore(id: "session")  // false until the store has been written to
+directory.containsStore(id: "session")  // false until the store is first opened
 try directory.removeStore(id: "session")
 ```
+
+`stores` lists what the directory holds, and `removeAllStores()` deletes all of it:
+
+```swift
+for entry in try directory.stores {
+  print(entry.id ?? "unnamed", entry.relativePath)
+}
+try directory.removeAllStores()
+```
+
+A store's files are named after its identifier. An identifier that cannot be a file name,
+because it contains one of `\ / : * ? " < > |`, is stored under a hash of itself, so the entry
+for such a store has no `id`. `entry.isStore(id:)` still recognises it, and it can still be
+removed.
 
 A store that is open in this process cannot be removed: `removeStore(id:)` throws
 `MMKVError.storeIsOpen`. A store stays open for the rest of the process once an `MMKVStore` has
 been created for it, so remove a store before opening it, or empty an open one with
-`removeAll()`.
+`removeAll()`. `removeAllStores()` removes every store that is not open and then throws
+`MMKVError.storesAreOpen`, naming the ones it left.
 
 ## Change listeners
 
@@ -288,7 +303,8 @@ swift-sharing and its dependencies use Foundation, whether or not the `Foundatio
   locked; this package builds the core's POSIX variant, which does not.
 - There is no handling for a store in an App Group container being locked while the app is
   suspended.
-- Backup and restore, log and recovery handlers, and encoding an `Encodable` value into store keys are not implemented yet.
+- Backup and restore, log and recovery handlers, and encoding an `Encodable` value into store
+  keys are not implemented yet.
 
 ## The vendored core
 

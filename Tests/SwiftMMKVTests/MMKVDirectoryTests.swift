@@ -19,14 +19,7 @@ import Testing
   /// Creates a store's files without opening it in this process, by copying those of a store
   /// that is open under another identifier.
   private func makeUnopenedStore(id: String, in rootDirectory: String) throws {
-    let source = try makeStore(id: "source-\(id)", rootDirectory: rootDirectory)
-    source.set("value", forKey: "key")
-    for suffix in ["", ".crc"] {
-      try FileManager.default.copyItem(
-        atPath: "\(rootDirectory)/source-\(id)\(suffix)",
-        toPath: "\(rootDirectory)/\(id)\(suffix)"
-      )
-    }
+    try makeUnopenedStoreFiles(at: "\(rootDirectory)/\(id)")
   }
 
   @Test func `Contains A Store Once Its Files Exist`() throws {
@@ -87,5 +80,122 @@ import Testing
     }
     #expect(directory.containsStore(id: "store"))
     #expect(store["key", as: String.self] == "value")
+  }
+}
+
+@Suite struct MMKVDirectoryListingTests {
+  @Test func `Lists The Stores That Have Files`() throws {
+    let rootDirectory = temporaryRootDirectory()
+    let directory = MMKVDirectory(path: rootDirectory)
+    #expect(try directory.stores.isEmpty)
+
+    try makeStore(id: "b", rootDirectory: rootDirectory).set(1.0, forKey: "key")
+    try makeStore(id: "a", rootDirectory: rootDirectory).set(1.0, forKey: "key")
+    try Data().write(to: URL(fileURLWithPath: "\(rootDirectory)/not-a-store"))
+    try FileManager.default.createDirectory(
+      atPath: "\(rootDirectory)/folder",
+      withIntermediateDirectories: true
+    )
+    try FileManager.default.createDirectory(
+      atPath: "\(rootDirectory)/folder.crc",
+      withIntermediateDirectories: true
+    )
+
+    let stores = try directory.stores
+    #expect(stores.map(\.id) == ["a", "b"])
+    #expect(stores.map(\.relativePath) == ["a", "b"])
+    #expect(stores[0].isStore(id: "a"))
+    #expect(!stores[0].isStore(id: "b"))
+  }
+
+  @Test func `A Directory That Does Not Exist Has No Stores`() throws {
+    let directory = MMKVDirectory(path: temporaryRootDirectory() + "/missing")
+    #expect(try directory.stores.isEmpty)
+    #expect(try directory.removeAllStores() == 0)
+  }
+
+  @Test func `A Path That Is Not A Directory Cannot Be Listed`() throws {
+    let path = temporaryRootDirectory() + "/file"
+    try Data().write(to: URL(fileURLWithPath: path))
+    let directory = MMKVDirectory(path: path)
+    #expect(throws: MMKVError.directoryUnreadable(directory)) { try directory.stores }
+    #expect(throws: MMKVError.directoryUnreadable(directory)) { try directory.removeAllStores() }
+  }
+
+  @Test func `Lists A Store Whose Identifier Is Hashed Without Its Identifier`() throws {
+    let rootDirectory = temporaryRootDirectory()
+    let directory = MMKVDirectory(path: rootDirectory)
+    let store = try makeStore(id: "user/42", rootDirectory: rootDirectory)
+    store.set("value", forKey: "key")
+
+    let stores = try directory.stores
+    #expect(stores.count == 1)
+    #expect(stores[0].id == nil)
+    #expect(stores[0].relativePath.hasPrefix("specialCharacter/"))
+    #expect(stores[0].isStore(id: "user/42"))
+    #expect(!stores[0].isStore(id: "user/43"))
+    #expect(FileManager.default.fileExists(atPath: "\(rootDirectory)/\(stores[0].relativePath)"))
+    #expect(directory.containsStore(id: "user/42"))
+
+    #expect(throws: MMKVError.storeIsOpen(id: "user/42", directory: directory)) {
+      try directory.removeStore(stores[0])
+    }
+    #expect(throws: MMKVError.storeIsOpen(id: "user/42", directory: directory)) {
+      try directory.removeStore(id: "user/42")
+    }
+    #expect(store["key", as: String.self] == "value")
+  }
+
+  @Test func `Removes A Listed Store`() throws {
+    let rootDirectory = temporaryRootDirectory()
+    let directory = MMKVDirectory(path: rootDirectory)
+    try makeUnopenedStoreFiles(at: "\(rootDirectory)/named")
+    try makeUnopenedStoreFiles(at: "\(rootDirectory)/specialCharacter/0123456789abcdef")
+
+    let stores = try directory.stores
+    #expect(stores.map(\.id) == ["named", nil])
+    for store in stores {
+      #expect(try directory.removeStore(store))
+      #expect(try !directory.removeStore(store))
+    }
+    #expect(try directory.stores.isEmpty)
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: "\(rootDirectory)/specialCharacter/0123456789abcdef.crc"
+      )
+    )
+  }
+
+  @Test func `Removing Every Store Leaves The Open Ones And Reports Them`() throws {
+    let rootDirectory = temporaryRootDirectory()
+    let directory = MMKVDirectory(path: rootDirectory)
+    try makeUnopenedStoreFiles(at: "\(rootDirectory)/closed")
+    try makeUnopenedStoreFiles(at: "\(rootDirectory)/specialCharacter/0123456789abcdef")
+    let open = try makeStore(id: "open", rootDirectory: rootDirectory)
+    open.set("value", forKey: "key")
+    let hashed = try makeStore(id: "open:hashed", rootDirectory: rootDirectory)
+    hashed.set("value", forKey: "key")
+
+    #expect(
+      throws: MMKVError.storesAreOpen(ids: ["open", "open:hashed"], directory: directory)
+    ) {
+      try directory.removeAllStores()
+    }
+    #expect(try directory.stores.count == 2)
+    #expect(directory.containsStore(id: "open"))
+    #expect(directory.containsStore(id: "open:hashed"))
+    #expect(!directory.containsStore(id: "closed"))
+    #expect(open["key", as: String.self] == "value")
+    #expect(hashed["key", as: String.self] == "value")
+  }
+
+  @Test func `Removes Every Store When None Is Open`() throws {
+    let rootDirectory = temporaryRootDirectory()
+    let directory = MMKVDirectory(path: rootDirectory)
+    for name in ["a", "b", "specialCharacter/0123456789abcdef"] {
+      try makeUnopenedStoreFiles(at: "\(rootDirectory)/\(name)")
+    }
+    #expect(try directory.removeAllStores() == 3)
+    #expect(try directory.stores.isEmpty)
   }
 }

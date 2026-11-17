@@ -20,4 +20,11 @@ public enum MMKVError: Error, Sendable, Hashable {
 
   /// The store is open in this process, so its files cannot be removed.
   case storeIsOpen(id: String, directory: MMKVDirectory)
+
+  /// Some stores are open in this process, so their files were not removed along with the rest
+  /// of their directory's stores.
+  case storesAreOpen(ids: [String], directory: MMKVDirectory)
+
+  /// The directory exists but its contents cannot be listed.
+  case directoryUnreadable(MMKVDirectory)
 }

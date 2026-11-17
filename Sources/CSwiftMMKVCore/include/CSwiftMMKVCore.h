@@ -85,6 +85,23 @@ bool mmkv_storage_exists(mmkv_bytes id, mmkv_bytes root_directory)
 int32_t mmkv_remove_storage(mmkv_bytes id, mmkv_bytes root_directory)
   CSWIFTMMKV_SYMBOL(remove_storage);
 
+/// Deletes the files of the store whose data file is at `relative_path` inside
+/// `root_directory`, for a store whose identifier is not known. If the store is open, `open_id`
+/// is called with its identifier.
+int32_t mmkv_remove_storage_at(
+  mmkv_bytes root_directory, mmkv_bytes relative_path, void *_Nullable context,
+  mmkv_bytes_callback _Nonnull open_id)
+  CSWIFTMMKV_SYMBOL(remove_storage_at);
+/// Calls `callback` with the path of every store's data file, relative to `root_directory` and
+/// in no particular order. Returns false if the directory exists but cannot be read.
+bool mmkv_list_storage(
+  mmkv_bytes root_directory, void *_Nullable context, mmkv_bytes_callback _Nonnull callback)
+  CSWIFTMMKV_SYMBOL(list_storage);
+/// Calls `callback` once with the path a store's data file has relative to its directory.
+void mmkv_storage_relative_path(
+  mmkv_bytes id, void *_Nullable context, mmkv_bytes_callback _Nonnull callback)
+  CSWIFTMMKV_SYMBOL(storage_relative_path);
+
 // Writes. Each returns whether the value was stored. A `expires_in_seconds` of zero never expires.
 
 bool mmkv_set_bool(
