@@ -39,7 +39,7 @@ extension MMKVStore {
     forKey key: String,
     as type: V.Type = V.self
   ) -> MMKVValues<V> {
-    MMKVValues(store: self, key: key) { store, key in store.value(forKey: key, as: V.self) }
+    MMKVValues(store: self, key: key)
   }
 
   /// The `Decodable` values of `key` over time, read with `decoder`, starting with the value
@@ -63,114 +63,105 @@ extension MMKVStore {
     forKey key: String,
     as type: T.Type = T.self,
     with decoder: Decoder
-  ) -> MMKVThrowingValues<T> where Decoder.Input: MMKVValue {
-    MMKVThrowingValues(store: self, key: key) { store, key in
-      try store.decode(T.self, forKey: key, with: decoder)
-    }
+  ) -> MMKVDecodedValues<T, Decoder> where Decoder.Input: MMKVValue {
+    MMKVDecodedValues(store: self, key: key, decoder: decoder)
   }
 }
 
 // MARK: - MMKVValues
 
 /// The values of one key of an ``MMKVStore`` over time, from ``MMKVStore/values(forKey:as:)``.
-public struct MMKVValues<Value: Sendable>: AsyncSequence, Sendable {
+public struct MMKVValues<Value: MMKVValue & Sendable>: AsyncSequence, Sendable {
   public typealias Element = Value?
 
   private let store: MMKVStore
   private let key: String
-  private let read: @Sendable (MMKVStore, String) -> Value?
 
-  fileprivate init(
-    store: MMKVStore,
-    key: String,
-    read: @escaping @Sendable (MMKVStore, String) -> Value?
-  ) {
+  fileprivate init(store: MMKVStore, key: String) {
     self.store = store
     self.key = key
-    self.read = read
   }
 
   public func makeAsyncIterator() -> AsyncIterator {
-    AsyncIterator(
-      signals: KeyChangeSignals(store: self.store, key: self.key),
-      read: { [store, key, read] in read(store, key) }
-    )
+    AsyncIterator(store: self.store, key: self.key)
   }
 
   public struct AsyncIterator: AsyncIteratorProtocol {
+    private let store: MMKVStore
+    private let key: String
     private var signals: KeyChangeSignals
-    private let read: @Sendable () -> Value?
 
-    fileprivate init(signals: KeyChangeSignals, read: @escaping @Sendable () -> Value?) {
-      self.signals = signals
-      self.read = read
+    fileprivate init(store: MMKVStore, key: String) {
+      self.store = store
+      self.key = key
+      self.signals = KeyChangeSignals(store: store, key: key)
     }
 
     public mutating func next() async -> Value?? {
       guard await self.signals.next() else { return nil }
-      return .some(self.read())
+      return .some(self.store.value(forKey: self.key, as: Value.self))
     }
 
     @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
     public mutating func next(isolation actor: isolated (any Actor)?) async -> Value?? {
       guard await self.signals.next(isolation: actor) else { return nil }
-      return .some(self.read())
+      return .some(self.store.value(forKey: self.key, as: Value.self))
     }
   }
 }
 
-// MARK: - MMKVThrowingValues
+// MARK: - MMKVDecodedValues
 
 /// The decoded values of one key of an ``MMKVStore`` over time, from
 /// ``MMKVStore/values(forKey:as:with:)``.
-public struct MMKVThrowingValues<Value: Sendable>: AsyncSequence, Sendable {
+public struct MMKVDecodedValues<
+  Value: Decodable & Sendable,
+  Decoder: MMKVTopLevelDecoder & Sendable
+>: AsyncSequence, Sendable where Decoder.Input: MMKVValue {
   public typealias Element = Value?
 
   private let store: MMKVStore
   private let key: String
-  private let read: @Sendable (MMKVStore, String) throws -> Value?
+  private let decoder: Decoder
 
-  fileprivate init(
-    store: MMKVStore,
-    key: String,
-    read: @escaping @Sendable (MMKVStore, String) throws -> Value?
-  ) {
+  fileprivate init(store: MMKVStore, key: String, decoder: Decoder) {
     self.store = store
     self.key = key
-    self.read = read
+    self.decoder = decoder
   }
 
   public func makeAsyncIterator() -> AsyncIterator {
-    AsyncIterator(
-      signals: KeyChangeSignals(store: self.store, key: self.key),
-      read: { [store, key, read] in try read(store, key) }
-    )
+    AsyncIterator(store: self.store, key: self.key, decoder: self.decoder)
   }
 
   public struct AsyncIterator: AsyncIteratorProtocol {
+    private let store: MMKVStore
+    private let key: String
+    private let decoder: Decoder
     private var signals: KeyChangeSignals?
-    private let read: @Sendable () throws -> Value?
 
-    fileprivate init(signals: KeyChangeSignals, read: @escaping @Sendable () throws -> Value?) {
-      self.signals = signals
-      self.read = read
+    fileprivate init(store: MMKVStore, key: String, decoder: Decoder) {
+      self.store = store
+      self.key = key
+      self.decoder = decoder
+      self.signals = KeyChangeSignals(store: store, key: key)
     }
 
     public mutating func next() async throws -> Value?? {
       guard await self.signals?.next() == true else { return nil }
-      return .some(try self.readOrFinish())
+      return .some(try self.decodeOrFinish())
     }
 
     @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
     public mutating func next(isolation actor: isolated (any Actor)?) async throws -> Value?? {
       guard await self.signals?.next(isolation: actor) == true else { return nil }
-      return .some(try self.readOrFinish())
+      return .some(try self.decodeOrFinish())
     }
 
-    /// Reads the value, ending the sequence if it cannot be read.
-    private mutating func readOrFinish() throws -> Value? {
+    /// Decodes the value, ending the sequence if it cannot be decoded.
+    private mutating func decodeOrFinish() throws -> Value? {
       do {
-        return try self.read()
+        return try self.store.decode(Value.self, forKey: self.key, with: self.decoder)
       } catch {
         self.signals = nil
         throw error
