@@ -24,6 +24,11 @@ jobs:
           - name: lean
             traits: "--disable-default-traits"
             forbidden-modules: "Foundation|FoundationEssentials|FoundationInternationalization"
+          # The suite against the Swift core that is replacing the C++ one. See
+          # Docs/swift-core-migration.md.
+          - name: Swift core
+            traits: ""
+            engine: swift
     steps:
       - uses: actions/checkout@v4
 
@@ -35,6 +40,8 @@ jobs:
 
       - name: Test
         run: swift test ${{ matrix.traits }}
+        env:
+          SWIFTMMKV_TEST_ENGINE: ${{ matrix.engine || 'cxx' }}
 
       # A symbol the core defines under its upstream name would collide with the copy of MMKV
       # that react-native-mmkv links into the same app.

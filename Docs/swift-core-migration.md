@@ -176,6 +176,6 @@ differential tests and the benchmarks, so they keep running in CI. The README is
 | 2. Format primitives | Done: in `Sources/_SwiftMMKVCore`, checked against files the C++ core writes |
 | 3. `MemoryFile` | Done: with `FileLock` and `ThreadLock`; the lock is checked against the C++ core's |
 | 4. Single-process core | Done: every test for unencrypted stores passes against it, and it writes the same bytes as the C++ core |
-| 5. Multi-process | Ported; passes the multi-process tests and shares files with the C++ core in one process. Not yet tested across processes or on Android |
+| 5. Multi-process | Done in one process: both cores share files, report each other's changes, and exclude each other under concurrent writers. Android's migration lock and legacy file names are ported but only built, not run, on Android. A test across real processes is still to do |
 | 6. Encryption | Done: every encryption test passes against the Swift core, and each core reads what the other encrypts, appends, and re-encrypts |
-| 7. Cutover | Not started |
+| 7. Cutover | Not started. The Swift core's `checkExist` and `removeStorage` (`StoreStorage`) are ready for `MMKVStorage` to switch to |
