@@ -199,6 +199,14 @@ bool mmkv_remove_many(
 void mmkv_remove_all(mmkv_store *_Nonnull store, bool keep_capacity)
   CSWIFTMMKV_SYMBOL(remove_all);
 
+// Import.
+
+/// Copies every key and value of `source` into `store`, replacing the keys `store` already has.
+/// Returns the number of keys copied, which is zero if `store` is read-only or the two are the
+/// same instance.
+size_t mmkv_import(mmkv_store *_Nonnull store, mmkv_store *_Nonnull source)
+  CSWIFTMMKV_SYMBOL(import);
+
 // Locking. The lock excludes other threads in this process and, for a multi-process store, other
 // processes and other copies of MMKV. It is recursive on the thread that holds it.
 

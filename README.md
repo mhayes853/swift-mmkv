@@ -153,6 +153,13 @@ been created for it, so remove a store before opening it, or empty an open one w
 `removeAll()`. `removeAllStores()` removes every store that is not open and then throws
 `MMKVError.storesAreOpen`, naming the ones it left.
 
+`importAll(from:)` copies one store's keys and values into another, replacing the keys the
+destination already has. The two stores may differ in mode and encryption:
+
+```swift
+let imported = store.importAll(from: legacyStore)
+```
+
 ## Change listeners
 
 ```swift

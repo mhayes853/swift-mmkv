@@ -290,6 +290,42 @@ extension MMKVStore {
   }
 }
 
+// MARK: - Import
+
+extension MMKVStore {
+  /// Copies every key and value of `other` into this store, replacing the keys this store
+  /// already has and leaving its other keys alone.
+  ///
+  /// ```swift
+  /// let imported = store.importAll(from: legacyStore)
+  /// ```
+  ///
+  /// The two stores may differ in mode and encryption. Nothing is copied when this store is
+  /// read-only, or when both stores are over the same files.
+  ///
+  /// Listeners of this store are told about each key `other` holds.
+  ///
+  /// - Returns: The number of keys copied.
+  @discardableResult
+  public func importAll(from other: MMKVStore) -> Int {
+    // The core locks both stores in an order of its own, so neither lock can be held here to
+    // pin down exactly which keys it copies. A key that `other` gains or loses during the
+    // import is one of those it held either before or after.
+    let hasListeners = self.core.state.hasListeners
+    var keys = hasListeners ? other.core.keys : []
+    let count = self.core.importAll(from: other.core)
+    if hasListeners && count > 0 {
+      keys.formUnion(other.core.keys)
+      for key in keys {
+        self.core.state.notify(.key(key))
+      }
+    }
+    self.core.operationDidFinish()
+    other.core.operationDidFinish()
+    return count
+  }
+}
+
 // MARK: - Locking
 
 extension MMKVStore {

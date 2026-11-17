@@ -478,6 +478,10 @@ void mmkv_check_content_changed(mmkv_store *store) {
   core(store)->checkContentChanged();
 }
 
+size_t mmkv_import(mmkv_store *store, mmkv_store *source) {
+  return core(store)->importFrom(core(source));
+}
+
 size_t mmkv_total_size(mmkv_store *store) { return core(store)->totalSize(); }
 
 size_t mmkv_actual_size(mmkv_store *store) { return core(store)->actualSize(); }

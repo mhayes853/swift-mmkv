@@ -204,6 +204,15 @@ extension MMKVCore {
   }
 }
 
+// MARK: - Import
+
+extension MMKVCore {
+  /// - Returns: The number of keys copied from `source`.
+  func importAll(from source: MMKVCore) -> Int {
+    mmkv_import(self.handle, source.handle)
+  }
+}
+
 // MARK: - Locking and maintenance
 
 extension MMKVCore {
