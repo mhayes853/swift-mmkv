@@ -16,7 +16,7 @@ struct MMKVCore: Sendable {
     let engine: any MMKVEngine =
       switch configuration.engine {
       case .cxx: try CxxEngine(configuration)
-      case .swift: throw .openFailed(id: configuration.id, directory: configuration.directory)
+      case .swift: try SwiftEngine(configuration)
       }
     self.engine = engine
     self.state = MMKVStoreState.shared(

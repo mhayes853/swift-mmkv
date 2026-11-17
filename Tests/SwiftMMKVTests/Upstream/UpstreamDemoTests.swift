@@ -26,7 +26,7 @@ import Testing
     FunctionalTest.expectRemaining(in: try makeStore(id: "reopened", rootDirectory: rootDirectory))
   }
 
-  @Test(.requires(.readOnly))
+  @Test(.requires(.readOnly, .encryption))
   func `A Read Only Store Reads Everything And Refuses Writes`() throws {
     // Upstream: demo.cpp testReadOnly
     let rootDirectory = temporaryRootDirectory()

@@ -37,7 +37,7 @@ extension MMKVConfiguration.Engine {
   var features: Set<EngineFeature> {
     switch self {
     case .cxx: Set(EngineFeature.allCases)
-    case .swift: []
+    case .swift: [.store, .readOnly, .expiry, .importing, .multiProcess]
     }
   }
 }

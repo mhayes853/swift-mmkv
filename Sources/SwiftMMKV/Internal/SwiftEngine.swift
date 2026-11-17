@@ -1,0 +1,217 @@
+import _SwiftMMKVCore
+
+/// The Swift core that is replacing the C++ one (`Sources/_SwiftMMKVCore`).
+///
+/// It cannot open encrypted stores yet. See `Docs/swift-core-migration.md`.
+struct SwiftEngine: MMKVEngine {
+  let store: StoreInstance
+
+  init(_ configuration: MMKVConfiguration) throws(MMKVError) {
+    guard configuration.encryption == nil else {
+      throw .openFailed(id: configuration.id, directory: configuration.directory)
+    }
+    let store = MMKVStorage(path: configuration.directory.path)
+      .opening(id: configuration.id) {
+        StoreRegistry.open(
+          StoreConfiguration(
+            id: configuration.id,
+            rootDirectory: configuration.directory.path,
+            isMultiProcess: configuration.mode == .multiProcess,
+            isReadOnly: configuration.isReadOnly,
+            expectedCapacity: max(configuration.expectedCapacity, 0),
+            recoverOnError: configuration.recovery == .recover,
+            compareBeforeSet: configuration.compareBeforeSet,
+            itemSizeLimit: UInt32(clamping: configuration.itemSizeLimit ?? 0)
+          )
+        )
+      }
+    guard let store else {
+      throw .openFailed(id: configuration.id, directory: configuration.directory)
+    }
+    self.store = store
+    let instance = self.instance
+    store.setContentChangedHandler {
+      MMKVStoreState.markExternalChange(instance: instance)
+    }
+  }
+
+  var instance: UInt {
+    UInt(bitPattern: Unmanaged.passUnretained(self.store).toOpaque())
+  }
+}
+
+// MARK: - Reads
+
+extension SwiftEngine {
+  func bool(forKey key: String) -> Bool? {
+    self.store.bool(forKey: StoreKey(key))
+  }
+
+  func int32(forKey key: String) -> Int32? {
+    self.store.int32(forKey: StoreKey(key))
+  }
+
+  func uint32(forKey key: String) -> UInt32? {
+    self.store.uint32(forKey: StoreKey(key))
+  }
+
+  func int64(forKey key: String) -> Int64? {
+    self.store.int64(forKey: StoreKey(key))
+  }
+
+  func uint64(forKey key: String) -> UInt64? {
+    self.store.uint64(forKey: StoreKey(key))
+  }
+
+  func float(forKey key: String) -> Float? {
+    self.store.float(forKey: StoreKey(key))
+  }
+
+  func double(forKey key: String) -> Double? {
+    self.store.double(forKey: StoreKey(key))
+  }
+
+  func string(forKey key: String) -> String? {
+    self.store.bytes(forKey: StoreKey(key)).map { String(decoding: $0, as: UTF8.self) }
+  }
+
+  func strings(forKey key: String) -> [String]? {
+    self.store.strings(forKey: StoreKey(key))
+  }
+
+  func withBytes<R, E: Error>(
+    forKey key: String,
+    _ body: (RawSpan) throws(E) -> R
+  ) throws(E) -> R? {
+    // Copied, so that `body` runs without the store's locks held, as with the C++ core.
+    guard let bytes = self.store.bytes(forKey: StoreKey(key)) else { return nil }
+    return
+      try bytes.withUnsafeBytes { buffer in
+        Result { () throws(E) -> R in try body(buffer.bytes) }
+      }
+      .get()
+  }
+}
+
+// MARK: - Writes
+
+extension SwiftEngine {
+  func set(_ value: Bool, forKey key: String, expiresInSeconds: UInt32) -> Bool {
+    self.store.set(.bool(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+  }
+
+  func set(_ value: Int32, forKey key: String, expiresInSeconds: UInt32) -> Bool {
+    self.store.set(.int32(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+  }
+
+  func set(_ value: UInt32, forKey key: String, expiresInSeconds: UInt32) -> Bool {
+    self.store.set(.uint32(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+  }
+
+  func set(_ value: Int64, forKey key: String, expiresInSeconds: UInt32) -> Bool {
+    self.store.set(.int64(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+  }
+
+  func set(_ value: UInt64, forKey key: String, expiresInSeconds: UInt32) -> Bool {
+    self.store.set(.uint64(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+  }
+
+  func set(_ value: Float, forKey key: String, expiresInSeconds: UInt32) -> Bool {
+    self.store.set(.float(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+  }
+
+  func set(_ value: Double, forKey key: String, expiresInSeconds: UInt32) -> Bool {
+    self.store.set(.double(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+  }
+
+  func set(_ value: String, forKey key: String, expiresInSeconds: UInt32) -> Bool {
+    var value = value
+    return value.withUTF8 { utf8 in
+      self.store.set(
+        .bytes(UnsafeRawBufferPointer(utf8)),
+        forKey: StoreKey(key),
+        expiresInSeconds: expiresInSeconds
+      )
+    }
+  }
+
+  func set(_ value: [String], forKey key: String, expiresInSeconds: UInt32) -> Bool {
+    self.store.set(.strings(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+  }
+
+  func set(bytes: RawSpan, forKey key: String, expiresInSeconds: UInt32) -> Bool {
+    bytes.withUnsafeBytes { buffer in
+      self.store.set(.bytes(buffer), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+    }
+  }
+}
+
+// MARK: - Keys
+
+extension SwiftEngine {
+  var count: Int {
+    self.store.count
+  }
+
+  var keys: Set<String> {
+    Set(self.store.keys.map(\.string))
+  }
+
+  func contains(_ key: String) -> Bool {
+    self.store.contains(StoreKey(key))
+  }
+
+  func remove(_ key: String) -> Bool {
+    self.store.removeValue(forKey: StoreKey(key))
+  }
+
+  func remove(_ keys: [String]) {
+    self.store.removeValues(forKeys: keys.map(StoreKey.init))
+  }
+
+  func removeAll(keepingCapacity: Bool) {
+    self.store.clearAll(keepSpace: keepingCapacity)
+  }
+
+  func importAll(from source: any MMKVEngine) -> Int {
+    // Both stores of an import are opened by one configuration's engine.
+    guard let source = source as? SwiftEngine else { return 0 }
+    return self.store.importAll(from: source.store)
+  }
+}
+
+// MARK: - Locking and maintenance
+
+extension SwiftEngine {
+  func lock() {
+    self.store.lockExclusively()
+  }
+
+  func unlock() {
+    self.store.unlockExclusively()
+  }
+
+  var totalSize: Int {
+    self.store.totalSize
+  }
+
+  var actualSize: Int {
+    self.store.dataSize
+  }
+
+  func checkContentChanged() {
+    self.store.checkContentChanged()
+  }
+
+  func trim() {
+    self.store.trim()
+  }
+
+  func sync() {
+    self.store.sync()
+  }
+
+  func rekey(_ encryption: MMKVConfiguration.Encryption?) -> Bool {
+    self.store.rekey(removingEncryption: encryption == nil)
+  }
+}

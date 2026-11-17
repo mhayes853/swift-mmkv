@@ -96,6 +96,19 @@ extension MMKVStorage {
     return OpaquePointer(bitPattern: handle)
   }
 
+  /// ``opening(id:_:)`` for an engine whose handle is a Swift object.
+  func opening<Handle: Sendable>(id: String, _ open: () -> Handle?) -> Handle? {
+    Self.openStores.withLock { openStores in
+      let handle = open()
+      if handle != nil {
+        for path in self.dataPaths(forID: id) {
+          openStores[path] = id
+        }
+      }
+      return handle
+    }
+  }
+
   /// The identifier of the open store that has one of `dataPaths` as its data file, however
   /// that file's path is spelled.
   private static func openID(
