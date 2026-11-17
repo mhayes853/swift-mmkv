@@ -69,38 +69,21 @@ mmkv_store *_Nullable mmkv_open(const mmkv_configuration *_Nonnull configuration
 
 // Stores on disk.
 
-enum {
-  /// The store had no files to remove.
-  MMKV_REMOVE_STORAGE_MISSING = 0,
-  MMKV_REMOVE_STORAGE_REMOVED = 1,
-  /// The store is open in this process, so nothing was removed.
-  MMKV_REMOVE_STORAGE_OPEN = 2,
-};
-
 /// Whether both of a store's files exist. Does not open the store.
 bool mmkv_storage_exists(mmkv_bytes id, mmkv_bytes root_directory)
   CSWIFTMMKV_SYMBOL(storage_exists);
-/// Deletes a store's files while holding its file lock, unless `mmkv_open` has returned an
-/// instance for it. Returns one of the `MMKV_REMOVE_STORAGE` values.
-int32_t mmkv_remove_storage(mmkv_bytes id, mmkv_bytes root_directory)
+/// Deletes a store's files while holding its file lock, and returns whether there were any.
+/// The core frees the store's instance if it is open, so the caller must know that it is not.
+bool mmkv_remove_storage(mmkv_bytes id, mmkv_bytes root_directory)
   CSWIFTMMKV_SYMBOL(remove_storage);
-
-/// Deletes the files of the store whose data file is at `relative_path` inside
-/// `root_directory`, for a store whose identifier is not known. If the store is open, `open_id`
-/// is called with its identifier.
-int32_t mmkv_remove_storage_at(
-  mmkv_bytes root_directory, mmkv_bytes relative_path, void *_Nullable context,
-  mmkv_bytes_callback _Nonnull open_id)
-  CSWIFTMMKV_SYMBOL(remove_storage_at);
-/// Calls `callback` with the path of every store's data file, relative to `root_directory` and
-/// in no particular order. Returns false if the directory exists but cannot be read.
-bool mmkv_list_storage(
+/// Calls `callback` once with the absolute, normalized path the core uses for `root_directory`.
+void mmkv_resolve_directory(
   mmkv_bytes root_directory, void *_Nullable context, mmkv_bytes_callback _Nonnull callback)
-  CSWIFTMMKV_SYMBOL(list_storage);
-/// Calls `callback` once with the path a store's data file has relative to its directory.
-void mmkv_storage_relative_path(
-  mmkv_bytes id, void *_Nullable context, mmkv_bytes_callback _Nonnull callback)
-  CSWIFTMMKV_SYMBOL(storage_relative_path);
+  CSWIFTMMKV_SYMBOL(resolve_directory);
+/// Writes the 16 bytes of the MD5 digest of `bytes` to `digest`, which is how the core names the
+/// files of a store whose identifier cannot be a file name.
+void mmkv_md5(mmkv_bytes bytes, uint8_t *_Nonnull digest)
+  CSWIFTMMKV_SYMBOL(md5);
 
 // Writes. Each returns whether the value was stored. A `expires_in_seconds` of zero never expires.
 

@@ -5,21 +5,14 @@
 #include "MMKVHandler.h"
 #include "MMKV_IO.h"
 #include "MMKVLog.h"
-#include "InterProcessLock.h"
 #include "MemoryFile.h"
-#include "ScopedLock.hpp"
 #include "aes/openssl/openssl_md5.h"
 
 #include <atomic>
-#include <cerrno>
 #include <cstdio>
-#include <dirent.h>
 #include <mutex>
 #include <string>
 #include <string_view>
-#include <sys/stat.h>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #ifdef __ANDROID__
@@ -70,80 +63,6 @@ mmkv::NameSpace nameSpace(const std::string &rootDirectory) {
   auto nameSpace = MMKV::nameSpace(rootDirectory);
   installHandlerOnce();
   return nameSpace;
-}
-
-// The data file of every instance this shim has opened, and its store's identifier. The core frees an open instance when
-// its storage is removed, which would leave the Swift side holding a dangling pointer, so
-// removal is refused for these. Guarded by `g_openLock`, which is held across opening and
-// removing so that a store cannot be opened while it is being removed.
-std::mutex g_openLock;
-std::unordered_map<std::string, std::string> g_openPaths;
-
-// The paths a store's data file may have. Android may still be using the file name of an older
-// MMKV, which the core migrates away from when it can.
-std::vector<std::string> dataPaths(const std::string &id, const MMKVPath_t &rootDirectory) {
-#ifdef MMKV_ANDROID
-  return {
-    mappedKVPathWithID(id, &rootDirectory, MMKV_MULTI_PROCESS, true),
-    mappedKVPathWithID(
-      legacyMmapedKVKey(id, &rootDirectory), &rootDirectory, MMKV_MULTI_PROCESS, true),
-  };
-#else
-  return {mappedKVPathWithID(id, &rootDirectory, true)};
-#endif
-}
-
-// The path of a store's data file relative to its directory. An identifier that cannot be a file
-// name is replaced by its MD5 hash and moved into a subdirectory, as the core's `encodeFilePath`
-// does. That function is private to the core and creates the subdirectory as it goes.
-std::string relativeDataPath(const std::string &id) {
-  if (id.find_first_of("\\/:*?\"<>|") == std::string::npos) {
-    return id;
-  }
-  uint8_t digest[MD5_DIGEST_LENGTH] = {};
-  openssl::MD5(reinterpret_cast<const uint8_t *>(id.data()), id.size(), digest);
-  std::string path = std::string(SPECIAL_CHARACTER_DIRECTORY_NAME) + MMKV_PATH_SLASH;
-  char hex[3] = {};
-  for (auto byte : digest) {
-    snprintf(hex, sizeof(hex), "%2.2x", byte);
-    path += hex;
-  }
-  return path;
-}
-
-bool isRegularFile(const std::string &path) {
-  struct stat status = {};
-  return stat(path.c_str(), &status) == 0 && S_ISREG(status.st_mode);
-}
-
-// Reports every regular file in `directory` that has a `.crc` file beside it, which is what a
-// store looks like on disk. Returns false if the directory exists but cannot be read.
-bool listStores(
-  const std::string &directory, const std::string &prefix, void *context,
-  mmkv_bytes_callback callback) {
-  auto stream = opendir(directory.c_str());
-  if (!stream) {
-    return errno == ENOENT;
-  }
-  std::unordered_set<std::string> names;
-  while (auto entry = readdir(stream)) {
-    names.insert(entry->d_name);
-  }
-  closedir(stream);
-
-  for (const auto &name : names) {
-    auto crcName = name + CRC_SUFFIX;
-    if (!names.contains(crcName)) {
-      continue;
-    }
-    if (!isRegularFile(directory + MMKV_PATH_SLASH + name) ||
-        !isRegularFile(directory + MMKV_PATH_SLASH + crcName)) {
-      continue;
-    }
-    auto path = prefix + name;
-    callback(context, mmkv_bytes{path.data(), path.size()});
-  }
-  return true;
 }
 
 inline MMKV *core(mmkv_store *store) { return reinterpret_cast<MMKV *>(store); }
@@ -220,14 +139,7 @@ mmkv_store *mmkv_open(const mmkv_configuration *configuration) {
   config.enableCompareBeforeSet = configuration->compare_before_set;
   config.itemSizeLimit = configuration->item_size_limit;
 
-  std::lock_guard lock(g_openLock);
-  auto kv = nameSpace.mmkvWithID(id, config);
-  if (kv) {
-    for (auto &path : dataPaths(id, nameSpace.getRootDir())) {
-      g_openPaths.emplace(std::move(path), id);
-    }
-  }
-  return reinterpret_cast<mmkv_store *>(kv);
+  return reinterpret_cast<mmkv_store *>(nameSpace.mmkvWithID(id, config));
 }
 
 bool mmkv_storage_exists(mmkv_bytes id, mmkv_bytes rootDirectory) {
@@ -237,70 +149,21 @@ bool mmkv_storage_exists(mmkv_bytes id, mmkv_bytes rootDirectory) {
   return nameSpace(string(rootDirectory)).checkExist(string(id));
 }
 
-int32_t mmkv_remove_storage(mmkv_bytes id, mmkv_bytes rootDirectory) {
+bool mmkv_remove_storage(mmkv_bytes id, mmkv_bytes rootDirectory) {
   if (id.count == 0 || rootDirectory.count == 0) {
-    return MMKV_REMOVE_STORAGE_MISSING;
-  }
-  auto nameSpace = ::nameSpace(string(rootDirectory));
-  auto storeID = string(id);
-
-  std::lock_guard lock(g_openLock);
-  for (const auto &path : dataPaths(storeID, nameSpace.getRootDir())) {
-    if (g_openPaths.contains(path)) {
-      return MMKV_REMOVE_STORAGE_OPEN;
-    }
-  }
-  return nameSpace.removeStorage(storeID) ? MMKV_REMOVE_STORAGE_REMOVED
-                                          : MMKV_REMOVE_STORAGE_MISSING;
-}
-
-int32_t mmkv_remove_storage_at(
-  mmkv_bytes rootDirectory, mmkv_bytes relativePath, void *context,
-  mmkv_bytes_callback openID) {
-  if (rootDirectory.count == 0 || relativePath.count == 0) {
-    return MMKV_REMOVE_STORAGE_MISSING;
-  }
-  auto nameSpace = ::nameSpace(string(rootDirectory));
-  auto dataPath = nameSpace.getRootDir() + MMKV_PATH_SLASH + string(relativePath);
-  auto crcPath = crcPathWithPath(dataPath);
-
-  std::lock_guard lock(g_openLock);
-  if (auto open = g_openPaths.find(dataPath); open != g_openPaths.end()) {
-    openID(context, mmkv_bytes{open->second.data(), open->second.size()});
-    return MMKV_REMOVE_STORAGE_OPEN;
-  }
-  if (!mmkv::isFileExist(dataPath) && !mmkv::isFileExist(crcPath)) {
-    return MMKV_REMOVE_STORAGE_MISSING;
-  }
-
-  // The same steps as the core's `removeStorage`, which can only be given an identifier.
-  mmkv::File crcFile(crcPath, mmkv::OpenFlag::ReadOnly);
-  if (!crcFile.isFileValid()) {
-    mmkv::deleteFile(dataPath);
-    return MMKV_REMOVE_STORAGE_REMOVED;
-  }
-  mmkv::FileLock fileLock(crcFile.getFd());
-  mmkv::InterProcessLock processLock(&fileLock, mmkv::ExclusiveLockType);
-  SCOPED_LOCK(&processLock);
-  mmkv::deleteFile(dataPath);
-  mmkv::deleteFile(crcPath);
-  return MMKV_REMOVE_STORAGE_REMOVED;
-}
-
-bool mmkv_list_storage(mmkv_bytes rootDirectory, void *context, mmkv_bytes_callback callback) {
-  if (rootDirectory.count == 0) {
     return false;
   }
-  auto directory = nameSpace(string(rootDirectory)).getRootDir();
-  auto special = std::string(SPECIAL_CHARACTER_DIRECTORY_NAME);
-  return listStores(directory, "", context, callback) &&
-         listStores(
-           directory + MMKV_PATH_SLASH + special, special + MMKV_PATH_SLASH, context, callback);
+  return nameSpace(string(rootDirectory)).removeStorage(string(id));
 }
 
-void mmkv_storage_relative_path(mmkv_bytes id, void *context, mmkv_bytes_callback callback) {
-  auto path = relativeDataPath(string(id));
+void mmkv_resolve_directory(
+  mmkv_bytes rootDirectory, void *context, mmkv_bytes_callback callback) {
+  auto path = nameSpace(string(rootDirectory)).getRootDir();
   callback(context, mmkv_bytes{path.data(), path.size()});
+}
+
+void mmkv_md5(mmkv_bytes bytes, uint8_t *digest) {
+  openssl::MD5(static_cast<const uint8_t *>(bytes.bytes), bytes.count, digest);
 }
 
 bool mmkv_set_bool(

@@ -8,12 +8,17 @@
 /// let store = try MMKVStore(MMKVConfiguration(directory: directory, mode: .singleProcess))
 /// ```
 public struct MMKVDirectory: Sendable, Hashable {
+  private var storage: MMKVStorage
+
   /// The directory's path.
-  public var path: String
+  public var path: String {
+    get { self.storage.path }
+    set { self.storage.path = newValue }
+  }
 
   /// Creates a directory from its path.
   public init(path: String) {
-    self.path = path
+    self.storage = MMKVStorage(path: path)
   }
 }
 
@@ -36,7 +41,7 @@ extension MMKVDirectory {
   /// A store counts as present when both of its files exist, which they do once the store has
   /// been opened. This does not open the store or create anything.
   public func containsStore(id: String = MMKVConfiguration.defaultID) -> Bool {
-    MMKVStorage(directory: self).contains(id: id)
+    self.storage.contains(id: id)
   }
 
   /// Deletes the files of the store with this identifier.
@@ -53,7 +58,7 @@ extension MMKVDirectory {
   /// - Throws: ``MMKVError/storeIsOpen(id:directory:)`` if the store is open in this process.
   @discardableResult
   public func removeStore(id: String = MMKVConfiguration.defaultID) throws(MMKVError) -> Bool {
-    try MMKVStorage(directory: self).remove(id: id)
+    try self.storage.remove(id: id)
   }
 }
 
@@ -74,7 +79,7 @@ extension MMKVDirectory {
 
     fileprivate init(relativePath: String) {
       self.relativePath = relativePath
-      self.id = relativePath.contains("/") ? nil : relativePath
+      self.id = MMKVStorage.id(forRelativePath: relativePath)
     }
 
     /// Whether this is the store with the given identifier. This can be answered for a store
@@ -97,7 +102,7 @@ extension MMKVDirectory {
   ///   read.
   public var stores: [StoreEntry] {
     get throws(MMKVError) {
-      try MMKVStorage(directory: self).relativePaths().sorted().map(StoreEntry.init)
+      try self.storage.relativePaths().sorted().map(StoreEntry.init)
     }
   }
 
@@ -107,11 +112,10 @@ extension MMKVDirectory {
   /// - Throws: ``MMKVError/storeIsOpen(id:directory:)`` if the store is open in this process.
   @discardableResult
   public func removeStore(_ entry: StoreEntry) throws(MMKVError) -> Bool {
-    let storage = MMKVStorage(directory: self)
     guard let id = entry.id else {
-      return try storage.remove(relativePath: entry.relativePath)
+      return try self.storage.remove(relativePath: entry.relativePath)
     }
-    return try storage.remove(id: id)
+    return try self.storage.remove(id: id)
   }
 
   /// Deletes the files of every store in the directory, including those ``stores`` cannot name.

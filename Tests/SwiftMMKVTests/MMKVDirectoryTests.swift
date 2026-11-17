@@ -62,6 +62,9 @@ import Testing
     let directory = MMKVDirectory(path: temporaryRootDirectory())
     #expect(try !directory.removeStore(id: "store"))
     #expect(try !MMKVDirectory(path: temporaryRootDirectory() + "/missing").removeStore())
+    #expect(try !MMKVDirectory(path: "").removeStore())
+    #expect(try !directory.removeStore(id: ""))
+    #expect(try MMKVDirectory(path: "").stores.isEmpty)
   }
 
   @Test func `Refuses To Remove A Store That Is Open`() throws {
@@ -79,6 +82,23 @@ import Testing
       try respelled.removeStore(id: "store")
     }
     #expect(directory.containsStore(id: "store"))
+    #expect(store["key", as: String.self] == "value")
+  }
+
+  @Test func `Refuses To Remove An Open Store Reached Through A Symbolic Link`() throws {
+    let rootDirectory = temporaryRootDirectory()
+    let store = try makeStore(id: "store", rootDirectory: rootDirectory)
+    store.set("value", forKey: "key")
+    let linkPath = temporaryRootDirectory() + "/link"
+    try FileManager.default.createSymbolicLink(atPath: linkPath, withDestinationPath: rootDirectory)
+    let linked = MMKVDirectory(path: linkPath)
+
+    #expect(throws: MMKVError.storeIsOpen(id: "store", directory: linked)) {
+      try linked.removeStore(id: "store")
+    }
+    #expect(throws: MMKVError.storesAreOpen(ids: ["store"], directory: linked)) {
+      try linked.removeAllStores()
+    }
     #expect(store["key", as: String.self] == "value")
   }
 }
