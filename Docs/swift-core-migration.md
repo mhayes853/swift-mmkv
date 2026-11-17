@@ -33,6 +33,12 @@ where that work stands.
   placeholder that readers skip. Those four bytes, at offset 4 of the data file, and the checksums
   in the `.crc` file that cover them, are excluded from the comparison: the tests overwrite the
   placeholder in both files and recompute the checksums before comparing.
+
+  And one more: turning on expiry for a store that already has keys rewrites the file in the
+  iteration order of the C++ core's `std::unordered_map` (`enableAutoKeyExpire`), which depends
+  on the C++ standard library's hashing. The Swift core rewrites those records in file order
+  instead. After that rewrite the two files hold the same keys and values but not the same bytes,
+  so the differential tests compare contents rather than bytes from that point on.
 - **Cryptography stays vendored C.** AES (with the ARMv8 instructions), CFB128, and MD5 come from
   the OpenSSL-derived sources MMKV already ships, moved into a C target of their own
   (`CSwiftMMKVCrypto`) with their symbols prefixed in source. The Swift core only holds the
