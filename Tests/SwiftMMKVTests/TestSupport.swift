@@ -93,20 +93,25 @@ func makeStore(
 /// MMKV keeps one instance per identifier, so each gets an instance of its own over the same
 /// files, and the two behave towards each other the way two processes, or two copies of MMKV,
 /// would.
+///
+/// The identifiers are unique to the call. The C++ core reports an external change by
+/// identifier alone, so pairs with the same identifiers in tests running in parallel would
+/// report each other's changes.
 func makeLinkedStores(
   mode: MMKVConfiguration.Mode
 ) throws -> (first: MMKVStore, second: MMKVStore) {
   let rootDirectory = temporaryRootDirectory()
-  let first = try makeStore(id: "real", rootDirectory: rootDirectory, mode: mode)
+  let suffix = UUID().uuidString
+  let first = try makeStore(id: "real-\(suffix)", rootDirectory: rootDirectory, mode: mode)
   // The files are created when the store is first used.
   _ = first.count
-  for suffix in ["", ".crc"] {
+  for extensionSuffix in ["", ".crc"] {
     try FileManager.default.linkItem(
-      atPath: "\(rootDirectory)/real\(suffix)",
-      toPath: "\(rootDirectory)/link\(suffix)"
+      atPath: "\(rootDirectory)/real-\(suffix)\(extensionSuffix)",
+      toPath: "\(rootDirectory)/link-\(suffix)\(extensionSuffix)"
     )
   }
-  return (first, try makeStore(id: "link", rootDirectory: rootDirectory, mode: mode))
+  return (first, try makeStore(id: "link-\(suffix)", rootDirectory: rootDirectory, mode: mode))
 }
 
 /// Creates the two files of a store at `path` without opening that store in this process, by
