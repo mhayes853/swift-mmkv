@@ -1,7 +1,16 @@
 #if Sharing
   import Dependencies
-  import Foundation
   import Sharing
+
+  #if canImport(Darwin)
+    import Darwin
+  #elseif canImport(Android)
+    import Android
+  #elseif canImport(Glibc)
+    import Glibc
+  #elseif canImport(Musl)
+    import Musl
+  #endif
 
   /// A swift-sharing key that keeps a piece of `@Shared` state under one key of an
   /// ``MMKVStore``.
@@ -39,12 +48,7 @@
     }
 
     public var id: MMKVStorageKeyID {
-      let configuration = self.store.configuration
-      return MMKVStorageKeyID(
-        rootDirectory: configuration.rootDirectory,
-        storeID: configuration.id,
-        key: self.key
-      )
+      MMKVStorageKeyID(store: self.store, key: self.key)
     }
 
     public func load(context: LoadContext<Value>, continuation: LoadContinuation<Value>) {
@@ -68,16 +72,26 @@
   }
 
   /// Identifies the store and key behind an ``MMKVStorageKey``, so that every `@Shared` property
-  /// over the same key of the same store holds the same state.
+  /// over the same key of the same ``MMKVStore`` object holds the same state.
+  ///
+  /// Two ``MMKVStore`` objects opened over the same files are different stores to this type.
+  /// Shared state over each still follows the other, because their listeners are shared.
   public struct MMKVStorageKeyID: Hashable, Sendable {
-    private let rootDirectory: String
-    private let storeID: String
+    private let store: MMKVStore
     private let key: String
 
-    fileprivate init(rootDirectory: String, storeID: String, key: String) {
-      self.rootDirectory = rootDirectory
-      self.storeID = storeID
+    fileprivate init(store: MMKVStore, key: String) {
+      self.store = store
       self.key = key
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+      lhs.store === rhs.store && lhs.key == rhs.key
+    }
+
+    public func hash(into hasher: inout Hasher) {
+      hasher.combine(ObjectIdentifier(self.store))
+      hasher.combine(self.key)
     }
   }
 
@@ -236,7 +250,16 @@
   extension MMKVStore {
     /// An empty store in a directory of its own, which the system cleans up.
     fileprivate static func temporary() -> MMKVStore {
-      let directory = NSTemporaryDirectory() + "swift-mmkv-sharing-" + UUID().uuidString
+      #if os(Android)
+        let fallback = "/data/local/tmp"
+      #else
+        let fallback = "/tmp"
+      #endif
+      var directory = getenv("TMPDIR").map { String(cString: $0) } ?? fallback
+      if !directory.hasSuffix("/") {
+        directory += "/"
+      }
+      directory += "swift-mmkv-sharing-" + String(UInt64.random(in: .min ... .max), radix: 16)
       do {
         return try MMKVStore(MMKVConfiguration(rootDirectory: directory, mode: .singleProcess))
       } catch {

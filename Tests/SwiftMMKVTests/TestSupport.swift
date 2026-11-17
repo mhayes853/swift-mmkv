@@ -33,6 +33,26 @@ func makeStore(
   )
 }
 
+/// Opens one pair of files under two identifiers, the second being hard links to the first.
+/// MMKV keeps one instance per identifier, so each gets an instance of its own over the same
+/// files, and the two behave towards each other the way two processes, or two copies of MMKV,
+/// would.
+func makeLinkedStores(
+  mode: MMKVConfiguration.Mode
+) throws -> (first: MMKVStore, second: MMKVStore) {
+  let rootDirectory = temporaryRootDirectory()
+  let first = try makeStore(id: "real", rootDirectory: rootDirectory, mode: mode)
+  // The files are created when the store is first used.
+  _ = first.count
+  for suffix in ["", ".crc"] {
+    try FileManager.default.linkItem(
+      atPath: "\(rootDirectory)/real\(suffix)",
+      toPath: "\(rootDirectory)/link\(suffix)"
+    )
+  }
+  return (first, try makeStore(id: "link", rootDirectory: rootDirectory, mode: mode))
+}
+
 /// Collects the changes a store reports.
 final class ChangeRecorder: Sendable {
   private let changes = NSLock()

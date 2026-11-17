@@ -86,6 +86,29 @@
       #expect(!secondStore.contains("count"))
     }
 
+    @Test func `Stores Over The Same Files Keep Each Other's State Current`() throws {
+      let rootDirectory = temporaryRootDirectory()
+      let firstStore = try makeStore(rootDirectory: rootDirectory)
+      let secondStore = try makeStore(rootDirectory: rootDirectory)
+      @Shared(.mmkv("count", store: firstStore)) var first = 0.0
+      @Shared(.mmkv("count", store: secondStore)) var second = 0.0
+
+      $first.withLock { $0 = 3 }
+
+      #expect(second == 3)
+    }
+
+    @Test func `Follows A Change Made Outside The Store Once It Is Noticed`() throws {
+      let (other, store) = try makeLinkedStores(mode: .multiProcess)
+      @Shared(.mmkv("username", store: store)) var username = "blob"
+
+      other.set("blob jr", forKey: "username")
+      #expect(username == "blob")
+
+      store.checkForExternalChanges()
+      #expect(username == "blob jr")
+    }
+
     @Test func `A Rejected Write Is Reported As A Save Error`() throws {
       let store = try makeStore(itemSizeLimit: 16)
       @Shared(.mmkv("text", store: store)) var text = ""

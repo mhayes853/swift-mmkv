@@ -105,29 +105,10 @@ import Testing
   }
 }
 
-/// These tests reach one pair of files under two identifiers, the second being hard links to the
-/// first. MMKV keeps one instance per identifier, so each gets an instance of its own over the
-/// same files, and the two behave towards each other the way two processes, or two copies of
-/// MMKV, would.
+/// These tests use stores from `makeLinkedStores(mode:)`, which stand in for two processes.
 @Suite struct MMKVStoreMultiProcessTests {
-  private func makeStores(
-    mode: MMKVConfiguration.Mode
-  ) throws -> (first: MMKVStore, second: MMKVStore) {
-    let rootDirectory = temporaryRootDirectory()
-    let first = try makeStore(id: "real", rootDirectory: rootDirectory, mode: mode)
-    // The files are created when the store is first used.
-    _ = first.count
-    for suffix in ["", ".crc"] {
-      try FileManager.default.linkItem(
-        atPath: "\(rootDirectory)/real\(suffix)",
-        toPath: "\(rootDirectory)/link\(suffix)"
-      )
-    }
-    return (first, try makeStore(id: "link", rootDirectory: rootDirectory, mode: mode))
-  }
-
   @Test func `Multi Process Stores See Each Other's Writes`() throws {
-    let (first, second) = try self.makeStores(mode: .multiProcess)
+    let (first, second) = try makeLinkedStores(mode: .multiProcess)
 
     first.set("from first", forKey: "a")
     #expect(second.value(forKey: "a", as: String.self) == "from first")
@@ -141,7 +122,7 @@ import Testing
   }
 
   @Test func `Multi Process Stores Stay Consistent Under Concurrent Writes`() async throws {
-    let (first, second) = try self.makeStores(mode: .multiProcess)
+    let (first, second) = try makeLinkedStores(mode: .multiProcess)
 
     await withTaskGroup(of: Void.self) { group in
       group.addTask {
@@ -161,7 +142,7 @@ import Testing
   }
 
   @Test func `Exclusive Lock Excludes The Other Instance`() async throws {
-    let (first, second) = try self.makeStores(mode: .multiProcess)
+    let (first, second) = try makeLinkedStores(mode: .multiProcess)
     first.set(0.0, forKey: "counter")
 
     await withTaskGroup(of: Void.self) { group in
@@ -181,7 +162,7 @@ import Testing
   }
 
   @Test func `Reports An External Change When The Store Is Next Used`() throws {
-    let (first, second) = try self.makeStores(mode: .multiProcess)
+    let (first, second) = try makeLinkedStores(mode: .multiProcess)
     first.set("initial", forKey: "a")
     _ = second.value(forKey: "a", as: String.self)
     let recorder = ChangeRecorder()
@@ -196,7 +177,7 @@ import Testing
   }
 
   @Test func `Checking For External Changes Reports Without A Read`() throws {
-    let (first, second) = try self.makeStores(mode: .multiProcess)
+    let (first, second) = try makeLinkedStores(mode: .multiProcess)
     first.set("initial", forKey: "a")
     _ = second.value(forKey: "a", as: String.self)
     let recorder = ChangeRecorder()
@@ -214,7 +195,7 @@ import Testing
   }
 
   @Test func `An External Listener May Use The Store It Observes`() throws {
-    let (first, second) = try self.makeStores(mode: .multiProcess)
+    let (first, second) = try makeLinkedStores(mode: .multiProcess)
     first.set("initial", forKey: "a")
     _ = second.value(forKey: "a", as: String.self)
     let recorder = ChangeRecorder()
@@ -232,7 +213,7 @@ import Testing
   }
 
   @Test func `External Changes Are Reported After An Exclusive Lock Is Released`() throws {
-    let (first, second) = try self.makeStores(mode: .multiProcess)
+    let (first, second) = try makeLinkedStores(mode: .multiProcess)
     first.set("initial", forKey: "a")
     _ = second.value(forKey: "a", as: String.self)
     let recorder = ChangeRecorder()
@@ -250,7 +231,7 @@ import Testing
   }
 
   @Test func `Single Process Stores Do Not See Each Other's Writes`() throws {
-    let (first, second) = try self.makeStores(mode: .singleProcess)
+    let (first, second) = try makeLinkedStores(mode: .singleProcess)
     _ = second.count
 
     first.set("from first", forKey: "a")
