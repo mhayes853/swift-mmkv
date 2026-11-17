@@ -432,18 +432,8 @@ import Testing
     #expect(try openReadOnly("read").value(forKey: "expired", as: UInt32.self) == nil)
     let forKeys = try openReadOnly("keys")
     let forCount = try openReadOnly("count")
-    withKnownIssue(
-      """
-      The C++ engine's shim passes `isExpirationEnabled()` to `count` and `allKeys`, and that \
-      flag is only read from the metadata when the instance loads, which those calls do after \
-      their argument is evaluated. So the first `keys` or `count` on an instance does not filter.
-      """
-    ) {
-      #expect(forKeys.keys == ["live"])
-      #expect(forCount.count == 1)
-    } when: {
-      isTestingCxxCore
-    }
+    #expect(forKeys.keys == ["live"])
+    #expect(forCount.count == 1)
     // Upstream also checks that an unfiltered count is still 2, which the package cannot ask.
     #expect(try openReadOnly("live").value(forKey: "live", as: String.self) == "live")
   }

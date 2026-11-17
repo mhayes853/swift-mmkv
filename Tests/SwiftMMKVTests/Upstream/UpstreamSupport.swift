@@ -13,8 +13,6 @@ let pageSize = Int(getpagesize())
 let keyNotExist = "KeyNotExist"
 
 /// Whether the tests run against the vendored C++ core, for known issues that only it has.
-let isTestingCxxCore = engineUnderTest == .cxx
-
 // MARK: - Files
 
 /// A store's pair of files: the data file `<root>/<id>` and the metadata file `<root>/<id>.crc`.

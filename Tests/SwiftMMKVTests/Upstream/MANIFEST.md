@@ -66,7 +66,7 @@ Conventions that apply to every port:
 | `testBorrowedValueStorage` | Deferred | Phase 6 (encryption). Tests `KeyValueHolderCrypt` directly. |
 | `testImportIntoEncrypted` | Skipped | Not exposed: import. |
 | `testFirstReadAfterReopenRespectsExpiration` | Ported | `The First Read After Reopening Respects Expiration` |
-| `testReadOnlyExpiration` | Ported | `A Read Only Store Filters Expired Keys`; `A Read Only Encrypted Store Filters Expired Keys`. The `keys` and `count` checks are a **known issue** of the C++ engine's shim (see below), recorded with `withKnownIssue` so they fail once fixed. The unfiltered `count(false) == 2` is not exposed. |
+| `testReadOnlyExpiration` | Ported | `A Read Only Store Filters Expired Keys`; `A Read Only Encrypted Store Filters Expired Keys`. The `keys` and `count` checks found a bug in the C++ engine's shim, since fixed (see below). The unfiltered `count(false) == 2` is not exposed. |
 | `testFirstWriteAfterReopenPreservesValue` | Ported | `The First Write After Reopening Keeps Its Value` |
 | `testFirstWriteAfterReopenOverloads` | Ported | `The First Write After Reopening Works For Every Type`. Leaves out `vector<int32_t>`, which the package does not store. |
 
@@ -205,11 +205,11 @@ which the package cannot read; the snapshots use the metadata's size.
 | `testWriteStringPerformance` | Covered by | `Benchmarks`: `write.string/*` |
 | `testReadStringPerformance` | Covered by | `Benchmarks`: `read.string/*` |
 
-## Known issues
+## Fixed while porting
 
-- **The first `keys` or `count` on an instance does not filter expired keys** (C++ engine only).
-  `mmkv_count` and `mmkv_keys` in `SwiftMMKVShim.cpp` call `count(kv->isExpirationEnabled())`
-  and `allKeys(kv->isExpirationEnabled())`. `isExpirationEnabled()` reads a field that is only
-  filled from the metadata when the instance loads, which `count` and `allKeys` do after their
-  argument is evaluated. Passing `true` would be correct, since both already check the flag after
-  loading. Recorded with `withKnownIssue` in `UpstreamUnitTests`.
+- **The first `keys` or `count` on an instance did not filter expired keys** (C++ engine).
+  `mmkv_count` and `mmkv_keys` in `SwiftMMKVShim.cpp` called `count(kv->isExpirationEnabled())`
+  and `allKeys(kv->isExpirationEnabled())`, but that flag is only filled from the metadata when
+  the instance loads, which `count` and `allKeys` do after their argument is evaluated. The shim
+  now passes `true`, since both check the flag themselves after loading. `A Read Only Store
+  Filters Expired Keys` in `UpstreamUnitTests` covers it.
