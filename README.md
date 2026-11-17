@@ -250,6 +250,24 @@ Things to know while both sides are live:
 The [`E2E`](E2E) directory holds an Expo app that links react-native-mmkv beside a native module
 built on this package, and checks on iOS and Android that both sides agree about the same files.
 
+## App groups
+
+A store that an app shares with its extensions lives in the app group's container.
+`MMKVDirectory.appGroup(identifier:)` is the `mmkv` directory inside that container, and needs
+the `Foundation` trait:
+
+```swift
+let store = try MMKVStore(
+  MMKVConfiguration(
+    directory: .appGroup(identifier: "group.com.example.app"),
+    mode: .multiProcess
+  )
+)
+```
+
+The app and each extension are separate processes, so every one of them must open the store in
+multi-process mode.
+
 ## The `Foundation` trait
 
 The library itself does not use Foundation. The `Foundation` trait, on by default, adds:

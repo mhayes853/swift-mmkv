@@ -32,6 +32,20 @@
       #expect(try makeStore(rootDirectory: rootDirectory)["key", as: String.self] == "value")
     }
 
+    #if canImport(Darwin)
+      @Test func `An App Group Without A Container Is Reported`() {
+        // A test process has no app group entitlement. macOS hands out a container path to an
+        // unsandboxed process anyway, so either outcome is checked.
+        let identifier = "group.swift-mmkv.tests.unavailable"
+        do {
+          let directory = try MMKVDirectory.appGroup(identifier: identifier)
+          #expect(directory.path.hasSuffix("/\(identifier)/mmkv"))
+        } catch {
+          #expect(error == .appGroupContainerUnavailable(identifier: identifier))
+        }
+      }
+    #endif
+
     @Test func `JSON Values Are Stored As Strings JavaScript Can Parse`() throws {
       let store = try makeStore()
       let settings = Settings(notificationsEnabled: true, fontSize: 16)

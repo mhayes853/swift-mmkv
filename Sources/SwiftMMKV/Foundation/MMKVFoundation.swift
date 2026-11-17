@@ -24,6 +24,39 @@
 
   #if canImport(Darwin)
     extension MMKVDirectory {
+      /// The `mmkv` directory inside an app group's container, for stores an app shares with
+      /// its extensions.
+      ///
+      /// ```swift
+      /// let store = try MMKVStore(
+      ///   MMKVConfiguration(
+      ///     directory: .appGroup(identifier: "group.com.example.app"),
+      ///     mode: .multiProcess
+      ///   )
+      /// )
+      /// ```
+      ///
+      /// The app and each extension are separate processes, so every one of them must open
+      /// the store in multi-process mode.
+      ///
+      /// react-native-mmkv keeps an app group's stores in the container itself rather than in
+      /// a directory of their own. Use ``reactNative()`` for a store shared with JavaScript.
+      ///
+      /// - Throws: ``MMKVError/appGroupContainerUnavailable(identifier:)`` if the app group has
+      ///   no container this process can reach.
+      public static func appGroup(identifier: String) throws(MMKVError) -> MMKVDirectory {
+        guard
+          let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: identifier
+          )
+        else {
+          throw .appGroupContainerUnavailable(identifier: identifier)
+        }
+        return MMKVDirectory(url: container.appendingPathComponent("mmkv", isDirectory: true))
+      }
+    }
+
+    extension MMKVDirectory {
       /// The directory react-native-mmkv keeps its stores in on Apple platforms when its `path`
       /// option is not set.
       ///

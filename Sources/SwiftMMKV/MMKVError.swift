@@ -10,8 +10,7 @@ public enum MMKVError: Error, Sendable, Hashable {
   /// The store could not be re-encrypted, for example because it is read-only.
   case rekeyFailed
 
-  /// The app group named by the `AppGroupIdentifier` key of the app's `Info.plist` has no
-  /// container this process can reach.
+  /// The app group has no container this process can reach.
   case appGroupContainerUnavailable(identifier: String)
 
   /// The store did not accept a write to `key`. A write fails when the key is empty, the store
