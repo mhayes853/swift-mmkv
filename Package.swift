@@ -126,7 +126,7 @@ let testTarget: Target = .testTarget(
 // Tests of the Swift core's internals, which the store-level tests in SwiftMMKVTests cannot reach.
 let coreTestTarget: Target = .testTarget(
   name: "SwiftMMKVCoreTests",
-  dependencies: ["_SwiftMMKVCore", "CSwiftMMKVCrypto", "SwiftMMKV"]
+  dependencies: ["_SwiftMMKVCore", "CSwiftMMKVCrypto", "CSwiftMMKVCore", "SwiftMMKV"]
 )
 
 let package = Package(

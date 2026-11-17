@@ -24,11 +24,32 @@ package enum StoreRegistry {
           makeDirectories(special)
         }
       }
+      var configuration = configuration
+      #if os(Android)
+        // An older MMKV on Android named a store's files after a hash of their path. They are
+        // renamed when possible, and used under the old name when not.
+        if Self.migrationStatus(id: configuration.id, root: root) == .oldToNewMigrateFail {
+          configuration.id = StoreStorage.legacyID(id: configuration.id, root: root)
+        }
+      #endif
       let instance = StoreInstance(configuration, root: root)
       Self.instances[key] = instance
       return instance
     }
   }
+}
+
+extension StoreRegistry {
+  /// Runs `body` holding the lock that guards the registry (`g_instanceLock`).
+  package static func withLock<R>(_ body: () -> R) -> R {
+    Self.lock.withLock(body)
+  }
+
+  #if os(Android)
+    private static func migrationStatus(id: String, root: String) -> StoreStorage.MigrateStatus {
+      StoreStorage.tryMigrateLegacyFiles(id: id, root: root)
+    }
+  #endif
 }
 
 /// Creates a directory and any missing parents, as MMKV's `mkPath` does.
