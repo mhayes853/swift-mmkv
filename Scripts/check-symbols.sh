@@ -15,10 +15,11 @@ nm="${2:-nm}"
 
 objects=()
 while IFS= read -r object; do objects+=("$object"); done < <(
-  find "$build" -name '*.o' -path '*CSwiftMMKVCore*' ! -path '*SwiftMMKVTests*'
+  find "$build" -name '*.o' \( -path '*CSwiftMMKVCore*' -o -path '*CSwiftMMKVCrypto*' \) \
+    ! -path '*Tests*'
 )
 if [ "${#objects[@]}" -eq 0 ]; then
-  echo "No CSwiftMMKVCore objects under $build. Run swift build first." >&2
+  echo "No CSwiftMMKVCore or CSwiftMMKVCrypto objects under $build. Run swift build first." >&2
   exit 2
 fi
 
@@ -37,7 +38,7 @@ fi
 # pointer is harmless: both hold a CRC-32 routine with the same signature.
 unrenamed=$(printf '%s\n' "$strong" | grep -v 'swiftmmkv' | grep -vx 'CRC32' | sort -u || true)
 if [ -n "$unrenamed" ]; then
-  echo "Unrenamed global symbols in the MMKV core:" >&2
+  echo "Unrenamed global symbols in the MMKV core or its cryptography:" >&2
   printf '%s\n' "$unrenamed" >&2
   exit 1
 fi

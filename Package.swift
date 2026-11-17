@@ -64,6 +64,13 @@ let coreTarget: Target = .target(
   ]
 )
 
+// AES, CFB-128, and MD5 for the Swift core that is replacing the C++ one, ported to C from the
+// OpenSSL-derived code MMKV ships. Its symbols are prefixed in source. See its README.md.
+let cryptoTarget: Target = .target(
+  name: "CSwiftMMKVCrypto",
+  exclude: ["LICENSE.TXT", "README.md"]
+)
+
 let libraryTarget: Target = .target(
   name: "SwiftMMKV",
   dependencies: [
@@ -106,6 +113,12 @@ let testTarget: Target = .testTarget(
   ]
 )
 
+// Tests of the Swift core's internals, which the store-level tests in SwiftMMKVTests cannot reach.
+let coreTestTarget: Target = .testTarget(
+  name: "SwiftMMKVCoreTests",
+  dependencies: ["CSwiftMMKVCrypto"]
+)
+
 let package = Package(
   name: "swift-mmkv",
   platforms: [
@@ -137,7 +150,9 @@ let package = Package(
     .package(url: "https://github.com/pointfreeco/swift-sharing", from: "2.0.0"),
     .package(url: "https://github.com/pointfreeco/swift-dependencies", from: "1.5.1")
   ],
-  targets: [coreTarget, foundationTarget, libraryTarget, testTarget],
+  targets: [
+    coreTarget, cryptoTarget, foundationTarget, libraryTarget, testTarget, coreTestTarget
+  ],
   swiftLanguageModes: [.v6],
   cxxLanguageStandard: .cxx20
 )

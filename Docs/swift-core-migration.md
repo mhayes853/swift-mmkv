@@ -140,7 +140,7 @@ differential tests and the benchmarks, so they keep running in CI. The README is
 | --- | --- |
 | 0a. Benchmarks | Done: `Benchmarks/`, C++ results only until the Swift core opens stores |
 | 0b. Upstream tests | Not started |
-| 1. `CSwiftMMKVCrypto` | Not started |
+| 1. `CSwiftMMKVCrypto` | Done: tested against NIST and RFC 1321 vectors, the assembly against the portable code |
 | 2. Format primitives | Not started |
 | 3. `MemoryFile` | Not started |
 | 4. Single-process core | Not started |
