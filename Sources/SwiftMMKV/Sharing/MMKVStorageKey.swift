@@ -49,8 +49,7 @@
       context: LoadContext<Value>,
       subscriber: SharedSubscriber<Value>
     ) -> SharedSubscription {
-      let subscription = self.store.subscribe { change in
-        if case .key(let changed) = change, changed != self.key { return }
+      let subscription = self.store.subscribe(forKey: self.key) {
         subscriber.yield(with: Result { try self.loadValue(self.store, self.key) })
       }
       return SharedSubscription { subscription.cancel() }

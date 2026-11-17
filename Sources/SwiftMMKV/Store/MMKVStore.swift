@@ -350,6 +350,57 @@ extension MMKVStore {
     self.core.state.subscribe(onChange)
   }
 
+  /// Calls `onChange` whenever the value of `key` may have changed, until the returned
+  /// subscription is cancelled or released.
+  ///
+  /// That is whenever `key` is set or removed through this package, and whenever a
+  /// ``Change/external`` change is noticed, since such a change does not say which keys it
+  /// touched. In other respects this behaves like ``subscribe(_:)``.
+  ///
+  /// - Parameters:
+  ///   - key: The key to observe.
+  ///   - onChange: Runs after each change.
+  public func subscribe(
+    forKey key: String,
+    _ onChange: @escaping @Sendable () -> Void
+  ) -> MMKVSubscription {
+    self.subscribe { change in
+      if case .key(let changed) = change, changed != key { return }
+      onChange()
+    }
+  }
+
+  /// Calls `onChange` with the value of `key`, once before this function returns and then
+  /// whenever the value may have changed, until the returned subscription is cancelled or
+  /// released.
+  ///
+  /// ```swift
+  /// let subscription = store.subscribe(forKey: "volume", as: Double.self) { volume in
+  ///   player.volume = volume ?? 1
+  /// }
+  /// ```
+  ///
+  /// The value is `nil` when the store has no value for `key`, or when its value is not a
+  /// valid `V`. `onChange` may be given the value it was last given: it runs whenever `key` is
+  /// written, and whenever a ``Change/external`` change is noticed, since such a change does
+  /// not say which keys it touched. In other respects this behaves like ``subscribe(_:)``.
+  ///
+  /// - Parameters:
+  ///   - key: The key to observe.
+  ///   - type: The type to read the value as.
+  ///   - onChange: Runs with the current value, and again after each change.
+  public func subscribe<V: MMKVValue & SendableMetatype>(
+    forKey key: String,
+    as type: V.Type = V.self,
+    _ onChange: @escaping @Sendable (V?) -> Void
+  ) -> MMKVSubscription {
+    let subscription = self.subscribe(forKey: key) {
+      onChange(self.value(forKey: key, as: V.self))
+    }
+    onChange(self.value(forKey: key, as: V.self))
+    return subscription
+  }
+
   /// Checks whether another process, or another copy of MMKV, changed the store, reloading it
   /// and notifying listeners with ``Change/external`` if so.
   ///

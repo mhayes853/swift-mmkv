@@ -66,3 +66,17 @@ final class ChangeRecorder: Sendable {
     self.changes.withLock { self.recorded.append(change) }
   }
 }
+
+/// Collects the values a per-key subscription delivers.
+final class ValueRecorder<Value: Sendable>: Sendable {
+  private let values = NSLock()
+  nonisolated(unsafe) private var recorded = [Value]()
+
+  var all: [Value] {
+    self.values.withLock { self.recorded }
+  }
+
+  func record(_ value: Value) {
+    self.values.withLock { self.recorded.append(value) }
+  }
+}

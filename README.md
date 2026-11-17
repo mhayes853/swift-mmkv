@@ -124,6 +124,33 @@ subscription.cancel()
 carries no key, and a store only notices an external change when it is next used or when
 `checkForExternalChanges()` is called.
 
+To follow one key, subscribe to it. The listener is given the current value straight away, and
+again after each change:
+
+```swift
+let subscription = store.subscribe(forKey: "volume", as: Double.self) { volume in
+  player.volume = volume ?? 1
+}
+```
+
+`values(forKey:as:)` gives the same values as an `AsyncSequence`, which ends when its task is
+cancelled. A consumer that falls behind skips to the newest value.
+
+```swift
+for await volume in store.values(forKey: "volume", as: Double.self) {
+  player.volume = volume ?? 1
+}
+
+for try await settings in store.values(forKey: "settings", as: Settings.self, with: JSONDecoder()) {
+  apply(settings ?? Settings())
+}
+```
+
+Both can deliver the value they last delivered. They run whenever the key is written, even with
+the same value, and on every external change, which does not say which keys it touched. To see
+only actual changes, drop the repeats, for instance with `removeDuplicates()` from
+[swift-async-algorithms](https://github.com/apple/swift-async-algorithms).
+
 ## Sharing a store with React Native
 
 An app that links react-native-mmkv has two copies of MMKV in one process: the one React Native
