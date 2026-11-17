@@ -59,6 +59,24 @@ the default, or `swift`), so the whole suite runs against either core. CI runs i
 A test that needs a feature the Swift core does not have yet is disabled for it with a trait that
 names the feature. Differential tests use both cores explicitly.
 
+## What the Swift core has to provide
+
+Everything the package asks of the C++ core, which is `MMKVEngine` (`Sources/SwiftMMKV/Internal`)
+plus the operations that do not open a store:
+
+- **Per store** (`MMKVEngine`): typed reads and writes, with optional expiry; keys, count, and
+  `contains`; removing one key, several, or all, optionally keeping the file's size; importing
+  another store's keys; the recursive lock; the file's size and the size of its data; checking for
+  external changes; `trim`; `sync`; and `rekey`.
+- **Per directory** (`MMKVStorage`, which calls the C interface directly today): whether a store's
+  files exist (`checkExist`), removing a store's files (`removeStorage`), the directory as MMKV
+  resolves it (`NameSpace`), and on Android the file name an older MMKV used.
+- **Opening**: the C interface's own rules (an empty identifier or directory fails, the directory is
+  created unless the store is read-only), and the instance registry, so that every open of the
+  same files in a process shares one instance.
+
+Suspension (`SuspensionGate`) lives above the engine and needs nothing from it.
+
 ## Phases
 
 Each engine phase is done when the upstream tests for its area pass against both cores, the
