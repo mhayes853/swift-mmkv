@@ -1,9 +1,7 @@
-import CSwiftMMKVCore
-
 /// The listeners and pending notifications of one underlying MMKV instance.
 ///
-/// The core hands back the same instance for every open of a root directory and identifier, so
-/// this is shared by every ``MMKVStore`` over that instance.
+/// An engine hands back the same instance for every open of a directory and identifier, so this
+/// is shared by every ``MMKVStore`` over that instance.
 final class MMKVStoreState: Sendable {
   typealias Listener = @Sendable (MMKVStore.Change) -> Void
 
@@ -47,7 +45,7 @@ final class MMKVStoreState: Sendable {
     }
   }
 
-  /// Records that the core saw the store's file change underneath it. Called with the core's
+  /// Records that the engine saw the store's file change underneath it. Called with the engine's
   /// locks held, so listeners are told later, by ``deliverPendingExternalChange()``.
   private func markExternalChange() {
     self.registrations.withLock { $0.hasPendingExternalChange = true }
@@ -82,41 +80,33 @@ final class MMKVStoreState: Sendable {
 extension MMKVStoreState {
   private static let all = Lock([UInt: MMKVStoreState]())
 
-  /// Returns the state shared by every store over `handle`.
+  /// Returns the state shared by every store over the engine instance `instance`.
   ///
   /// The first open of an instance decides its mode, as it does in the core.
-  static func shared(
-    for handle: OpaquePointer,
-    id: String,
-    isMultiProcess: Bool
-  ) -> MMKVStoreState {
-    Self.installContentChangedCallback
-    return Self.all.withLock { states in
-      let key = UInt(bitPattern: handle)
-      if let state = states[key] {
+  static func shared(for instance: UInt, id: String, isMultiProcess: Bool) -> MMKVStoreState {
+    Self.all.withLock { states in
+      if let state = states[instance] {
         return state
       }
       let state = MMKVStoreState(id: id, isMultiProcess: isMultiProcess)
-      states[key] = state
+      states[instance] = state
       return state
     }
   }
 
-  // The core reports a change by store identifier alone, so every state with that identifier is
-  // marked. Stores with the same identifier in different directories are over-notified, which
-  // only costs a spurious `.external`.
-  private static let installContentChangedCallback: Void = {
-    mmkv_set_content_changed_callback { id in
-      let id = String(
-        decoding: UnsafeRawBufferPointer(start: id.bytes, count: id.count),
-        as: UTF8.self
-      )
-      let states = MMKVStoreState.all.withLock { states in
-        states.values.filter { $0.id == id }
-      }
-      for state in states {
-        state.markExternalChange()
-      }
+  /// Records an external change to the engine instance `instance`.
+  static func markExternalChange(instance: UInt) {
+    let state = Self.all.withLock { $0[instance] }
+    state?.markExternalChange()
+  }
+
+  /// Records an external change to every instance of a store with the identifier `id`.
+  static func markExternalChange(id: String) {
+    let states = Self.all.withLock { states in
+      states.values.filter { $0.id == id }
     }
-  }()
+    for state in states {
+      state.markExternalChange()
+    }
+  }
 }

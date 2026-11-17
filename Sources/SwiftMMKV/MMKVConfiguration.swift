@@ -44,6 +44,12 @@ public struct MMKVConfiguration: Sendable, Hashable {
   /// The largest key-value pair the store accepts, in bytes, or `nil` for no limit.
   public var itemSizeLimit: Int?
 
+  /// The implementation of MMKV's core that opens the store.
+  ///
+  /// The package is moving from the vendored C++ core to one written in Swift. Until that is
+  /// done, tests and benchmarks use this to run against either.
+  @_spi(Engines) public var engine = Engine.cxx
+
   /// Creates a configuration.
   ///
   /// - Parameters:
@@ -117,6 +123,15 @@ extension MMKVConfiguration {
     public static func aes256(key: String) -> Self {
       .aes256(key: Array(key.utf8))
     }
+  }
+
+  /// An implementation of MMKV's core.
+  @_spi(Engines) public enum Engine: String, Sendable, Hashable, CaseIterable {
+    /// The C++ core this package vendors.
+    case cxx
+
+    /// The Swift core that is replacing it.
+    case swift
   }
 
   /// What to do when a store's file fails its integrity check, which can happen after the

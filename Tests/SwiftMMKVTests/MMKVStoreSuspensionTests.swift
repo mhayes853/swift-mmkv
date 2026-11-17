@@ -2,7 +2,7 @@ import Foundation
 import SwiftMMKV
 import Testing
 
-@Suite struct MMKVStoreSuspensionTests {
+@Suite(.requires(.store, .multiProcess)) struct MMKVStoreSuspensionTests {
   @Test func `A Suspended Store Turns Reads And Writes Away`() throws {
     let store = try makeStore(mode: .multiProcess)
     store.set("blob", forKey: "username")

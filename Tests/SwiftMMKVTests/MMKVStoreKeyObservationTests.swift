@@ -1,7 +1,7 @@
 import SwiftMMKV
 import Testing
 
-@Suite struct MMKVStoreKeySubscriptionTests {
+@Suite(.requires(.store)) struct MMKVStoreKeySubscriptionTests {
   @Test func `Reports Changes To Its Key Only`() throws {
     let store = try makeStore()
     let recorder = ValueRecorder<Bool>()
@@ -51,7 +51,8 @@ import Testing
     #expect(recorder.all == [nil])
   }
 
-  @Test func `Delivers The Value Again After A Change Made Outside The Store`() throws {
+  @Test(.requires(.multiProcess))
+  func `Delivers The Value Again After A Change Made Outside The Store`() throws {
     let (other, store) = try makeLinkedStores(mode: .multiProcess)
     let recorder = ValueRecorder<String?>()
     let subscription = store.subscribe(forKey: "username", as: String.self, recorder.record)
@@ -66,7 +67,7 @@ import Testing
   }
 }
 
-@Suite struct MMKVValuesTests {
+@Suite(.requires(.store)) struct MMKVValuesTests {
   @Test func `Starts With The Current Value And Follows Each Change`() async throws {
     let store = try makeStore()
     store.set(0.5, forKey: "volume")
@@ -140,7 +141,8 @@ import Testing
     #expect(await task.value == 1)
   }
 
-  @Test func `Follows A Change Made Outside The Store Once It Is Noticed`() async throws {
+  @Test(.requires(.multiProcess))
+  func `Follows A Change Made Outside The Store Once It Is Noticed`() async throws {
     let (other, store) = try makeLinkedStores(mode: .multiProcess)
     var values = store.values(forKey: "username", as: String.self).makeAsyncIterator()
     #expect(await values.next() == .some(nil))

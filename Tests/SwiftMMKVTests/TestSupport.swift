@@ -1,5 +1,60 @@
 import Foundation
-import SwiftMMKV
+@_spi(Engines) import SwiftMMKV
+import Testing
+
+// MARK: - Engines
+
+/// The core the tests run against, from the `SWIFTMMKV_TEST_ENGINE` environment variable: `cxx`
+/// (the default) or `swift`.
+let engineUnderTest: MMKVConfiguration.Engine = {
+  guard let name = ProcessInfo.processInfo.environment["SWIFTMMKV_TEST_ENGINE"] else {
+    return .cxx
+  }
+  guard let engine = MMKVConfiguration.Engine(rawValue: name) else {
+    fatalError("Unknown SWIFTMMKV_TEST_ENGINE \(name). Expected one of: cxx, swift.")
+  }
+  return engine
+}()
+
+/// A part of MMKV's core that the Swift core may not have yet.
+enum EngineFeature: String, CaseIterable, CustomStringConvertible {
+  /// Opening, reading, and writing a single-process store.
+  case store
+  case readOnly
+  case expiry
+  case multiProcess
+  case encryption
+  /// Copying one store's keys and values into another.
+  case importing
+  /// Checking for, listing, and removing a directory's stores without opening them.
+  case directory
+
+  var description: String { self.rawValue }
+}
+
+extension MMKVConfiguration.Engine {
+  /// The features this engine has so far.
+  var features: Set<EngineFeature> {
+    switch self {
+    case .cxx: Set(EngineFeature.allCases)
+    case .swift: []
+    }
+  }
+}
+
+extension Trait where Self == ConditionTrait {
+  /// Runs a test or suite only when the engine under test has every one of `features`. Every
+  /// test that opens a store needs at least ``EngineFeature/store``.
+  static func requires(_ features: EngineFeature...) -> Self {
+    let missing = Set(features).subtracting(engineUnderTest.features)
+    return .enabled(
+      if: missing.isEmpty,
+      "The \(engineUnderTest) engine does not have: \(missing.map(\.rawValue).sorted())"
+    )
+  }
+}
+
+// MARK: - Stores
 
 /// A directory that is unique to one test, so that tests never share a store.
 ///
@@ -19,18 +74,19 @@ func makeStore(
   mode: MMKVConfiguration.Mode = .singleProcess,
   isReadOnly: Bool = false,
   encryption: MMKVConfiguration.Encryption? = nil,
-  itemSizeLimit: Int? = nil
+  itemSizeLimit: Int? = nil,
+  engine: MMKVConfiguration.Engine = engineUnderTest
 ) throws -> MMKVStore {
-  try MMKVStore(
-    MMKVConfiguration(
-      id: id,
-      directory: MMKVDirectory(path: rootDirectory),
-      mode: mode,
-      isReadOnly: isReadOnly,
-      encryption: encryption,
-      itemSizeLimit: itemSizeLimit
-    )
+  var configuration = MMKVConfiguration(
+    id: id,
+    directory: MMKVDirectory(path: rootDirectory),
+    mode: mode,
+    isReadOnly: isReadOnly,
+    encryption: encryption,
+    itemSizeLimit: itemSizeLimit
   )
+  configuration.engine = engine
+  return try MMKVStore(configuration)
 }
 
 /// Opens one pair of files under two identifiers, the second being hard links to the first.

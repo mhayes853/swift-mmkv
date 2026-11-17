@@ -2,7 +2,7 @@ import Foundation
 import SwiftMMKV
 import Testing
 
-@Suite struct MMKVStoreEncryptionTests {
+@Suite(.requires(.store, .encryption)) struct MMKVStoreEncryptionTests {
   private static let secret = "a very recognisable plaintext value"
 
   private func fileContains(_ text: String, rootDirectory: String, id: String) throws -> Bool {

@@ -72,6 +72,13 @@ jobs:
       - name: Test with swift-sharing
         run: swift test --traits Sharing,Foundation
 
+      # The same suite against the Swift core that is replacing the C++ one. Tests for features
+      # it does not have yet are skipped. See Docs/swift-core-migration.md.
+      - name: Test the Swift core
+        run: swift test --traits Sharing,Foundation
+        env:
+          SWIFTMMKV_TEST_ENGINE: swift
+
       - name: Check core symbols are renamed
         run: Scripts/check-symbols.sh
 

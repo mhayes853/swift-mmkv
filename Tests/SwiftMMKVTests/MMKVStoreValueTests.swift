@@ -2,7 +2,7 @@ import Foundation
 import SwiftMMKV
 import Testing
 
-@Suite struct MMKVStoreValueTests {
+@Suite(.requires(.store)) struct MMKVStoreValueTests {
   @Test func `Round Trips Every Primitive`() throws {
     let store = try makeStore()
 
@@ -207,7 +207,7 @@ import Testing
     #expect(store.value(forKey: "ké", as: Double.self) == nil)
   }
 
-  @Test func `A Read Only Store Rejects Writes`() throws {
+  @Test(.requires(.readOnly)) func `A Read Only Store Rejects Writes`() throws {
     let rootDirectory = temporaryRootDirectory()
     let writable = try makeStore(id: "writable", rootDirectory: rootDirectory)
     writable.set("value", forKey: "key")
@@ -236,7 +236,7 @@ import Testing
     #expect(store.keys == ["small"])
   }
 
-  @Test func `An Expiring Value Disappears After Its Duration`() async throws {
+  @Test(.requires(.expiry)) func `An Expiring Value Disappears After Its Duration`() async throws {
     let store = try makeStore()
 
     store.set("kept", forKey: "kept")
@@ -252,7 +252,7 @@ import Testing
   }
 }
 
-@Suite struct MMKVValueConformanceTests {
+@Suite(.requires(.store)) struct MMKVValueConformanceTests {
   enum Theme: String, MMKVValue {
     case light, dark
   }

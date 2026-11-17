@@ -15,7 +15,7 @@ import Testing
   }
 }
 
-@Suite struct MMKVDirectoryStoreTests {
+@Suite(.requires(.store, .directory)) struct MMKVDirectoryStoreTests {
   /// Creates a store's files without opening it in this process, by copying those of a store
   /// that is open under another identifier.
   private func makeUnopenedStore(id: String, in rootDirectory: String) throws {
@@ -103,7 +103,7 @@ import Testing
   }
 }
 
-@Suite struct MMKVDirectoryListingTests {
+@Suite(.requires(.store, .directory)) struct MMKVDirectoryListingTests {
   @Test func `Lists The Stores That Have Files`() throws {
     let rootDirectory = temporaryRootDirectory()
     let directory = MMKVDirectory(path: rootDirectory)

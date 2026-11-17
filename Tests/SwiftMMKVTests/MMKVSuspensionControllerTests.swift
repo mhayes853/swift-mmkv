@@ -8,7 +8,7 @@
   #endif
 
   @MainActor
-  @Suite struct MMKVSuspensionControllerTests {
+  @Suite(.requires(.store, .multiProcess)) struct MMKVSuspensionControllerTests {
     @Test func `A Manual Controller Suspends And Resumes Its Stores`() throws {
       let first = try makeStore(mode: .multiProcess)
       let second = try makeStore(mode: .multiProcess)

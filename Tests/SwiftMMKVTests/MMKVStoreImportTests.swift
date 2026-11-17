@@ -2,7 +2,7 @@ import Foundation
 import SwiftMMKV
 import Testing
 
-@Suite struct MMKVStoreImportTests {
+@Suite(.requires(.store, .importing)) struct MMKVStoreImportTests {
   @Test func `Copies Every Key And Replaces Those That Exist`() throws {
     let source = try makeStore()
     source.set("new", forKey: "shared")
@@ -22,7 +22,7 @@ import Testing
     #expect(source.keys == ["shared", "number", "bytes"])
   }
 
-  @Test func `Copies Between Stores With Different Encryption`() throws {
+  @Test(.requires(.encryption)) func `Copies Between Stores With Different Encryption`() throws {
     let source = try makeStore(encryption: .aes256(key: "source-key"))
     source.set("secret", forKey: "token")
     let plain = try makeStore()
@@ -46,7 +46,7 @@ import Testing
     #expect(store.keys == ["key"])
   }
 
-  @Test func `Copies Nothing Into A Read Only Store`() throws {
+  @Test(.requires(.readOnly)) func `Copies Nothing Into A Read Only Store`() throws {
     let rootDirectory = temporaryRootDirectory()
     try makeUnopenedStoreFiles(at: "\(rootDirectory)/readonly")
     let readOnly = try makeStore(id: "readonly", rootDirectory: rootDirectory, isReadOnly: true)

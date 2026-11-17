@@ -5,7 +5,7 @@
   import SwiftMMKV
   import Testing
 
-  @Suite struct MMKVStorageKeyTests {
+  @Suite(.requires(.store)) struct MMKVStorageKeyTests {
     @Test func `Uses The Default When The Store Has No Value`() throws {
       let store = try makeStore()
 
@@ -98,7 +98,8 @@
       #expect(second == 3)
     }
 
-    @Test func `Follows A Change Made Outside The Store Once It Is Noticed`() throws {
+    @Test(.requires(.multiProcess))
+    func `Follows A Change Made Outside The Store Once It Is Noticed`() throws {
       let (other, store) = try makeLinkedStores(mode: .multiProcess)
       @Shared(.mmkv("username", store: store)) var username = "blob"
 

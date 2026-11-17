@@ -1,9 +1,9 @@
 #if Foundation
   import Foundation
-  import SwiftMMKV
+  @_spi(Engines) import SwiftMMKV
   import Testing
 
-  @Suite struct MMKVFoundationTests {
+  @Suite(.requires(.store)) struct MMKVFoundationTests {
     struct Settings: Codable, Equatable {
       var notificationsEnabled: Bool
       var fontSize: Double
@@ -27,8 +27,9 @@
       let directory = MMKVDirectory(url: URL(fileURLWithPath: rootDirectory))
       #expect(directory == MMKVDirectory(path: rootDirectory))
 
-      try MMKVStore(MMKVConfiguration(directory: directory, mode: .singleProcess))
-        .set("value", forKey: "key")
+      var configuration = MMKVConfiguration(directory: directory, mode: .singleProcess)
+      configuration.engine = engineUnderTest
+      try MMKVStore(configuration).set("value", forKey: "key")
       #expect(try makeStore(rootDirectory: rootDirectory)["key", as: String.self] == "value")
     }
 

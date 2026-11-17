@@ -2,7 +2,7 @@ import Foundation
 import SwiftMMKV
 import Testing
 
-@Suite struct MMKVStoreKeyTests {
+@Suite(.requires(.store)) struct MMKVStoreKeyTests {
   @Test func `Reports Keys Count And Containment`() throws {
     let store = try makeStore()
     #expect(store.keys.isEmpty)
