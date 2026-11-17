@@ -2,16 +2,6 @@
   import Dependencies
   import Sharing
 
-  #if canImport(Darwin)
-    import Darwin
-  #elseif canImport(Android)
-    import Android
-  #elseif canImport(Glibc)
-    import Glibc
-  #elseif canImport(Musl)
-    import Musl
-  #endif
-
   /// A swift-sharing key that keeps a piece of `@Shared` state under one key of an
   /// ``MMKVStore``.
   ///
@@ -250,16 +240,9 @@
   extension MMKVStore {
     /// An empty store in a directory of its own, which the system cleans up.
     fileprivate static func temporary() -> MMKVStore {
-      #if os(Android)
-        let fallback = "/data/local/tmp"
-      #else
-        let fallback = "/tmp"
-      #endif
-      var directory = getenv("TMPDIR").map { String(cString: $0) } ?? fallback
-      if !directory.hasSuffix("/") {
-        directory += "/"
-      }
-      directory += "swift-mmkv-sharing-" + String(UInt64.random(in: .min ... .max), radix: 16)
+      let directory =
+        temporaryDirectory() + "swift-mmkv-sharing-"
+        + String(UInt64.random(in: .min ... .max), radix: 16)
       do {
         return try MMKVStore(MMKVConfiguration(rootDirectory: directory, mode: .singleProcess))
       } catch {
