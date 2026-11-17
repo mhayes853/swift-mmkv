@@ -115,6 +115,7 @@ let testTarget: Target = .testTarget(
       condition: .when(traits: ["Sharing"])
     )
   ],
+  exclude: ["Upstream/MANIFEST.md"],
   swiftSettings: [
     .enableExperimentalFeature("Lifetimes"),
     .define("Foundation", .when(traits: ["Foundation"])),
