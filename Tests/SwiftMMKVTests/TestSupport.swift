@@ -74,6 +74,9 @@ func makeStore(
   mode: MMKVConfiguration.Mode = .singleProcess,
   isReadOnly: Bool = false,
   encryption: MMKVConfiguration.Encryption? = nil,
+  expectedCapacity: Int = 0,
+  recovery: MMKVConfiguration.Recovery = .discard,
+  compareBeforeSet: Bool = false,
   itemSizeLimit: Int? = nil,
   engine: MMKVConfiguration.Engine = engineUnderTest
 ) throws -> MMKVStore {
@@ -83,6 +86,9 @@ func makeStore(
     mode: mode,
     isReadOnly: isReadOnly,
     encryption: encryption,
+    expectedCapacity: expectedCapacity,
+    recovery: recovery,
+    compareBeforeSet: compareBeforeSet,
     itemSizeLimit: itemSizeLimit
   )
   configuration.engine = engine
