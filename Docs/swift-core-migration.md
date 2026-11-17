@@ -148,7 +148,7 @@ differential tests and the benchmarks, so they keep running in CI. The README is
 | 0b. Upstream tests | Not started |
 | 1. `CSwiftMMKVCrypto` | Done: tested against NIST and RFC 1321 vectors, the assembly against the portable code |
 | 2. Format primitives | Done: in `Sources/_SwiftMMKVCore`, checked against files the C++ core writes |
-| 3. `MemoryFile` | Not started |
+| 3. `MemoryFile` | Done: with `FileLock` and `ThreadLock`; the lock is checked against the C++ core's |
 | 4. Single-process core | Not started |
 | 5. Multi-process | Not started |
 | 6. Encryption | Not started |

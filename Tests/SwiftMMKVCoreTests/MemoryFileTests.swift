@@ -1,0 +1,335 @@
+import Foundation
+@_spi(Engines) import SwiftMMKV
+import Testing
+
+@testable import _SwiftMMKVCore
+
+@Suite struct MemoryFileTests {
+  @Test func `A New File Is One Zeroed Page`() throws {
+    let path = temporaryFile()
+    let file = MemoryFile(path: path, isReadOnly: false, isMayflyFD: true)
+    #expect(file.isFileValid)
+    #expect(file.size == pageSize)
+    #expect(try contents(path).count == pageSize)
+    #expect(try contents(path).allSatisfy { $0 == 0 })
+  }
+
+  @Test func `The Expected Capacity Rounds Up To Whole Pages`() throws {
+    let path = temporaryFile()
+    let file = MemoryFile(
+      path: path,
+      expectedCapacity: pageSize * 2 + 1,
+      isReadOnly: false,
+      isMayflyFD: true
+    )
+    #expect(file.size == pageSize * 3)
+    #expect(file.actualFileSize == pageSize * 3)
+  }
+
+  @Test func `An Existing File Is Rounded Up And Keeps Its Contents`() throws {
+    let path = temporaryFile()
+    try Data([1, 2, 3]).write(to: URL(fileURLWithPath: path))
+    let file = MemoryFile(path: path, isReadOnly: false, isMayflyFD: true)
+    #expect(file.size == pageSize)
+    let bytes = try contents(path)
+    #expect(bytes.prefix(3) == [1, 2, 3])
+    #expect(bytes.dropFirst(3).allSatisfy { $0 == 0 })
+
+    let larger = temporaryFile()
+    try Data(repeating: 7, count: pageSize * 2).write(to: URL(fileURLWithPath: larger))
+    #expect(MemoryFile(path: larger, isReadOnly: false, isMayflyFD: true).size == pageSize * 2)
+  }
+
+  @Test func `A Read Only File Is Neither Created Nor Resized`() throws {
+    let missing = temporaryFile()
+    let file = MemoryFile(path: missing, isReadOnly: true, isMayflyFD: true)
+    #expect(!file.isFileValid)
+    #expect(!FileManager.default.fileExists(atPath: missing))
+
+    let odd = temporaryFile()
+    try Data([1, 2, 3]).write(to: URL(fileURLWithPath: odd))
+    let readOnly = MemoryFile(path: odd, isReadOnly: true, isMayflyFD: true)
+    #expect(readOnly.isFileValid)
+    #expect(readOnly.size == 3)
+    #expect(!readOnly.truncate(to: pageSize))
+    #expect(try contents(odd) == [1, 2, 3])
+  }
+
+  @Test func `Truncating Grows With Zeros And Shrinks To Whole Pages`() throws {
+    let path = temporaryFile()
+    let file = MemoryFile(path: path, isReadOnly: false, isMayflyFD: true)
+    file.memory!.storeBytes(of: 0xab, as: UInt8.self)
+    #expect(file.truncate(to: pageSize * 2 + 10))
+    #expect(file.size == pageSize * 3)
+    #expect(file.memory!.load(as: UInt8.self) == 0xab)
+    #expect(UnsafeRawBufferPointer(start: file.memory! + 1, count: file.size - 1).allSatisfy { $0 == 0 })
+
+    #expect(file.truncate(to: pageSize))
+    #expect(file.size == pageSize)
+    #expect(file.actualFileSize == pageSize)
+    #expect(file.memory!.load(as: UInt8.self) == 0xab)
+  }
+
+  @Test func `Writes Through The Mapping Reach The File`() throws {
+    let path = temporaryFile()
+    let file = MemoryFile(path: path, isReadOnly: false, isMayflyFD: true)
+    for (index, byte) in [UInt8](arrayLiteral: 4, 5, 6).enumerated() {
+      file.memory!.storeBytes(of: byte, toByteOffset: index, as: UInt8.self)
+    }
+    #expect(file.msync(synchronously: true))
+    #expect(try contents(path).prefix(3) == [4, 5, 6])
+  }
+
+  @Test func `A Mayfly File Closes Its Descriptor Once Mapped`() throws {
+    let spy = FileSystemSpy()
+    let mayfly = MemoryFile(
+      path: temporaryFile(),
+      isReadOnly: false,
+      isMayflyFD: true,
+      fileSystem: spy.fileSystem
+    )
+    #expect(mayfly.isFileValid)
+    #expect(spy.openDescriptors == 0)
+
+    let kept = MemoryFile(
+      path: temporaryFile(),
+      isReadOnly: false,
+      isMayflyFD: false,
+      fileSystem: spy.fileSystem
+    )
+    #expect(kept.isFileValid)
+    #expect(spy.openDescriptors == 1)
+    kept.clearMemoryCache()
+    #expect(spy.openDescriptors == 0)
+    #expect(!kept.isFileValid)
+  }
+
+  @Test func `A Failed Resize Keeps The Old Size And Mapping`() throws {
+    let spy = FileSystemSpy()
+    let path = temporaryFile()
+    let file = MemoryFile(path: path, isReadOnly: false, isMayflyFD: true, fileSystem: spy.fileSystem)
+    file.memory!.storeBytes(of: 0xcd, as: UInt8.self)
+
+    spy.failFtruncate = true
+    #expect(!file.truncate(to: pageSize * 4))
+    #expect(file.size == pageSize)
+    #expect(file.isFileValid)
+    #expect(file.memory!.load(as: UInt8.self) == 0xcd)
+    spy.failFtruncate = false
+
+    // Zero-filling fails once the file has grown, so it is shrunk back.
+    spy.failWrite = true
+    #expect(!file.truncate(to: pageSize * 4))
+    #expect(file.size == pageSize)
+    #expect(file.actualFileSize == pageSize)
+    spy.failWrite = false
+
+    #expect(file.truncate(to: pageSize * 4))
+    #expect(file.size == pageSize * 4)
+  }
+}
+
+@Suite struct FileLockTests {
+  @Test func `Nested Locks Upgrade And Downgrade`() throws {
+    let path = temporaryFile()
+    let ours = try openFile(path)
+    let theirs = try openFile(path)
+    defer {
+      close(ours)
+      close(theirs)
+    }
+    let lock = FileLock(descriptor: ours)
+    let other = FileLock(descriptor: theirs)
+
+    #expect(lock.lock(.shared))
+    #expect(lock.lock(.shared))
+    #expect(other.tryLock(.shared).locked)
+    other.unlock(.shared)
+    #expect(other.tryLock(.exclusive) == (false, true))
+
+    // Upgrading excludes even shared holders, and releasing it goes back to shared.
+    #expect(lock.lock(.exclusive))
+    #expect(other.tryLock(.shared) == (false, true))
+    #expect(lock.unlock(.exclusive))
+    #expect(other.tryLock(.shared).locked)
+    other.unlock(.shared)
+
+    #expect(lock.unlock(.shared))
+    #expect(other.tryLock(.exclusive) == (false, true))
+    #expect(lock.unlock(.shared))
+    #expect(!lock.unlock(.shared))
+    #expect(other.tryLock(.exclusive).locked)
+    other.unlock(.exclusive)
+  }
+
+  @Test func `Destroying Releases Everything`() throws {
+    let path = temporaryFile()
+    let ours = try openFile(path)
+    let theirs = try openFile(path)
+    defer {
+      close(ours)
+      close(theirs)
+    }
+    let lock = FileLock(descriptor: ours)
+    lock.lock(.exclusive)
+    lock.lock(.exclusive)
+    lock.destroyAndUnlock()
+    #expect(!lock.lock(.shared))
+    let other = FileLock(descriptor: theirs)
+    #expect(other.tryLock(.exclusive).locked)
+    other.unlock(.exclusive)
+  }
+
+  // The lock must be the same one the C++ core takes on the metadata file, or a store shared
+  // with react-native-mmkv would not be protected.
+  @Test func `Excludes The C++ Core's Lock On The Metadata File`() throws {
+    let root = temporaryDirectory()
+    var configuration = MMKVConfiguration(
+      id: "shared",
+      directory: MMKVDirectory(path: root),
+      mode: .multiProcess
+    )
+    configuration.engine = .cxx
+    let store = try MMKVStore(configuration)
+    store.set(true, forKey: "key")
+
+    let descriptor = try openFile("\(root)/shared.crc")
+    defer { close(descriptor) }
+    let lock = FileLock(descriptor: descriptor)
+    store.withExclusiveLock { _ in
+      #expect(lock.tryLock(.shared) == (false, true))
+    }
+    #expect(lock.tryLock(.exclusive).locked)
+    lock.unlock(.exclusive)
+  }
+}
+
+@Suite struct ThreadLockTests {
+  // Synchronous, so that the test stays on one thread: the lock belongs to the thread that took
+  // it, and an async test can resume on another.
+  @Test func `Is Recursive On One Thread And Excludes Others`() {
+    let lock = ThreadLock()
+    lock.lock()
+    lock.lock()
+    #expect(!onAnotherThread { lock.tryLock() })
+    lock.unlock()
+    #expect(!onAnotherThread { lock.tryLock() })
+    lock.unlock()
+    #expect(
+      onAnotherThread {
+        guard lock.tryLock() else { return false }
+        lock.unlock()
+        return true
+      }
+    )
+  }
+}
+
+// MARK: - Support
+
+/// Counts descriptors and fails chosen calls.
+private final class FileSystemSpy: @unchecked Sendable {
+  private let state = NSLock()
+  private var descriptors = Set<Int32>()
+  private var shouldFailFtruncate = false
+  private var shouldFailWrite = false
+
+  var openDescriptors: Int {
+    self.state.withLock { self.descriptors.count }
+  }
+
+  var failFtruncate: Bool {
+    get { self.state.withLock { self.shouldFailFtruncate } }
+    set { self.state.withLock { self.shouldFailFtruncate = newValue } }
+  }
+
+  var failWrite: Bool {
+    get { self.state.withLock { self.shouldFailWrite } }
+    set { self.state.withLock { self.shouldFailWrite = newValue } }
+  }
+
+  var fileSystem: FileSystem {
+    var fileSystem = FileSystem.live
+    let live = FileSystem.live
+    fileSystem.open = { path, flags, mode in
+      let descriptor = live.open(path, flags, mode)
+      if descriptor >= 0 {
+        _ = self.state.withLock { self.descriptors.insert(descriptor) }
+      }
+      return descriptor
+    }
+    fileSystem.close = { descriptor in
+      _ = self.state.withLock { self.descriptors.remove(descriptor) }
+      return live.close(descriptor)
+    }
+    fileSystem.ftruncate = { descriptor, size in
+      if self.failFtruncate {
+        errno = EIO
+        return -1
+      }
+      return live.ftruncate(descriptor, size)
+    }
+    fileSystem.write = { descriptor, buffer, count in
+      if self.failWrite {
+        errno = ENOSPC
+        return -1
+      }
+      return live.write(descriptor, buffer, count)
+    }
+    return fileSystem
+  }
+}
+
+private func temporaryDirectory() -> String {
+  let directory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("swift-mmkv-core-tests")
+    .appendingPathComponent(UUID().uuidString)
+  try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  return directory.path
+}
+
+private func temporaryFile() -> String {
+  temporaryDirectory() + "/file"
+}
+
+private func contents(_ path: String) throws -> [UInt8] {
+  Array(try Data(contentsOf: URL(fileURLWithPath: path)))
+}
+
+private struct OpenError: Error {}
+
+/// Runs `body` on a new thread and waits for its result.
+private func onAnotherThread<T: Sendable>(_ body: @escaping @Sendable () -> T) -> T {
+  let result = LockedValue<T?>(nil)
+  let done = DispatchSemaphore(value: 0)
+  Thread {
+    result.set(body())
+    done.signal()
+  }
+  .start()
+  done.wait()
+  return result.get()!
+}
+
+private final class LockedValue<Value>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value: Value
+
+  init(_ value: Value) {
+    self.value = value
+  }
+
+  func get() -> Value {
+    self.lock.withLock { self.value }
+  }
+
+  func set(_ value: Value) {
+    self.lock.withLock { self.value = value }
+  }
+}
+
+private func openFile(_ path: String) throws -> Int32 {
+  let descriptor = open(path, O_RDWR | O_CREAT, S_IRWXU)
+  guard descriptor >= 0 else { throw OpenError() }
+  return descriptor
+}
