@@ -16,21 +16,26 @@ struct PreparedData {
 extension StoreInstance {
   // MARK: - Reading values
 
-  /// The bytes of `key`'s value, including any expiry time, or an empty buffer
-  /// (`getRawDataForKey`). Valid until the file is next written.
-  func getRawDataForKey(_ key: StoreKey) -> UnsafeRawBufferPointer {
-    guard let location = self.dic[key], let memory = self.file.memory else {
-      return UnsafeRawBufferPointer(start: nil, count: 0)
+  /// The bytes of `key`'s value, including any expiry time, or no bytes (`getRawDataForKey`).
+  func getRawDataForKey(_ key: StoreKey) -> RawValue {
+    if self.crypter != nil {
+      guard let entry = self.dicCrypt[key] else { return .empty }
+      return self.value(of: entry)
     }
-    return UnsafeRawBufferPointer(
-      start: memory + fixed32Size + location.valueOffset,
-      count: Int(location.valueSize)
+    guard let location = self.dic[key], let memory = self.file.memory else {
+      return .empty
+    }
+    return .mapped(
+      UnsafeRawBufferPointer(
+        start: memory + fixed32Size + location.valueOffset,
+        count: Int(location.valueSize)
+      )
     )
   }
 
   /// The bytes of `key`'s value without its expiry time, after loading any changes
   /// (`getDataForKey`).
-  func getDataForKey(_ key: StoreKey) -> UnsafeRawBufferPointer {
+  func getDataForKey(_ key: StoreKey) -> RawValue {
     self.checkLoadData()
     if self.enableKeyExpire {
       return self.getDataWithoutMTimeForKey(key)
@@ -49,6 +54,11 @@ extension StoreInstance {
     guard Self.encodedValueLength(data.count, isDataHolder: isDataHolder) != nil else {
       Log.error("[\(self.id)] reject value too large to encode: \(data.count)")
       return false
+    }
+    if self.crypter != nil {
+      guard self.setCryptDataForKey(data, key, isDataHolder: isDataHolder) else { return false }
+      self.hasFullWriteback = false
+      return true
     }
     if let existing = self.dic[key] {
       if self.isCompareBeforeSetEnabled, let memory = self.file.memory {
@@ -210,7 +220,7 @@ extension StoreInstance {
         originKeyLength: originKeyLength,
         dataLength: data.count,
         isDataHolder: isDataHolder,
-        needsPlainHolder: true
+        needsPlainHolder: self.crypter == nil
       )
     else {
       Log.error(
@@ -222,6 +232,9 @@ extension StoreInstance {
       guard self.checkSizeLimit(entry.totalSize, keyData: keyData, originKeyLength: originKeyLength)
       else { return nil }
       guard self.ensureMemorySize(entry.totalSize), self.isFileValid else { return nil }
+      if let crypter = self.crypter, CryptEntry.isValueStoredAsOffset(entry.valueLength) {
+        self.appendState = crypter.state
+      }
       do throws(CodingError) {
         try self.withOutput { (output) throws(CodingError) in
           try Self.writeRecord(
@@ -238,7 +251,10 @@ extension StoreInstance {
         return nil
       }
       let offset = self.actualSize
-      let pointer = UnsafeRawPointer(self.file.memory! + fixed32Size + self.actualSize)
+      let pointer = self.file.memory! + fixed32Size + self.actualSize
+      if self.crypter != nil {
+        self.crypter!.encrypt(pointer, pointer, count: entry.totalSize)
+      }
       self.actualSize += entry.totalSize
       self.updateCRCDigest(UnsafeRawBufferPointer(start: pointer, count: entry.totalSize))
       return RecordLocation(keySize: originKeyLength, valueSize: entry.valueLength, offset: offset)
@@ -307,7 +323,7 @@ extension StoreInstance {
         originKeyLength: originKeyLength,
         dataLength: data.count,
         isDataHolder: isDataHolder,
-        needsPlainHolder: true
+        needsPlainHolder: self.crypter == nil
       )
     else {
       Log.error(
@@ -317,7 +333,8 @@ extension StoreInstance {
     }
     guard self.checkSizeLimit(entry.totalSize, keyData: keyData, originKeyLength: originKeyLength)
     else { return nil }
-    if !self.checkSizeForOverride(entry.totalSize) {
+    // Rewriting encrypted data in place would reuse the IV, so an encrypted store appends.
+    if self.crypter != nil || !self.checkSizeForOverride(entry.totalSize) {
       return self.doAppendDataWithKey(
         data,
         keyData: keyData,
@@ -434,7 +451,7 @@ extension StoreInstance {
     }
     let exceedsActualSize = self.actualSize > maximumActualSize - newSize
     let spaceLeft = self.output?.spaceLeft ?? 0
-    if newSize >= spaceLeft || self.dic.isEmpty || exceedsActualSize {
+    if newSize >= spaceLeft || self.indexCount == 0 || exceedsActualSize {
       if self.enableKeyExpire {
         self.filterExpiredKeys()
       }
@@ -446,13 +463,16 @@ extension StoreInstance {
         return false
       }
       // An empty index means this is the first write, so there is nothing to sync.
-      return self.expandAndWriteBack(newSize, prepared, needSync: !self.dic.isEmpty)
+      return self.expandAndWriteBack(newSize, prepared, needSync: self.indexCount != 0)
     }
     return true
   }
 
   /// The records to rewrite: those already in the file (`prepareEncode(m_dic)`).
   func prepareEncode() -> PreparedData {
+    if self.crypter != nil {
+      return self.prepareEncodeCrypt()
+    }
     var totalSize = itemSizeHolderSize
     for location in self.dic.values {
       totalSize += location.size
@@ -492,7 +512,7 @@ extension StoreInstance {
       return false
     }
     let lenNeeded = sizeOfDic + fixed32Size + newSize
-    let nowDicCount = self.dic.count
+    let nowDicCount = self.indexCount
     let laterDicCount = max(1, nowDicCount + 1)
     let avgItemSize = lenNeeded / laterDicCount + (lenNeeded % laterDicCount != 0 ? 1 : 0)
     let futureItemCount = max(8, laterDicCount / 2)
@@ -523,9 +543,14 @@ extension StoreInstance {
 
   /// Rewrites the file with only each key's latest record (`fullWriteback`).
   ///
-  /// - Parameter onlyWhileExpire: Whether to rewrite only if some keys had expired.
+  /// - Parameters:
+  ///   - encryption: The cryptor to encrypt the rewritten data with.
+  ///   - onlyWhileExpire: Whether to rewrite only if some keys had expired.
   @discardableResult
-  func fullWriteback(onlyWhileExpire: Bool = false) -> Bool {
+  func fullWriteback(
+    encryption: WriteBackEncryption = .current,
+    onlyWhileExpire: Bool = false
+  ) -> Bool {
     if self.hasFullWriteback || self.needLoadFromFile {
       return true
     }
@@ -543,7 +568,7 @@ extension StoreInstance {
         return true
       }
     }
-    if self.dic.isEmpty {
+    if self.indexCount == 0 {
       self.clearAll()
       return true
     }
@@ -553,23 +578,48 @@ extension StoreInstance {
       guard sizeOfDic > 0 else { return false }
       let fileSize = self.file.size
       if sizeOfDic + fixed32Size <= fileSize {
-        return self.doFullWriteBack(prepared)
+        return self.doFullWriteBack(prepared, encryption: encryption)
       }
       // expandAndWriteBack() grows the file and rewrites it in one go.
       return self.expandAndWriteBack(sizeOfDic + fixed32Size - fileSize, prepared)
     }
   }
 
-  func doFullWriteBack(_ prepared: PreparedData, needSync: Bool = true) -> Bool {
+  func doFullWriteBack(
+    _ prepared: PreparedData,
+    encryption: WriteBackEncryption = .current,
+    needSync: Bool = true
+  ) -> Bool {
     let totalSize = prepared.totalSize
+    var encrypter: AESCryptor?
+    switch encryption {
+    case .current: encrypter = self.crypter
+    case .plain: encrypter = nil
+    case .new(let crypter): encrypter = crypter
+    }
+    var newIV: [UInt8]?
+    if encrypter != nil {
+      newIV = AESCryptor.randomIV()
+      encrypter!.resetIV(newIV)
+    }
     self.output = OutputState(position: 0, size: self.file.size - fixed32Size)
-    if let encoded = prepared.encoded, !encoded.isEmpty {
+    if let decrypter = self.crypter {
+      self.memmoveCryptDictionary(decrypter: decrypter, encrypter: &encrypter, prepared: prepared)
+    } else if let encoded = prepared.encoded, !encoded.isEmpty {
       self.fullWriteBackWholeData(encoded, totalSize: totalSize)
+      if encrypter != nil {
+        let data = self.file.memory! + fixed32Size
+        encrypter!.encrypt(data, data, count: totalSize)
+      }
     } else {
-      self.memmoveDictionary(totalSize: totalSize)
+      self.memmoveDictionary(totalSize: totalSize, encrypter: &encrypter)
+    }
+    if case .current = encryption {
+      // The store goes on appending to the stream the rewrite ended.
+      self.crypter = encrypter
     }
     self.actualSize = totalSize
-    self.recalculateCRCDigestWithIV(nil)
+    self.recalculateCRCDigestWithIV(newIV)
     self.hasFullWriteback = true
     // Make sure the last confirmed size and checksum reach the disk.
     if needSync {
@@ -580,7 +630,7 @@ extension StoreInstance {
 
   /// Rewrites the data from the records already in the file, moving them towards the start in the
   /// order they are in (`memmoveDictionary`).
-  private func memmoveDictionary(totalSize: Int) {
+  private func memmoveDictionary(totalSize: Int, encrypter: inout AESCryptor?) {
     let base = self.file.memory! + fixed32Size
     let originPosition = self.output!.position
     var writePosition = originPosition + itemSizeHolderSize
@@ -602,10 +652,13 @@ extension StoreInstance {
         memmove(base + writePosition, base + section.offset, section.size)
         writePosition += section.size
       }
-      var offset = itemSizeHolderSize
-      for (key, location) in sorted {
-        self.dic[key]!.offset = UInt32(offset)
-        offset += location.size
+      // Encrypting plain text invalidates the index, which is loaded again afterwards.
+      if encrypter == nil {
+        var offset = itemSizeHolderSize
+        for (key, location) in sorted {
+          self.dic[key]!.offset = UInt32(offset)
+          offset += location.size
+        }
       }
     }
     // The placeholder where a container's size would be.
@@ -613,6 +666,9 @@ extension StoreInstance {
       try output.writeUInt32(Self.randomItemSizeHolder())
     }
     let writtenSize = writePosition - originPosition
+    if encrypter != nil {
+      encrypter!.encrypt(base + originPosition, base + originPosition, count: writtenSize)
+    }
     self.output!.position += writtenSize - itemSizeHolderSize
   }
 
@@ -645,6 +701,7 @@ extension StoreInstance {
     let prepared = self.prepareEncode(records)
     // The index must be emptied before the rewrite and after encoding.
     self.dic.removeAll()
+    self.dicCrypt.removeAll()
     let didWriteBack: Bool
     if prepared.totalSize + fixed32Size <= self.file.size {
       didWriteBack = self.doFullWriteBack(prepared)
@@ -802,10 +859,15 @@ extension StoreInstance {
       if self.file.size == self.expectedCapacity && self.actualSize == 0 {
         return
       }
+      // An encrypted store starts a new stream.
+      let newIV = self.crypter != nil ? AESCryptor.randomIV() : nil
       if !keepSpace {
         self.file.truncate(to: self.expectedCapacity)
       }
-      self.writeActualSize(0, crcDigest: 0, iv: nil, increaseSequence: true)
+      if self.crypter != nil {
+        self.crypter!.resetIV(newIV)
+      }
+      self.writeActualSize(0, crcDigest: 0, iv: newIV, increaseSequence: true)
       self.metaFile.msync(synchronously: true)
       self.clearMemoryCache(keepSpace: keepSpace)
       self.loadFromFile()

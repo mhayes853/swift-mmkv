@@ -19,8 +19,15 @@ package final class StoreInstance: @unchecked Sendable {
   let expectedCapacity: Int
   let fileSystem: FileSystem
 
-  /// Where each key's latest record is (`m_dic`).
+  /// Where each key's latest record is in a plain-text store (`m_dic`).
   var dic = [StoreKey: RecordLocation]()
+  /// Each key's entry in an encrypted store (`m_dicCrypt`).
+  var dicCrypt = [StoreKey: CryptEntry]()
+  /// The cryptor of an encrypted store, whose state is the end of the data (`m_crypter`).
+  var crypter: AESCryptor?
+  /// The stream's state where the last appended record started, if its value is left in the file
+  /// (`t_status`).
+  var appendState: CipherState?
   let file: MemoryFile
   let metaFile: MemoryFile
   var metaInfo = MetaInfo()
@@ -123,7 +130,11 @@ package final class StoreInstance: @unchecked Sendable {
     self.exclusiveProcessLock.isEnabled = configuration.isMultiProcess
     self.recoverOnError = configuration.recoverOnError
     self.itemSizeLimit = configuration.itemSizeLimit
-    if configuration.compareBeforeSet {
+    if let key = configuration.encryptionKey, !key.isEmpty {
+      self.crypter = AESCryptor(key: key, isAES256: configuration.isAES256)
+    }
+    // Compare-before-set does nothing in an encrypted store.
+    if configuration.compareBeforeSet && self.crypter == nil {
       self.enableCompareBeforeSet = true
     }
   }
@@ -143,7 +154,12 @@ package final class StoreInstance: @unchecked Sendable {
   }
 
   var isCompareBeforeSetEnabled: Bool {
-    self.enableCompareBeforeSet && !self.enableKeyExpire
+    self.enableCompareBeforeSet && !self.enableKeyExpire && self.crypter == nil
+  }
+
+  /// The number of keys in the index.
+  var indexCount: Int {
+    self.crypter == nil ? self.dic.count : self.dicCrypt.count
   }
 
   /// Runs `body` holding both the instance's lock and its file lock of `type`.
@@ -171,7 +187,7 @@ extension StoreInstance {
       let data = self.getDataForKey(key)
       guard data.count > 0 else { return nil }
       do throws(CodingError) {
-        return try body(data)
+        return try data.withBytes(body)
       } catch {
         Log.error("cannot read the value of a key in [\(self.id)]: \(error)")
         return nil
@@ -318,7 +334,7 @@ extension StoreInstance {
     self.lock.withLock {
       self.checkLoadData()
       self.filterExpiredKeysBeforeListing()
-      return self.dic.count
+      return self.indexCount
     }
   }
 
@@ -327,7 +343,7 @@ extension StoreInstance {
     self.lock.withLock {
       self.checkLoadData()
       self.filterExpiredKeysBeforeListing()
-      return Array(self.dic.keys)
+      return self.crypter == nil ? Array(self.dic.keys) : Array(self.dicCrypt.keys)
     }
   }
 
@@ -346,7 +362,7 @@ extension StoreInstance {
     self.lock.withLock {
       self.checkLoadData()
       if !self.enableKeyExpire {
-        return self.dic[key] != nil
+        return self.crypter == nil ? self.dic[key] != nil : self.dicCrypt[key] != nil
       }
       return self.getDataWithoutMTimeForKey(key).count != 0
     }
@@ -385,8 +401,14 @@ extension StoreInstance {
     return self.withLocks(.exclusive) {
       self.checkLoadData()
       var deleteCount = 0
-      for key in keys where self.dic.removeValue(forKey: key) != nil {
-        deleteCount += 1
+      for key in keys {
+        let removed =
+          self.crypter == nil
+          ? self.dic.removeValue(forKey: key) != nil
+          : self.dicCrypt.removeValue(forKey: key) != nil
+        if removed {
+          deleteCount += 1
+        }
       }
       guard deleteCount > 0 else { return true }
       self.hasFullWriteback = false
@@ -399,9 +421,19 @@ extension StoreInstance {
   }
 
   func removeDataForKey(_ key: StoreKey) -> Bool {
-    guard !key.bytes.isEmpty, self.dic[key] != nil else { return false }
-    self.hasFullWriteback = false
+    guard !key.bytes.isEmpty else { return false }
     let empty = UnsafeRawBufferPointer(start: nil, count: 0)
+    if self.crypter != nil {
+      guard self.dicCrypt[key] != nil else { return false }
+      self.hasFullWriteback = false
+      let result = self.appendDataWithKey(empty, key: key, isDataHolder: false)
+      if result != nil {
+        self.dicCrypt.removeValue(forKey: key)
+      }
+      return result != nil
+    }
+    guard self.dic[key] != nil else { return false }
+    self.hasFullWriteback = false
     let result =
       self.enableKeyExpire
       ? self.appendDataWithKey(empty, key: key, isDataHolder: false)
@@ -458,12 +490,6 @@ extension StoreInstance {
       }
     }
   }
-
-  /// Re-encrypts the store. Only removing encryption from a plain-text store, which changes
-  /// nothing, is supported until the Swift core can encrypt.
-  package func rekey(removingEncryption: Bool) -> Bool {
-    removingEncryption
-  }
 }
 
 // MARK: - Import
@@ -500,10 +526,13 @@ extension StoreInstance {
           self.expiredInSeconds != 0
           ? Self.safeExpirationPlusCurrentTime(self.expiredInSeconds) : 0
         var count = 0
-        let keys = source.dic.sorted { $0.value.offset < $1.value.offset }.map(\.key)
+        let keys =
+          source.crypter == nil
+          ? source.dic.sorted { $0.value.offset < $1.value.offset }.map(\.key)
+          : source.dicCrypt.sorted { $0.value.order < $1.value.order }.map(\.key)
         for key in keys {
           // Copied, because the source may move its records while this store is written.
-          var value = Array(source.getDataForKey(key))
+          var value = source.getDataForKey(key).array
           guard !value.isEmpty else { continue }
           if self.enableKeyExpire {
             withUnsafeBytes(of: time.littleEndian) { value.append(contentsOf: $0) }

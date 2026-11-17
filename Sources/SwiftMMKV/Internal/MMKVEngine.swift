@@ -96,6 +96,11 @@ extension MMKVConfiguration.Encryption {
     }
   }
 
+  /// Whether this is AES-256 rather than AES-128.
+  var isAES256: Bool {
+    if case .aes256 = self { true } else { false }
+  }
+
   /// Whether the key has a length its cipher accepts. MMKV pads a shorter key with zeros.
   var isValid: Bool {
     switch self {

@@ -80,6 +80,10 @@ void swiftmmkv_aes_cfb128_rollback(
   const uint8_t *_Nonnull ciphertext_end, const uint8_t *_Nonnull plaintext_end, size_t length,
   const swiftmmkv_aes_key *_Nonnull decrypt_key, uint8_t *_Nonnull ivec, uint32_t *_Nonnull num);
 
+/// Overwrites `length` bytes at `pointer` with zeros in a way the compiler cannot remove, for
+/// wiping keys. This is MMKV's `secureWipe` (in `AESCrypt.cpp`).
+void swiftmmkv_secure_wipe(void *_Nullable pointer, size_t length);
+
 /// Writes the 16-byte MD5 digest of `length` bytes at `data` to `digest`.
 void swiftmmkv_md5_digest(
   const uint8_t *_Nullable data, size_t length, uint8_t *_Nonnull digest);

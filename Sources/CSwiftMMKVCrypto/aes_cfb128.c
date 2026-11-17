@@ -128,3 +128,15 @@ void swiftmmkv_aes_cfb128_rollback(
   }
   *num = n;
 }
+
+void swiftmmkv_secure_wipe(void *pointer, size_t length) {
+  if (!pointer || length == 0) {
+    return;
+  }
+  // Volatile writes cannot be removed as dead stores.
+  volatile unsigned char *bytes = (volatile unsigned char *)pointer;
+  while (length > 0) {
+    *bytes++ = 0;
+    --length;
+  }
+}

@@ -43,8 +43,11 @@ extension StoreInstance {
           Int(UInt32.max) - pbRawVarint32Size(UInt32.max) + itemSizeHolderSize
         )
         var prospectiveSize = itemSizeHolderSize
-        let sorted = self.dic.sorted { $0.value.offset < $1.value.offset }
-        for (key, _) in sorted {
+        let keys =
+          self.crypter == nil
+          ? self.dic.sorted { $0.value.offset < $1.value.offset }.map(\.key)
+          : self.dicCrypt.sorted { $0.value.order < $1.value.order }.map(\.key)
+        for key in keys {
           let value = self.getRawDataForKey(key)
           let dataLength = value.count + fixed32Size
           guard
@@ -53,7 +56,7 @@ extension StoreInstance {
               originKeyLength: key.bytes.count,
               dataLength: dataLength,
               isDataHolder: false,
-              needsPlainHolder: true
+              needsPlainHolder: self.crypter == nil
             )
           else {
             Log.error("[\(self.id)] reject enabling expiration: encoded data would be too large")
@@ -66,7 +69,7 @@ extension StoreInstance {
             return false
           }
           prospectiveSize += entry.totalSize
-          var data = Array(value)
+          var data = value.array
           withUnsafeBytes(of: time.littleEndian) { data.append(contentsOf: $0) }
           records.append((key, data))
         }
@@ -94,7 +97,7 @@ extension StoreInstance {
 
   /// The bytes of `key`'s value without its expiry time. An expired key is removed and reads as
   /// empty (`getDataWithoutMTimeForKey`).
-  func getDataWithoutMTimeForKey(_ key: StoreKey) -> UnsafeRawBufferPointer {
+  func getDataWithoutMTimeForKey(_ key: StoreKey) -> RawValue {
     self.withLocks(.shared) {
       self.checkLoadData()
       let raw = self.getRawDataForKey(key)
@@ -106,15 +109,15 @@ extension StoreInstance {
       }
       let newLength = raw.count - fixed32Size
       if self.enableKeyExpire {
-        let time = UInt32(
-          littleEndian: raw.loadUnaligned(fromByteOffset: newLength, as: UInt32.self)
-        )
+        let time = raw.withBytes {
+          UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: newLength, as: UInt32.self))
+        }
         if time != 0 && time <= Self.currentTimeInSeconds() {
           self.removeValue(forKey: key)
-          return UnsafeRawBufferPointer(start: nil, count: 0)
+          return .empty
         }
       }
-      return UnsafeRawBufferPointer(rebasing: raw[..<newLength])
+      return raw.prefix(newLength)
     }
   }
 
@@ -123,7 +126,35 @@ extension StoreInstance {
   /// - Returns: How many keys were dropped.
   @discardableResult
   func filterExpiredKeys() -> Int {
-    guard self.enableKeyExpire, !self.dic.isEmpty, let memory = self.file.memory else { return 0 }
+    guard self.enableKeyExpire, self.indexCount != 0, let memory = self.file.memory else {
+      return 0
+    }
+    if self.crypter != nil {
+      return self.sharedProcessLock.withLock {
+        let now = Self.currentTimeInSeconds()
+        var count = 0
+        for (key, entry) in self.dicCrypt {
+          guard entry.realValueSize >= fixed32Size else {
+            Log.warning("key has invalid value size \(entry.realValueSize)")
+            continue
+          }
+          let time = self.value(of: entry)
+            .withBytes {
+              UInt32(
+                littleEndian: $0.loadUnaligned(
+                  fromByteOffset: $0.count - fixed32Size,
+                  as: UInt32.self
+                )
+              )
+            }
+          if time != 0 && time <= now {
+            self.dicCrypt.removeValue(forKey: key)
+            count += 1
+          }
+        }
+        return count
+      }
+    }
     return self.sharedProcessLock.withLock {
       let now = Self.currentTimeInSeconds()
       let base = UnsafeRawPointer(memory + fixed32Size)

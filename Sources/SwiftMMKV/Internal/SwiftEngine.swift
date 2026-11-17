@@ -1,15 +1,11 @@
 import _SwiftMMKVCore
 
-/// The Swift core that is replacing the C++ one (`Sources/_SwiftMMKVCore`).
-///
-/// It cannot open encrypted stores yet. See `Docs/swift-core-migration.md`.
+/// The Swift core that is replacing the C++ one (`Sources/_SwiftMMKVCore`). See
+/// `Docs/swift-core-migration.md`.
 struct SwiftEngine: MMKVEngine {
   let store: StoreInstance
 
   init(_ configuration: MMKVConfiguration) throws(MMKVError) {
-    guard configuration.encryption == nil else {
-      throw .openFailed(id: configuration.id, directory: configuration.directory)
-    }
     let store = MMKVStorage(path: configuration.directory.path)
       .opening(id: configuration.id) {
         StoreRegistry.open(
@@ -21,7 +17,9 @@ struct SwiftEngine: MMKVEngine {
             expectedCapacity: max(configuration.expectedCapacity, 0),
             recoverOnError: configuration.recovery == .recover,
             compareBeforeSet: configuration.compareBeforeSet,
-            itemSizeLimit: UInt32(clamping: configuration.itemSizeLimit ?? 0)
+            itemSizeLimit: UInt32(clamping: configuration.itemSizeLimit ?? 0),
+            encryptionKey: configuration.encryption?.key,
+            isAES256: configuration.encryption?.isAES256 ?? false
           )
         )
       }
@@ -212,6 +210,6 @@ extension SwiftEngine {
   }
 
   func rekey(_ encryption: MMKVConfiguration.Encryption?) -> Bool {
-    self.store.rekey(removingEncryption: encryption == nil)
+    self.store.rekey(key: encryption?.key, isAES256: encryption?.isAES256 ?? false)
   }
 }

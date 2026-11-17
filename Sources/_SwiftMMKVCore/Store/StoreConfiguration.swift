@@ -13,6 +13,10 @@ package struct StoreConfiguration: Sendable {
   package var compareBeforeSet: Bool
   /// The largest key-value pair the store accepts, or 0 for no limit.
   package var itemSizeLimit: UInt32
+  /// The key the store is encrypted with, or `nil` for a plain-text store.
+  package var encryptionKey: [UInt8]?
+  /// Whether `encryptionKey` is an AES-256 key rather than an AES-128 one.
+  package var isAES256: Bool
   package var fileSystem: FileSystem
 
   package init(
@@ -24,6 +28,8 @@ package struct StoreConfiguration: Sendable {
     recoverOnError: Bool = false,
     compareBeforeSet: Bool = false,
     itemSizeLimit: UInt32 = 0,
+    encryptionKey: [UInt8]? = nil,
+    isAES256: Bool = false,
     fileSystem: FileSystem = .live
   ) {
     self.id = id
@@ -34,6 +40,8 @@ package struct StoreConfiguration: Sendable {
     self.recoverOnError = recoverOnError
     self.compareBeforeSet = compareBeforeSet
     self.itemSizeLimit = itemSizeLimit
+    self.encryptionKey = encryptionKey
+    self.isAES256 = isAES256
     self.fileSystem = fileSystem
   }
 }

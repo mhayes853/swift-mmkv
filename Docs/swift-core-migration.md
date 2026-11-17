@@ -170,12 +170,12 @@ differential tests and the benchmarks, so they keep running in CI. The README is
 
 | Phase | State |
 | --- | --- |
-| 0a. Benchmarks | Done: `Benchmarks/`, C++ results only until the Swift core opens stores |
+| 0a. Benchmarks | Done: `Benchmarks/`, comparing both cores |
 | 0b. Upstream tests | Done: `Tests/SwiftMMKVTests/Upstream/` (mapped in its `MANIFEST.md`) and `Tests/SwiftMMKVTests/Differential/` |
 | 1. `CSwiftMMKVCrypto` | Done: tested against NIST and RFC 1321 vectors, the assembly against the portable code |
 | 2. Format primitives | Done: in `Sources/_SwiftMMKVCore`, checked against files the C++ core writes |
 | 3. `MemoryFile` | Done: with `FileLock` and `ThreadLock`; the lock is checked against the C++ core's |
 | 4. Single-process core | Done: every test for unencrypted stores passes against it, and it writes the same bytes as the C++ core |
 | 5. Multi-process | Ported; passes the multi-process tests and shares files with the C++ core in one process. Not yet tested across processes or on Android |
-| 6. Encryption | Not started |
+| 6. Encryption | Done: every encryption test passes against the Swift core, and each core reads what the other encrypts, appends, and re-encrypts |
 | 7. Cutover | Not started |

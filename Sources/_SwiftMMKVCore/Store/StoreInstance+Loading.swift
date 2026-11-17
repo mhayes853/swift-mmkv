@@ -4,6 +4,9 @@ extension StoreInstance {
   /// Reads the metadata, validates the data, and builds the index (`loadFromFile`).
   func loadFromFile() {
     self.loadMetaInfoAndCheck()
+    if self.crypter != nil && self.metaInfo.version >= MetaInfo.Version.randomIV {
+      self.crypter!.resetIV(self.metaInfo.vector)
+    }
     if !self.file.isFileValid {
       self.file.reloadFromFile(expectedCapacity: self.expectedCapacity)
     } else if self.isMultiProcess {
@@ -21,10 +24,21 @@ extension StoreInstance {
       let fileSize = self.file.size
       let memory = self.file.memory!
       if loadFromFile && self.actualSize > 0 {
-        let input = UnsafeRawBufferPointer(start: memory + fixed32Size, count: self.actualSize)
-        self.dic.removeAll()
-        RecordDecoding.decode(input, into: &self.dic, greedy: needFullWriteback)
+        if self.crypter != nil {
+          self.dicCrypt.removeAll()
+          self.decodeCrypt(from: 0, size: self.actualSize, greedy: needFullWriteback)
+        } else {
+          let input = UnsafeRawBufferPointer(start: memory + fixed32Size, count: self.actualSize)
+          self.dic.removeAll()
+          RecordDecoding.decode(input, into: &self.dic, greedy: needFullWriteback)
+        }
         self.output = OutputState(position: self.actualSize, size: fileSize - fixed32Size)
+        // An encrypted store without a random IV gets one straight away.
+        if !needFullWriteback && self.crypter != nil
+          && self.metaInfo.version < MetaInfo.Version.randomIV
+        {
+          needFullWriteback = true
+        }
         if needFullWriteback && !self.isReadOnly {
           _ = self.fullWriteback()
         }
@@ -66,8 +80,12 @@ extension StoreInstance {
         UnsafeRawBufferPointer(start: base + position, count: addedSize)
       )
       if self.crcDigest == self.metaInfo.crcDigest {
-        let input = UnsafeRawBufferPointer(start: base, count: self.actualSize)
-        RecordDecoding.decode(input, from: position, into: &self.dic, greedy: true)
+        if self.crypter != nil {
+          self.decodeCrypt(from: position, size: self.actualSize, greedy: true)
+        } else {
+          let input = UnsafeRawBufferPointer(start: base, count: self.actualSize)
+          RecordDecoding.decode(input, from: position, into: &self.dic, greedy: true)
+        }
         self.output?.position += addedSize
         self.hasFullWriteback = false
         return
@@ -117,6 +135,15 @@ extension StoreInstance {
       self.needLoadFromFile = true
       self.hasFullWriteback = false
       self.dic.removeAll()
+      self.dicCrypt.removeAll()
+      if self.crypter != nil {
+        // A read-only store cannot be sure it has a random IV.
+        if self.metaInfo.version >= MetaInfo.Version.randomIV {
+          self.crypter!.resetIV(self.metaInfo.vector)
+        } else {
+          self.crypter!.resetIV()
+        }
+      }
       self.output = nil
       if !keepSpace {
         self.file.clearMemoryCache()

@@ -15,7 +15,7 @@ The licenses are in `LICENSE.TXT` (MMKV's, which includes OpenSSL's).
 | `aes_core.c` | `openssl_aes_core.cpp` | The `openssl` namespace and the per-platform function selection removed; functions renamed `swiftmmkv_aes_portable_*` |
 | `aes_internal.h` | `openssl_aes_locl.h` | Only the macros and types the AES sources use |
 | `aesv8-armx.S` | `openssl_aesv8-armx.S` | Routines renamed `swiftmmkv_aes_armv8_*`; the crypto extension enabled with a directive rather than a compiler flag |
-| `aes_cfb128.c` | `openssl_cfb128.cpp`, `Rollback_cfb_decrypt` in `AESCrypt.cpp` | Loops that read through unaligned `size_t` pointers are byte loops, with identical results |
+| `aes_cfb128.c` | `openssl_cfb128.cpp`, `Rollback_cfb_decrypt` and `secureWipe` in `AESCrypt.cpp` | Loops that read through unaligned `size_t` pointers are byte loops, with identical results |
 | `aes_dispatch.c` | MMKV's `initialize()` in `MMKV.cpp` | The same choice between the ARMv8 instructions and the portable code |
 | `md5.c` | `openssl_md5_dgst.cpp`, `openssl_md5_locl.h`, `openssl_md32_common.h`, `openssl_md5_one.cpp` | Combined into one file, functions made `static` |
 

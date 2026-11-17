@@ -39,13 +39,21 @@ import Testing
 
   // MARK: - Reading each other's files
 
-  @Test(arguments: [MMKVConfiguration.Engine.cxx, .swift])
-  func `Each Core Reads What The Other Wrote`(writer: MMKVConfiguration.Engine) throws {
+  @Test(arguments: [MMKVConfiguration.Engine.cxx, .swift], [nil] + encryptions)
+  func `Each Core Reads What The Other Wrote`(
+    writer: MMKVConfiguration.Engine,
+    encryption: MMKVConfiguration.Encryption?
+  ) throws {
     let reader: MMKVConfiguration.Engine = writer == .cxx ? .swift : .cxx
     var generator = SplitMix64(seed: writer == .cxx ? 100 : 200)
     let configuration = RandomConfiguration(withoutLimits: ())
     let directory = temporaryRootDirectory()
-    let store = try makeStore(id: "store", rootDirectory: directory, engine: writer)
+    let store = try makeStore(
+      id: "store",
+      rootDirectory: directory,
+      encryption: encryption,
+      engine: writer
+    )
     var model = [String: TestValue]()
     for _ in 0..<400 {
       let operation = Operation.random(using: &generator, configuration: configuration)
@@ -61,27 +69,103 @@ import Testing
         toPath: "\(directory)/copy\(suffix)"
       )
     }
-    let copy = try makeStore(id: "copy", rootDirectory: directory, engine: reader)
+    let copy = try makeStore(
+      id: "copy",
+      rootDirectory: directory,
+      encryption: encryption,
+      engine: reader
+    )
     try expectContents(of: copy, match: model, "\(reader) reading what \(writer) wrote")
 
-    // And it can go on writing to them.
+    // And it can go on writing to them, which the writer can read in turn.
     copy.set("after", forKey: "k0")
+    copy.set(String(repeating: "large", count: 100), forKey: "k1")
     model["k0"] = .string("after")
+    model["k1"] = .string(String(repeating: "large", count: 100))
     try expectContents(of: copy, match: model, "\(reader) writing after \(writer)")
+    copy.sync()
+    for suffix in ["", ".crc"] {
+      try FileManager.default.copyItem(
+        atPath: "\(directory)/copy\(suffix)",
+        toPath: "\(directory)/back\(suffix)"
+      )
+    }
+    let back = try makeStore(
+      id: "back",
+      rootDirectory: directory,
+      encryption: encryption,
+      engine: writer
+    )
+    try expectContents(of: back, match: model, "\(writer) reading what \(reader) appended")
+  }
+
+  /// Re-encrypting with one core, through every transition, leaves files the other core reads.
+  @Test(arguments: [MMKVConfiguration.Engine.cxx, .swift])
+  func `Each Core Reads What The Other Re-Encrypted`(writer: MMKVConfiguration.Engine) throws {
+    let reader: MMKVConfiguration.Engine = writer == .cxx ? .swift : .cxx
+    var generator = SplitMix64(seed: writer == .cxx ? 300 : 400)
+    let configuration = RandomConfiguration(withoutLimits: ())
+    let directory = temporaryRootDirectory()
+    let store = try makeStore(id: "store", rootDirectory: directory, engine: writer)
+    var model = [String: TestValue]()
+    for _ in 0..<200 {
+      let operation = Operation.random(using: &generator, configuration: configuration)
+      operation.apply(to: &model, result: operation.apply(to: store), configuration: configuration)
+    }
+    let transitions: [MMKVConfiguration.Encryption?] = [
+      .aes128(key: "first"), .aes256(key: "second key, longer"), .aes256(key: "third"), nil,
+      .aes128(key: "fourth"),
+    ]
+    for (index, encryption) in transitions.enumerated() {
+      try store.rekey(encryption)
+      // Some writes under the new key, so the file has appended records too.
+      store.set("written after rekey \(index)", forKey: "k2")
+      model["k2"] = .string("written after rekey \(index)")
+      store.sync()
+      let id = "reader-\(index)"
+      for suffix in ["", ".crc"] {
+        try FileManager.default.copyItem(
+          atPath: "\(directory)/store\(suffix)",
+          toPath: "\(directory)/\(id)\(suffix)"
+        )
+      }
+      let copy = try makeStore(
+        id: id,
+        rootDirectory: directory,
+        encryption: encryption,
+        engine: reader
+      )
+      try expectContents(of: copy, match: model, "\(reader) after \(writer) rekeyed to \(String(describing: encryption))")
+    }
   }
 
   // MARK: - Sharing one file
 
   /// The situation of an app that links react-native-mmkv: both cores have the same files open
   /// in multi-process mode, and each must see the other's writes.
-  @Test(arguments: Array(0..<8))
-  func `Both Cores Share One File In Multi Process Mode`(seed: Int) throws {
+  @Test(arguments: Array(0..<8), [nil] + encryptions)
+  func `Both Cores Share One File In Multi Process Mode`(
+    seed: Int,
+    encryption: MMKVConfiguration.Encryption?
+  ) throws {
     var generator = SplitMix64(seed: UInt64(1_000 + seed))
     let configuration = RandomConfiguration(withoutLimits: ())
     let directory = temporaryRootDirectory()
     let id = "shared-\(seed)"
-    let cxx = try makeStore(id: id, rootDirectory: directory, mode: .multiProcess, engine: .cxx)
-    let swift = try makeStore(id: id, rootDirectory: directory, mode: .multiProcess, engine: .swift)
+    let cxx = try makeStore(
+      id: id,
+      rootDirectory: directory,
+      mode: .multiProcess,
+      encryption: encryption,
+      engine: .cxx
+    )
+    let swift = try makeStore(
+      id: id,
+      rootDirectory: directory,
+      mode: .multiProcess,
+      encryption: encryption,
+      engine: .swift
+    )
     var model = [String: TestValue]()
 
     for step in 0..<300 {
@@ -163,6 +247,10 @@ import Testing
     }
   }
 }
+
+private let encryptions: [MMKVConfiguration.Encryption?] = [
+  .aes128(key: "a key"), .aes256(key: "an AES-256 key, 32 bytes long!!"),
+]
 
 // MARK: - Operations
 
