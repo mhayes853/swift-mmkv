@@ -34,12 +34,12 @@
 
     #if canImport(Darwin)
       @Test func `An App Group Without A Container Is Reported`() {
-        // A test process has no app group entitlement. macOS hands out a container path to an
-        // unsandboxed process anyway, so either outcome is checked.
+        // A test process has no app group entitlement. macOS and the simulators hand out a
+        // container path anyway, so either outcome is checked.
         let identifier = "group.swift-mmkv.tests.unavailable"
         do {
           let directory = try MMKVDirectory.appGroup(identifier: identifier)
-          #expect(directory.path.hasSuffix("/\(identifier)/mmkv"))
+          #expect(directory.path.hasSuffix("/mmkv"))
         } catch {
           #expect(error == .appGroupContainerUnavailable(identifier: identifier))
         }

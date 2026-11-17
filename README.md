@@ -297,6 +297,34 @@ While a store is suspended:
 Resuming notifies listeners with `.external`, so sequences and shared state read the store again.
 A single-process store takes no file lock, so suspending one does nothing.
 
+With the `Foundation` trait, `MMKVSuspensionController` does this as the app enters the background
+and returns to the foreground. Retain it for as long as the stores are in use:
+
+```swift
+let suspension = MMKVSuspensionController(stores: [store], observing: .application)
+```
+
+In SwiftUI, put the modifier on a view that stays on screen:
+
+```swift
+WindowGroup {
+  ContentView()
+    .mmkvSuspension(store)
+}
+```
+
+Things to know:
+
+- The stores stay usable while the app is only inactive, as it is under the app switcher, because
+  a suspended store turns reads away too.
+- Anything the app does after entering the background is turned away, including writes made by
+  its own handling of that event. Save state before then, or drive the suspension yourself with
+  `MMKVSuspensionController(stores:)` and `setActive(_:)`, or with
+  `.mmkvSuspension(store, isActive:)`.
+- An app launched in the background starts with its stores usable, and never enters the
+  background. Suspend the stores when that work is done.
+- On macOS there is nothing to observe, so only the manual forms are available.
+
 ## The `Foundation` trait
 
 The library itself does not use Foundation. The `Foundation` trait, on by default, adds:
