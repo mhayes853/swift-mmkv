@@ -1,3 +1,7 @@
 # Tencent MMKV's core, copied in by Scripts/vendor-mmkv.sh. Marking it as vendored keeps it out
 # of GitHub's language statistics and collapses it in diffs.
 Sources/CSwiftMMKVCore/mmkv/** linguist-vendored
+
+# Self-contained HTML visualizations of the code (open Visuals/*/index.html in a browser). Marking
+# them as vendored keeps their inline JavaScript out of GitHub's language statistics.
+Visuals/** linguist-vendored

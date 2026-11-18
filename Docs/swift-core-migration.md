@@ -201,6 +201,8 @@ time with package-benchmark and memory with `MemoryReport` (see its README).
 
 Neither changes the file format: the differential tests still compare the cores byte for byte.
 
+`Visuals/IndexMemory/index.html` walks through both indexes, step by step, in a browser.
+
 ### Results
 
 Memory for a store of strings, after opening and loading it (macOS; Android emulator, API 36):
