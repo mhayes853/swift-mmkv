@@ -231,9 +231,10 @@ extension StoreInstance {
     func write(_ data: UnsafeRawBufferPointer) -> Bool {
       // An encrypted store always appends, because rewriting in place would reuse the IV.
       self.appendState = nil
-      guard let location = self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder) else {
-        return false
+      let location = key.bytes.withUnsafeBytes { key in
+        self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder)
       }
+      guard let location else { return false }
       let entry: CryptEntry
       if CryptEntry.isValueStoredAsOffset(Int(location.valueSize)), let state = self.appendState {
         entry = .offset(

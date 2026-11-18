@@ -43,12 +43,8 @@ extension StoreInstance {
           Int(UInt32.max) - pbRawVarint32Size(UInt32.max) + itemSizeHolderSize
         )
         var prospectiveSize = itemSizeHolderSize
-        let keys =
-          self.crypter == nil
-          ? self.dic.sorted { $0.value.offset < $1.value.offset }.map(\.key)
-          : self.dicCrypt.sorted { $0.value.order < $1.value.order }.map(\.key)
-        for key in keys {
-          let value = self.getRawDataForKey(key)
+        for key in self.keysInRecordOrder() {
+          let value = key.bytes.withUnsafeBytes { self.getRawDataForKey($0) }
           let dataLength = value.count + fixed32Size
           guard
             let entry = Self.encodedEntrySize(
@@ -97,7 +93,7 @@ extension StoreInstance {
 
   /// The bytes of `key`'s value without its expiry time. An expired key is removed and reads as
   /// empty (`getDataWithoutMTimeForKey`).
-  func getDataWithoutMTimeForKey(_ key: StoreKey) -> RawValue {
+  func getDataWithoutMTimeForKey(_ key: UnsafeRawBufferPointer) -> RawValue {
     self.withLocks(.shared) {
       self.checkLoadData()
       let raw = self.getRawDataForKey(key)
@@ -158,22 +154,17 @@ extension StoreInstance {
     return self.sharedProcessLock.withLock {
       let now = Self.currentTimeInSeconds()
       let base = UnsafeRawPointer(memory + fixed32Size)
-      var count = 0
-      for (key, location) in self.dic {
+      return self.dic.removeAll { location in
         guard location.valueSize >= UInt32(fixed32Size) else {
           Log.warning("key has invalid value size \(location.valueSize)")
-          continue
+          return false
         }
         let timeOffset = location.valueOffset + Int(location.valueSize) - fixed32Size
         let time = UInt32(
           littleEndian: base.loadUnaligned(fromByteOffset: timeOffset, as: UInt32.self)
         )
-        if time != 0 && time <= now {
-          self.dic.removeValue(forKey: key)
-          count += 1
-        }
+        return time != 0 && time <= now
       }
-      return count
     }
   }
 }

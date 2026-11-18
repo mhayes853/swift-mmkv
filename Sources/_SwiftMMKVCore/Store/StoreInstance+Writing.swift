@@ -17,25 +17,22 @@ extension StoreInstance {
   // MARK: - Reading values
 
   /// The bytes of `key`'s value, including any expiry time, or no bytes (`getRawDataForKey`).
-  func getRawDataForKey(_ key: StoreKey) -> RawValue {
+  func getRawDataForKey(_ key: UnsafeRawBufferPointer) -> RawValue {
     if self.crypter != nil {
-      guard let entry = self.dicCrypt[key] else { return .empty }
+      guard let entry = self.dicCrypt[StoreKey(key)] else { return .empty }
       return self.value(of: entry)
     }
-    guard let location = self.dic[key], let memory = self.file.memory else {
+    guard let base = self.dataBase, let location = self.dic.location(of: key, base: base) else {
       return .empty
     }
     return .mapped(
-      UnsafeRawBufferPointer(
-        start: memory + fixed32Size + location.valueOffset,
-        count: Int(location.valueSize)
-      )
+      UnsafeRawBufferPointer(start: base + location.valueOffset, count: Int(location.valueSize))
     )
   }
 
   /// The bytes of `key`'s value without its expiry time, after loading any changes
   /// (`getDataForKey`).
-  func getDataForKey(_ key: StoreKey) -> RawValue {
+  func getDataForKey(_ key: UnsafeRawBufferPointer) -> RawValue {
     self.checkLoadData()
     if self.enableKeyExpire {
       return self.getDataWithoutMTimeForKey(key)
@@ -47,8 +44,12 @@ extension StoreInstance {
 
   /// Writes `data` as `key`'s value (`setDataForKey(data, key, isDataHolder)`). A data holder is a
   /// string or raw bytes, whose length is written before them inside the value.
-  func setDataForKey(_ data: UnsafeRawBufferPointer, _ key: StoreKey, isDataHolder: Bool) -> Bool {
-    if (!isDataHolder && data.isEmpty) || key.bytes.isEmpty {
+  func setDataForKey(
+    _ data: UnsafeRawBufferPointer,
+    _ key: UnsafeRawBufferPointer,
+    isDataHolder: Bool
+  ) -> Bool {
+    if (!isDataHolder && data.isEmpty) || key.isEmpty {
       return false
     }
     guard Self.encodedValueLength(data.count, isDataHolder: isDataHolder) != nil else {
@@ -56,14 +57,22 @@ extension StoreInstance {
       return false
     }
     if self.crypter != nil {
-      guard self.setCryptDataForKey(data, key, isDataHolder: isDataHolder) else { return false }
+      guard self.setCryptDataForKey(data, StoreKey(key), isDataHolder: isDataHolder) else {
+        return false
+      }
       self.hasFullWriteback = false
       return true
     }
-    if let existing = self.dic[key] {
-      if self.isCompareBeforeSetEnabled, let memory = self.file.memory {
+    // One lookup serves the whole write: the slot found is updated afterwards, unless keys were
+    // added or removed in between.
+    let hash = self.dic.hash(key)
+    let probe = self.dic.probe(key, hash: hash, base: self.dataBase)
+    let version = self.dic.version
+    if case .found(let slot) = probe {
+      let existing = self.dic.location(at: slot)
+      if self.isCompareBeforeSetEnabled, let base = self.dataBase {
         let old = UnsafeRawBufferPointer(
-          start: memory + fixed32Size + existing.valueOffset,
+          start: base + existing.valueOffset,
           count: Int(existing.valueSize)
         )
         if isDataHolder {
@@ -92,7 +101,7 @@ extension StoreInstance {
           : self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder)
       }
       guard let location else { return false }
-      self.dic[key] = location
+      self.setLocation(location, for: key, hash: hash, probe: probe, version: version)
     } else {
       let needOverride = !self.isMultiProcess && self.dic.isEmpty && self.actualSize > 0
       let location =
@@ -100,10 +109,29 @@ extension StoreInstance {
         ? self.overrideDataWithKey(data, key: key, isDataHolder: isDataHolder)
         : self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder)
       guard let location else { return false }
-      self.dic[key] = location
+      self.setLocation(location, for: key, hash: hash, probe: probe, version: version)
     }
     self.hasFullWriteback = false
     return true
+  }
+
+  /// Records `location` as `key`'s, in the slot `probe` found when the index was at `version`.
+  private func setLocation(
+    _ location: RecordLocation,
+    for key: UnsafeRawBufferPointer,
+    hash: UInt32,
+    probe: RecordIndex.Probe,
+    version: Int
+  ) {
+    guard self.dic.version == version else {
+      // Making space removed expired keys, which moves others between slots.
+      self.dic.set(location, for: key, base: self.dataBase)
+      return
+    }
+    switch probe {
+    case .found(let slot): self.dic.setLocation(location, at: slot)
+    case .vacant(let slot): self.dic.insert(location, hash: hash, at: slot)
+    }
   }
 
   /// The length of a value as written, or `nil` if it cannot be represented (`encodedValueLength`).
@@ -160,57 +188,53 @@ extension StoreInstance {
   /// Appends a record for `key` (`appendDataWithKey(data, key)`).
   func appendDataWithKey(
     _ data: UnsafeRawBufferPointer,
-    key: StoreKey,
+    key: UnsafeRawBufferPointer,
     isDataHolder: Bool
   ) -> RecordLocation? {
     self.doAppendDataWithKey(
       data,
-      keyData: key.bytes,
+      keyData: key,
       isDataHolder: isDataHolder,
-      originKeyLength: key.bytes.count
+      originKeyLength: key.count
     )
   }
 
-  /// Appends a record for `key`, copying its length-delimited key from its current record
-  /// (`appendDataWithKey(data, kvHolder)`).
+  /// Appends a record for `key`, which the index holds (`appendDataWithKey(data, kvHolder)`).
+  ///
+  /// The C++ core copies the length-delimited key from the key's current record. The record holds
+  /// the same bytes as `key`, so this writes `key` instead, but makes space before checking the
+  /// size limit, as the C++ core does.
   func appendDataWithKey(
     _ data: UnsafeRawBufferPointer,
-    holderOf key: StoreKey,
+    holderOf key: UnsafeRawBufferPointer,
     isDataHolder: Bool
   ) -> RecordLocation? {
     self.exclusiveProcessLock.withLock {
-      guard let holder = self.dic[key] else { return nil }
-      let keyLength = Int(holder.keySize)
-      let rawKeySize = keyLength + pbRawVarint32Size(UInt32(keyLength))
-      // Making space may move the record, so it is looked up again afterwards.
+      let rawKeySize = key.count + pbRawVarint32Size(UInt32(key.count))
       guard
         let entry = Self.encodedEntrySize(
           keyDataLength: rawKeySize,
-          originKeyLength: keyLength,
+          originKeyLength: key.count,
           dataLength: data.count,
           isDataHolder: isDataHolder,
           needsPlainHolder: true
         ),
-        self.ensureMemorySize(entry.totalSize),
-        let moved = self.dic[key], let memory = self.file.memory
+        self.ensureMemorySize(entry.totalSize)
       else {
         return nil
       }
-      let keyData = Array(
-        UnsafeRawBufferPointer(start: memory + fixed32Size + Int(moved.offset), count: rawKeySize)
-      )
       return self.doAppendDataWithKey(
         data,
-        keyData: keyData,
+        keyData: key,
         isDataHolder: isDataHolder,
-        originKeyLength: keyLength
+        originKeyLength: key.count
       )
     }
   }
 
   func doAppendDataWithKey(
     _ data: UnsafeRawBufferPointer,
-    keyData: [UInt8],
+    keyData: UnsafeRawBufferPointer,
     isDataHolder: Bool,
     originKeyLength: Int
   ) -> RecordLocation? {
@@ -264,31 +288,30 @@ extension StoreInstance {
   /// Rewrites the data from the start as a single record for `key` (`overrideDataWithKey(data, key)`).
   func overrideDataWithKey(
     _ data: UnsafeRawBufferPointer,
-    key: StoreKey,
+    key: UnsafeRawBufferPointer,
     isDataHolder: Bool
   ) -> RecordLocation? {
     self.doOverrideDataWithKey(
       data,
-      keyData: key.bytes,
+      keyData: key,
       isDataHolder: isDataHolder,
-      originKeyLength: key.bytes.count
+      originKeyLength: key.count
     )
   }
 
-  /// Rewrites the data from the start as a single record for `key`, copying its length-delimited
-  /// key from its current record (`overrideDataWithKey(data, kvHolder)`).
+  /// Rewrites the data from the start as a single record for `key`, which the index holds
+  /// (`overrideDataWithKey(data, kvHolder)`). Writes `key` rather than copying it from its
+  /// record, as ``appendDataWithKey(_:holderOf:isDataHolder:)`` does.
   func overrideDataWithKey(
     _ data: UnsafeRawBufferPointer,
-    holderOf key: StoreKey,
+    holderOf key: UnsafeRawBufferPointer,
     isDataHolder: Bool
   ) -> RecordLocation? {
-    guard let holder = self.dic[key] else { return nil }
-    let keyLength = Int(holder.keySize)
-    let rawKeySize = keyLength + pbRawVarint32Size(UInt32(keyLength))
+    let rawKeySize = key.count + pbRawVarint32Size(UInt32(key.count))
     guard
       let entry = Self.encodedEntrySize(
         keyDataLength: rawKeySize,
-        originKeyLength: keyLength,
+        originKeyLength: key.count,
         dataLength: data.count,
         isDataHolder: isDataHolder,
         needsPlainHolder: true
@@ -297,23 +320,17 @@ extension StoreInstance {
     if !self.checkSizeForOverride(entry.totalSize) {
       return self.appendDataWithKey(data, holderOf: key, isDataHolder: isDataHolder)
     }
-    let keyData = Array(
-      UnsafeRawBufferPointer(
-        start: self.file.memory! + fixed32Size + Int(holder.offset),
-        count: rawKeySize
-      )
-    )
     return self.doOverrideDataWithKey(
       data,
-      keyData: keyData,
+      keyData: key,
       isDataHolder: isDataHolder,
-      originKeyLength: keyLength
+      originKeyLength: key.count
     )
   }
 
   func doOverrideDataWithKey(
     _ data: UnsafeRawBufferPointer,
-    keyData: [UInt8],
+    keyData: UnsafeRawBufferPointer,
     isDataHolder: Bool,
     originKeyLength: Int
   ) -> RecordLocation? {
@@ -370,29 +387,21 @@ extension StoreInstance {
 
   private static func writeRecord(
     to output: inout CodedOutput,
-    keyData: [UInt8],
+    keyData: UnsafeRawBufferPointer,
     keyAlreadyEncoded: Bool,
     data: UnsafeRawBufferPointer,
     isDataHolder: Bool,
     valueLength: Int
   ) throws(CodingError) {
-    var failure: CodingError?
-    keyData.withUnsafeBytes { keyData in
-      do throws(CodingError) {
-        if keyAlreadyEncoded {
-          try output.writeRawData(keyData)
-        } else {
-          try output.writeData(keyData)
-        }
-        if isDataHolder {
-          try output.writeRawVarint32(UInt32(valueLength))
-        }
-        try output.writeData(data)
-      } catch {
-        failure = error
-      }
+    if keyAlreadyEncoded {
+      try output.writeRawData(keyData)
+    } else {
+      try output.writeData(keyData)
     }
-    if let failure { throw failure }
+    if isDataHolder {
+      try output.writeRawVarint32(UInt32(valueLength))
+    }
+    try output.writeData(data)
   }
 
   /// Whether a record of `size` fits in the file without growing it (`checkSizeForOverride`).
@@ -406,7 +415,7 @@ extension StoreInstance {
     return !(size > fileSize || spaceNeededForOverride > fileSize)
   }
 
-  func checkSizeLimit(_ size: Int, keyData: [UInt8], originKeyLength: Int) -> Bool {
+  func checkSizeLimit(_ size: Int, keyData: UnsafeRawBufferPointer, originKeyLength: Int) -> Bool {
     if self.itemSizeLimit != 0 && size > Int(self.itemSizeLimit) {
       Log.error(
         "[\(self.id)] itemSizeLimit \(self.itemSizeLimit): ignore value size \(size) too large"
@@ -474,7 +483,7 @@ extension StoreInstance {
       return self.prepareEncodeCrypt()
     }
     var totalSize = itemSizeHolderSize
-    for location in self.dic.values {
+    self.dic.forEachRecord { _, location in
       totalSize += location.size
     }
     return PreparedData(encoded: nil, totalSize: totalSize)
@@ -635,29 +644,35 @@ extension StoreInstance {
     let originPosition = self.output!.position
     var writePosition = originPosition + itemSizeHolderSize
     if !self.dic.isEmpty {
-      let sorted = self.dic.sorted { $0.value.offset < $1.value.offset }
+      let sorted = self.dic.slotsInRecordOrder()
       // Merge neighbouring records so they move together.
-      var sections = [(offset: Int, size: Int)]()
-      sections.append((Int(sorted[0].value.offset), sorted[0].value.size))
-      for (_, location) in sorted.dropFirst() {
-        let last = sections[sections.count - 1]
-        if Int(location.offset) == last.offset + last.size {
-          sections[sections.count - 1].size += location.size
+      var sectionStart = -1
+      var sectionSize = 0
+      func moveSection() {
+        guard sectionSize > 0 else { return }
+        // The ranges can overlap, as they do in place.
+        memmove(base + writePosition, base + sectionStart, sectionSize)
+        writePosition += sectionSize
+      }
+      for slot in sorted {
+        let location = self.dic.location(at: slot)
+        if Int(location.offset) == sectionStart + sectionSize {
+          sectionSize += location.size
         } else {
-          sections.append((Int(location.offset), location.size))
+          moveSection()
+          sectionStart = Int(location.offset)
+          sectionSize = location.size
         }
       }
-      for section in sections {
-        // The ranges can overlap, as they do in place.
-        memmove(base + writePosition, base + section.offset, section.size)
-        writePosition += section.size
-      }
+      moveSection()
       // Encrypting plain text invalidates the index, which is loaded again afterwards.
       if encrypter == nil {
         var offset = itemSizeHolderSize
-        for (key, location) in sorted {
-          self.dic[key]!.offset = UInt32(offset)
+        for slot in sorted {
+          var location = self.dic.location(at: slot)
+          location.offset = UInt32(offset)
           offset += location.size
+          self.dic.setLocation(location, at: slot)
         }
       }
     }

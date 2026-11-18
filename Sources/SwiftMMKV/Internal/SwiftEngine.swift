@@ -42,39 +42,39 @@ struct SwiftEngine: MMKVEngine {
 
 extension SwiftEngine {
   func bool(forKey key: String) -> Bool? {
-    self.store.bool(forKey: StoreKey(key))
+    self.store.bool(forKey: key)
   }
 
   func int32(forKey key: String) -> Int32? {
-    self.store.int32(forKey: StoreKey(key))
+    self.store.int32(forKey: key)
   }
 
   func uint32(forKey key: String) -> UInt32? {
-    self.store.uint32(forKey: StoreKey(key))
+    self.store.uint32(forKey: key)
   }
 
   func int64(forKey key: String) -> Int64? {
-    self.store.int64(forKey: StoreKey(key))
+    self.store.int64(forKey: key)
   }
 
   func uint64(forKey key: String) -> UInt64? {
-    self.store.uint64(forKey: StoreKey(key))
+    self.store.uint64(forKey: key)
   }
 
   func float(forKey key: String) -> Float? {
-    self.store.float(forKey: StoreKey(key))
+    self.store.float(forKey: key)
   }
 
   func double(forKey key: String) -> Double? {
-    self.store.double(forKey: StoreKey(key))
+    self.store.double(forKey: key)
   }
 
   func string(forKey key: String) -> String? {
-    self.store.bytes(forKey: StoreKey(key)).map { String(decoding: $0, as: UTF8.self) }
+    self.store.string(forKey: key)
   }
 
   func strings(forKey key: String) -> [String]? {
-    self.store.strings(forKey: StoreKey(key))
+    self.store.strings(forKey: key)
   }
 
   func withBytes<R, E: Error>(
@@ -82,7 +82,7 @@ extension SwiftEngine {
     _ body: (RawSpan) throws(E) -> R
   ) throws(E) -> R? {
     // Copied, so that `body` runs without the store's locks held, as with the C++ core.
-    guard let bytes = self.store.bytes(forKey: StoreKey(key)) else { return nil }
+    guard let bytes = self.store.bytes(forKey: key) else { return nil }
     return
       try bytes.withUnsafeBytes { buffer in
         Result { () throws(E) -> R in try body(buffer.bytes) }
@@ -95,31 +95,31 @@ extension SwiftEngine {
 
 extension SwiftEngine {
   func set(_ value: Bool, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.store.set(.bool(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+    self.store.set(.bool(value), forKey: key, expiresInSeconds: expiresInSeconds)
   }
 
   func set(_ value: Int32, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.store.set(.int32(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+    self.store.set(.int32(value), forKey: key, expiresInSeconds: expiresInSeconds)
   }
 
   func set(_ value: UInt32, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.store.set(.uint32(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+    self.store.set(.uint32(value), forKey: key, expiresInSeconds: expiresInSeconds)
   }
 
   func set(_ value: Int64, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.store.set(.int64(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+    self.store.set(.int64(value), forKey: key, expiresInSeconds: expiresInSeconds)
   }
 
   func set(_ value: UInt64, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.store.set(.uint64(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+    self.store.set(.uint64(value), forKey: key, expiresInSeconds: expiresInSeconds)
   }
 
   func set(_ value: Float, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.store.set(.float(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+    self.store.set(.float(value), forKey: key, expiresInSeconds: expiresInSeconds)
   }
 
   func set(_ value: Double, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.store.set(.double(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+    self.store.set(.double(value), forKey: key, expiresInSeconds: expiresInSeconds)
   }
 
   func set(_ value: String, forKey key: String, expiresInSeconds: UInt32) -> Bool {
@@ -127,19 +127,19 @@ extension SwiftEngine {
     return value.withUTF8 { utf8 in
       self.store.set(
         .bytes(UnsafeRawBufferPointer(utf8)),
-        forKey: StoreKey(key),
+        forKey: key,
         expiresInSeconds: expiresInSeconds
       )
     }
   }
 
   func set(_ value: [String], forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.store.set(.strings(value), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+    self.store.set(.strings(value), forKey: key, expiresInSeconds: expiresInSeconds)
   }
 
   func set(bytes: RawSpan, forKey key: String, expiresInSeconds: UInt32) -> Bool {
     bytes.withUnsafeBytes { buffer in
-      self.store.set(.bytes(buffer), forKey: StoreKey(key), expiresInSeconds: expiresInSeconds)
+      self.store.set(.bytes(buffer), forKey: key, expiresInSeconds: expiresInSeconds)
     }
   }
 }
@@ -152,19 +152,19 @@ extension SwiftEngine {
   }
 
   var keys: Set<String> {
-    Set(self.store.keys.map(\.string))
+    Set(self.store.keys)
   }
 
   func contains(_ key: String) -> Bool {
-    self.store.contains(StoreKey(key))
+    self.store.contains(key)
   }
 
   func remove(_ key: String) -> Bool {
-    self.store.removeValue(forKey: StoreKey(key))
+    self.store.removeValue(forKey: key)
   }
 
   func remove(_ keys: [String]) {
-    self.store.removeValues(forKeys: keys.map(StoreKey.init))
+    self.store.removeValues(forKeys: keys)
   }
 
   func removeAll(keepingCapacity: Bool) {

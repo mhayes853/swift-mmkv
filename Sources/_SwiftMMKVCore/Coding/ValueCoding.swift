@@ -70,6 +70,26 @@ package enum EncodedValue {
     return result
   }
 
+  /// Encodes the value, followed by `expiry` when the store has expiring keys, into temporary
+  /// memory, on the stack unless the value is large, and calls `body` with it.
+  ///
+  /// - Returns: What `body` returns, or `nil` if the value cannot be encoded.
+  package func withEncoded<R>(expiry: UInt32?, _ body: (UnsafeRawBufferPointer) -> R) -> R? {
+    let size = self.size + (expiry == nil ? 0 : fixed32Size)
+    return withUnsafeTemporaryAllocation(byteCount: size, alignment: 1) { buffer -> R? in
+      var output = CodedOutput(buffer)
+      do throws(CodingError) {
+        try self.write(to: &output)
+        if let expiry {
+          try output.writeRawLittleEndian32(expiry)
+        }
+      } catch {
+        return nil
+      }
+      return body(UnsafeRawBufferPointer(buffer))
+    }
+  }
+
   private func write(to output: inout CodedOutput) throws(CodingError) {
     switch self {
     case .bool(let value): try output.writeBool(value)

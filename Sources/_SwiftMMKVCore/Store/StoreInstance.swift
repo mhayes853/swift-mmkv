@@ -20,7 +20,7 @@ package final class StoreInstance: @unchecked Sendable {
   let fileSystem: FileSystem
 
   /// Where each key's latest record is in a plain-text store (`m_dic`).
-  var dic = [StoreKey: RecordLocation]()
+  var dic = RecordIndex()
   /// Each key's entry in an encrypted store (`m_dicCrypt`).
   var dicCrypt = [StoreKey: CryptEntry]()
   /// The cryptor of an encrypted store, whose state is the end of the data (`m_crypter`).
@@ -162,6 +162,19 @@ package final class StoreInstance: @unchecked Sendable {
     self.crypter == nil ? self.dic.count : self.dicCrypt.count
   }
 
+  /// The start of the data in the mapped file, which locations are measured from.
+  var dataBase: UnsafeRawPointer? {
+    self.file.memory.map { UnsafeRawPointer($0 + fixed32Size) }
+  }
+
+  /// Calls `body` with the UTF-8 bytes of `key`, without copying them when the string is stored
+  /// contiguously.
+  @inline(__always)
+  func withKeyBytes<R>(_ key: String, _ body: (UnsafeRawBufferPointer) -> R) -> R {
+    var key = key
+    return key.withUTF8 { body(UnsafeRawBufferPointer($0)) }
+  }
+
   /// Runs `body` holding both the instance's lock and its file lock of `type`.
   func withLocks<R>(_ type: LockType, _ body: () -> R) -> R {
     self.lock.withLock {
@@ -179,11 +192,20 @@ extension StoreInstance {
   ///
   /// - Returns: `nil` if the key has no value or `body` cannot read it.
   package func withValue<R>(
-    forKey key: StoreKey,
+    forKey key: String,
     _ body: (UnsafeRawBufferPointer) throws(CodingError) -> R
   ) -> R? {
-    guard !key.bytes.isEmpty else { return nil }
-    return self.withLocks(.shared) {
+    guard !key.isEmpty else { return nil }
+    return self.withKeyBytes(key) { key in
+      self.withValue(forKey: key, body)
+    }
+  }
+
+  func withValue<R>(
+    forKey key: UnsafeRawBufferPointer,
+    _ body: (UnsafeRawBufferPointer) throws(CodingError) -> R
+  ) -> R? {
+    self.withLocks(.shared) {
       let data = self.getDataForKey(key)
       guard data.count > 0 else { return nil }
       do throws(CodingError) {
@@ -195,41 +217,48 @@ extension StoreInstance {
     }
   }
 
-  package func bool(forKey key: StoreKey) -> Bool? {
+  package func bool(forKey key: String) -> Bool? {
     self.withValue(forKey: key) { (data) throws(CodingError) in try ValueDecoding.bool(data) }
   }
 
-  package func int32(forKey key: StoreKey) -> Int32? {
+  package func int32(forKey key: String) -> Int32? {
     self.withValue(forKey: key) { (data) throws(CodingError) in try ValueDecoding.int32(data) }
   }
 
-  package func uint32(forKey key: StoreKey) -> UInt32? {
+  package func uint32(forKey key: String) -> UInt32? {
     self.withValue(forKey: key) { (data) throws(CodingError) in try ValueDecoding.uint32(data) }
   }
 
-  package func int64(forKey key: StoreKey) -> Int64? {
+  package func int64(forKey key: String) -> Int64? {
     self.withValue(forKey: key) { (data) throws(CodingError) in try ValueDecoding.int64(data) }
   }
 
-  package func uint64(forKey key: StoreKey) -> UInt64? {
+  package func uint64(forKey key: String) -> UInt64? {
     self.withValue(forKey: key) { (data) throws(CodingError) in try ValueDecoding.uint64(data) }
   }
 
-  package func float(forKey key: StoreKey) -> Float? {
+  package func float(forKey key: String) -> Float? {
     self.withValue(forKey: key) { (data) throws(CodingError) in try ValueDecoding.float(data) }
   }
 
-  package func double(forKey key: StoreKey) -> Double? {
+  package func double(forKey key: String) -> Double? {
     self.withValue(forKey: key) { (data) throws(CodingError) in try ValueDecoding.double(data) }
   }
 
   /// The bytes of a string or of raw bytes, copied out of the file.
-  package func bytes(forKey key: StoreKey) -> [UInt8]? {
+  package func bytes(forKey key: String) -> [UInt8]? {
     self.withValue(forKey: key) { (data) throws(CodingError) in Array(try ValueDecoding.bytes(data))
     }
   }
 
-  package func strings(forKey key: StoreKey) -> [String]? {
+  /// A string, decoded straight out of the file.
+  package func string(forKey key: String) -> String? {
+    self.withValue(forKey: key) { (data) throws(CodingError) in
+      String(decoding: try ValueDecoding.bytes(data), as: UTF8.self)
+    }
+  }
+
+  package func strings(forKey key: String) -> [String]? {
     self.withValue(forKey: key) { (data) throws(CodingError) in try ValueDecoding.strings(data) }
   }
 }
@@ -241,7 +270,7 @@ extension StoreInstance {
   /// refuses the write, and an expiring write first turns on expiry for the whole store.
   ///
   /// - Parameter expiresInSeconds: How long to keep the value, or 0 to keep it until it is removed.
-  package func set(_ value: EncodedValue, forKey key: StoreKey, expiresInSeconds: UInt32) -> Bool {
+  package func set(_ value: EncodedValue, forKey key: String, expiresInSeconds: UInt32) -> Bool {
     // The C++ core only refuses a read-only write when it has to grow the file, and overwriting
     // a key in place would write into the read-only mapping, so the shim refuses them all.
     if self.isReadOnly {
@@ -251,12 +280,18 @@ extension StoreInstance {
     if expiresInSeconds != 0 && !isExpirationEnabled && !self.enableAutoKeyExpire(0) {
       return false
     }
-    return self.set(value, forKey: key, expireDuration: expiresInSeconds)
+    return self.withKeyBytes(key) { key in
+      self.set(value, forKey: key, expireDuration: expiresInSeconds)
+    }
   }
 
   /// MMKV's typed `set(value, key, expireDuration)`.
-  private func set(_ value: EncodedValue, forKey key: StoreKey, expireDuration: UInt32) -> Bool {
-    guard !key.bytes.isEmpty else { return false }
+  private func set(
+    _ value: EncodedValue,
+    forKey key: UnsafeRawBufferPointer,
+    expireDuration: UInt32
+  ) -> Bool {
+    guard !key.isEmpty else { return false }
     switch value {
     case .bytes(let bytes):
       return self.setDataForKey(bytes, key, expireDuration: expireDuration, isDataHolder: true)
@@ -272,8 +307,9 @@ extension StoreInstance {
           self.enableKeyExpire
           ? (expireDuration != 0 ? Self.safeExpirationPlusCurrentTime(expireDuration) : 0)
           : nil
-        guard let data = try? value.encode(expiry: expiry) else { return false }
-        return data.withUnsafeBytes { self.setDataForKey($0, key, isDataHolder: false) }
+        return value.withEncoded(expiry: expiry) { data in
+          self.setDataForKey(data, key, isDataHolder: false)
+        } ?? false
       }
     }
   }
@@ -282,7 +318,7 @@ extension StoreInstance {
   /// has expiring keys.
   func setDataForKey(
     _ data: UnsafeRawBufferPointer,
-    _ key: StoreKey,
+    _ key: UnsafeRawBufferPointer,
     expireDuration: UInt32,
     isDataHolder: Bool
   ) -> Bool {
@@ -304,9 +340,9 @@ extension StoreInstance {
         Log.error("[\(self.id)] reject expiring value too large to encode: \(data.count)")
         return false
       }
-      var encoded = [UInt8](repeating: 0, count: encodedLength)
       let time = expireDuration != 0 ? Self.safeExpirationPlusCurrentTime(expireDuration) : 0
-      let didEncode = encoded.withUnsafeMutableBytes { buffer in
+      // On the stack unless the value is large.
+      return withUnsafeTemporaryAllocation(byteCount: encodedLength, alignment: 1) { buffer in
         var output = CodedOutput(buffer)
         do throws(CodingError) {
           if isDataHolder {
@@ -315,13 +351,11 @@ extension StoreInstance {
             try output.writeRawData(data)
           }
           try output.writeRawLittleEndian32(time)
-          return true
         } catch {
           return false
         }
+        return self.setDataForKey(UnsafeRawBufferPointer(buffer), key, isDataHolder: false)
       }
-      guard didEncode else { return false }
-      return encoded.withUnsafeBytes { self.setDataForKey($0, key, isDataHolder: false) }
     }
   }
 }
@@ -339,11 +373,20 @@ extension StoreInstance {
   }
 
   /// Every key, without those that have expired (`allKeys(true)`), in no particular order.
-  package var keys: [StoreKey] {
+  package var keys: [String] {
     self.lock.withLock {
       self.checkLoadData()
       self.filterExpiredKeysBeforeListing()
-      return self.crypter == nil ? Array(self.dic.keys) : Array(self.dicCrypt.keys)
+      if self.crypter != nil {
+        return self.dicCrypt.keys.map(\.string)
+      }
+      guard let base = self.dataBase else { return [] }
+      var keys = [String]()
+      keys.reserveCapacity(self.dic.count)
+      self.dic.forEachRecord { _, location in
+        keys.append(String(decoding: RecordIndex.key(at: location, in: base), as: UTF8.self))
+      }
+      return keys
     }
   }
 
@@ -358,13 +401,17 @@ extension StoreInstance {
     }
   }
 
-  package func contains(_ key: StoreKey) -> Bool {
-    self.lock.withLock {
-      self.checkLoadData()
-      if !self.enableKeyExpire {
-        return self.crypter == nil ? self.dic[key] != nil : self.dicCrypt[key] != nil
+  package func contains(_ key: String) -> Bool {
+    self.withKeyBytes(key) { key in
+      self.lock.withLock {
+        self.checkLoadData()
+        if !self.enableKeyExpire {
+          return self.crypter == nil
+            ? self.dic.slot(of: key, base: self.dataBase) != nil
+            : self.dicCrypt[StoreKey(key)] != nil
+        }
+        return self.getDataWithoutMTimeForKey(key).count != 0
       }
-      return self.getDataWithoutMTimeForKey(key).count != 0
     }
   }
 }
@@ -373,8 +420,13 @@ extension StoreInstance {
 
 extension StoreInstance {
   @discardableResult
-  package func removeValue(forKey key: StoreKey) -> Bool {
-    guard !key.bytes.isEmpty else { return false }
+  package func removeValue(forKey key: String) -> Bool {
+    self.withKeyBytes(key) { self.removeValue(forKey: $0) }
+  }
+
+  @discardableResult
+  func removeValue(forKey key: UnsafeRawBufferPointer) -> Bool {
+    guard !key.isEmpty else { return false }
     if self.isReadOnly {
       Log.warning("[\(self.id)] file readonly")
       return false
@@ -387,7 +439,7 @@ extension StoreInstance {
 
   /// Removes several keys and rewrites the file once (`removeValuesForKeys`).
   @discardableResult
-  package func removeValues(forKeys keys: [StoreKey]) -> Bool {
+  package func removeValues(forKeys keys: [String]) -> Bool {
     if self.isReadOnly {
       Log.warning("[\(self.id)] file readonly")
       return false
@@ -402,10 +454,11 @@ extension StoreInstance {
       self.checkLoadData()
       var deleteCount = 0
       for key in keys {
-        let removed =
+        let removed = self.withKeyBytes(key) { key in
           self.crypter == nil
-          ? self.dic.removeValue(forKey: key) != nil
-          : self.dicCrypt.removeValue(forKey: key) != nil
+            ? self.dic.remove(key, base: self.dataBase) != nil
+            : self.dicCrypt.removeValue(forKey: StoreKey(key)) != nil
+        }
         if removed {
           deleteCount += 1
         }
@@ -420,26 +473,33 @@ extension StoreInstance {
     }
   }
 
-  func removeDataForKey(_ key: StoreKey) -> Bool {
-    guard !key.bytes.isEmpty else { return false }
+  func removeDataForKey(_ key: UnsafeRawBufferPointer) -> Bool {
+    guard !key.isEmpty else { return false }
     let empty = UnsafeRawBufferPointer(start: nil, count: 0)
     if self.crypter != nil {
-      guard self.dicCrypt[key] != nil else { return false }
+      let storeKey = StoreKey(key)
+      guard self.dicCrypt[storeKey] != nil else { return false }
       self.hasFullWriteback = false
       let result = self.appendDataWithKey(empty, key: key, isDataHolder: false)
       if result != nil {
-        self.dicCrypt.removeValue(forKey: key)
+        self.dicCrypt.removeValue(forKey: storeKey)
       }
       return result != nil
     }
-    guard self.dic[key] != nil else { return false }
+    guard let slot = self.dic.slot(of: key, base: self.dataBase) else { return false }
+    let version = self.dic.version
     self.hasFullWriteback = false
     let result =
       self.enableKeyExpire
       ? self.appendDataWithKey(empty, key: key, isDataHolder: false)
       : self.appendDataWithKey(empty, holderOf: key, isDataHolder: false)
     if result != nil {
-      self.dic.removeValue(forKey: key)
+      // Making space can remove expired keys, which moves others between slots.
+      if self.dic.version == version {
+        self.dic.remove(at: slot)
+      } else {
+        self.dic.remove(key, base: self.dataBase)
+      }
     }
     return result != nil
   }
@@ -526,22 +586,34 @@ extension StoreInstance {
           self.expiredInSeconds != 0
           ? Self.safeExpirationPlusCurrentTime(self.expiredInSeconds) : 0
         var count = 0
-        let keys =
-          source.crypter == nil
-          ? source.dic.sorted { $0.value.offset < $1.value.offset }.map(\.key)
-          : source.dicCrypt.sorted { $0.value.order < $1.value.order }.map(\.key)
-        for key in keys {
+        for key in source.keysInRecordOrder() {
           // Copied, because the source may move its records while this store is written.
-          var value = source.getDataForKey(key).array
-          guard !value.isEmpty else { continue }
-          if self.enableKeyExpire {
-            withUnsafeBytes(of: time.littleEndian) { value.append(contentsOf: $0) }
+          let didSet = key.bytes.withUnsafeBytes { key in
+            var value = source.getDataForKey(key).array
+            guard !value.isEmpty else { return false }
+            if self.enableKeyExpire {
+              withUnsafeBytes(of: time.littleEndian) { value.append(contentsOf: $0) }
+            }
+            return value.withUnsafeBytes { self.setDataForKey($0, key, isDataHolder: false) }
           }
-          let didSet = value.withUnsafeBytes { self.setDataForKey($0, key, isDataHolder: false) }
           count += didSet ? 1 : 0
         }
         return count
       }
+    }
+  }
+}
+
+extension StoreInstance {
+  /// Copies of every key, in the order of their records in the file, for the operations that
+  /// rewrite every key and so cannot keep pointing into the file.
+  func keysInRecordOrder() -> [StoreKey] {
+    if self.crypter != nil {
+      return self.dicCrypt.sorted { $0.value.order < $1.value.order }.map(\.key)
+    }
+    guard let base = self.dataBase else { return [] }
+    return self.dic.slotsInRecordOrder().map { slot in
+      StoreKey(RecordIndex.key(at: self.dic.location(at: slot), in: base))
     }
   }
 }

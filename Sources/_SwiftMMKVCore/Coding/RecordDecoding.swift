@@ -17,6 +17,10 @@ package struct StoreKey: Hashable, Sendable {
     self.bytes = Array(string.utf8)
   }
 
+  package init(_ bytes: UnsafeRawBufferPointer) {
+    self.bytes = Array(bytes)
+  }
+
   package var string: String {
     String(decoding: self.bytes, as: UTF8.self)
   }
@@ -76,13 +80,13 @@ package enum RecordDecoding {
   package static func decode(
     _ data: UnsafeRawBufferPointer,
     from position: Int = 0,
-    into index: inout [StoreKey: RecordLocation],
+    into index: inout RecordIndex,
     greedy: Bool
   ) -> Bool {
     if greedy {
       return Self.decodeRecords(data, from: position, into: &index)
     }
-    var decoded = [StoreKey: RecordLocation]()
+    var decoded = RecordIndex()
     guard Self.decodeRecords(data, from: position, into: &decoded) else { return false }
     index = decoded
     return true
@@ -91,7 +95,7 @@ package enum RecordDecoding {
   private static func decodeRecords(
     _ data: UnsafeRawBufferPointer,
     from position: Int,
-    into index: inout [StoreKey: RecordLocation]
+    into index: inout RecordIndex
   ) -> Bool {
     var input = CodedInput(data)
     do throws(CodingError) {
@@ -108,16 +112,17 @@ package enum RecordDecoding {
         let valueRange = try input.readLengthDelimited()
         let computedKVSize = valueRange.lowerBound - offset
         guard computedKVSize <= Int(UInt16.max) else { throw .entryTooLarge }
-        let key = StoreKey(Array(input.bytes(in: keyRange)))
+        let key = input.bytes(in: keyRange)
         if valueRange.isEmpty {
-          index.removeValue(forKey: key)
+          index.remove(key, base: data.baseAddress)
         } else {
-          index[key] = RecordLocation(
+          let location = RecordLocation(
             computedKVSize: UInt16(computedKVSize),
             keySize: UInt16(keyRange.count),
             valueSize: UInt32(valueRange.count),
             offset: UInt32(offset)
           )
+          index.set(location, for: key, base: data.baseAddress)
         }
       }
       return true

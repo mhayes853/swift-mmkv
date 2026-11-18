@@ -247,13 +247,25 @@ import Testing
       store.set("second", forKey: "b")
     }
     // Cut the last record in half.
-    let damaged = Array(file.data.dropLast(3))
-    var index = [StoreKey("unrelated"): RecordLocation(keySize: 1, valueSize: 1, offset: 0)]
-    let original = index
-    #expect(!damaged.withUnsafeBytes { RecordDecoding.decode($0, into: &index, greedy: false) })
-    #expect(index == original)
-    #expect(!damaged.withUnsafeBytes { RecordDecoding.decode($0, into: &index, greedy: true) })
-    #expect(Set(index.keys) == [StoreKey("unrelated"), StoreKey("a")])
+    var damaged = Array(file.data)
+    damaged.removeLast(3)
+    damaged.withUnsafeBytes { damaged in
+      var index = RecordIndex()
+      #expect(!RecordDecoding.decode(damaged, into: &index, greedy: false))
+      let isEmpty = index.isEmpty
+      #expect(isEmpty)
+      #expect(!RecordDecoding.decode(damaged, into: &index, greedy: true))
+      #expect(Set(index.entries(in: damaged).keys) == [StoreKey("a")])
+    }
+    // Decoding that fails leaves the index as it was.
+    Array(file.data).withUnsafeBytes { data in
+      var index = RecordIndex()
+      #expect(RecordDecoding.decode(data, into: &index, greedy: false))
+      let original = index.entries(in: data)
+      let truncated = UnsafeRawBufferPointer(rebasing: data.dropLast(3))
+      #expect(!RecordDecoding.decode(truncated, into: &index, greedy: false))
+      #expect(index.entries(in: data) == original)
+    }
   }
 
   // MARK: Support
@@ -332,6 +344,17 @@ import Testing
 
 // MARK: - Support
 
+extension RecordIndex {
+  /// Every key in the index, with its location, reading the keys from `data`.
+  func entries(in data: UnsafeRawBufferPointer) -> [StoreKey: RecordLocation] {
+    var entries = [StoreKey: RecordLocation]()
+    self.forEachRecord { _, location in
+      entries[StoreKey(RecordIndex.key(at: location, in: data.baseAddress!))] = location
+    }
+    return entries
+  }
+}
+
 /// A store's files as read from disk.
 private struct StoreFile {
   var bytes: [UInt8]
@@ -351,12 +374,11 @@ private struct StoreFile {
   }
 
   var records: [StoreKey: RecordLocation] {
-    var index = [StoreKey: RecordLocation]()
-    let decoded = Array(self.data).withUnsafeBytes {
-      RecordDecoding.decode($0, into: &index, greedy: false)
+    Array(self.data).withUnsafeBytes { data in
+      var index = RecordIndex()
+      precondition(RecordDecoding.decode(data, into: &index, greedy: false))
+      return index.entries(in: data)
     }
-    precondition(decoded)
-    return index
   }
 
   func value(at location: RecordLocation) -> [UInt8] {

@@ -56,6 +56,23 @@ package struct MetaInfo: Equatable, Sendable {
     self.flags = UInt64(littleEndian: memory.loadUnaligned(fromByteOffset: 104, as: UInt64.self))
   }
 
+  /// The fields that tell whether another process changed the data, read without the rest, so
+  /// that checking for changes allocates nothing.
+  package struct Summary {
+    package var crcDigest: UInt32
+    package var sequence: UInt32
+    package var actualSize: UInt32
+
+    package init(reading memory: UnsafeRawPointer) {
+      func word(_ offset: Int) -> UInt32 {
+        UInt32(littleEndian: memory.loadUnaligned(fromByteOffset: offset, as: UInt32.self))
+      }
+      self.crcDigest = word(0)
+      self.sequence = word(8)
+      self.actualSize = word(28)
+    }
+  }
+
   package func hasFlag(_ flag: UInt64) -> Bool {
     self.flags & flag != 0
   }

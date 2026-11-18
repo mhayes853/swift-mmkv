@@ -111,7 +111,7 @@ extension StoreInstance {
     }
     guard self.isMultiProcess, self.metaFile.isFileValid else { return }
     self.sharedProcessLock.withLock {
-      let metaInfo = MetaInfo(reading: self.metaFile.memory!)
+      let metaInfo = MetaInfo.Summary(reading: self.metaFile.memory!)
       if self.metaInfo.sequence != metaInfo.sequence {
         // Another process rewrote the file.
         self.clearMemoryCache()
