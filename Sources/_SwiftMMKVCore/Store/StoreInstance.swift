@@ -22,7 +22,7 @@ package final class StoreInstance: @unchecked Sendable {
   /// Where each key's latest record is in a plain-text store (`m_dic`).
   var dic = RecordIndex()
   /// Each key's entry in an encrypted store (`m_dicCrypt`).
-  var dicCrypt = [StoreKey: CryptEntry]()
+  var dicCrypt = CryptIndex()
   /// The cryptor of an encrypted store, whose state is the end of the data (`m_crypter`).
   var crypter: AESCryptor?
   /// The stream's state where the last appended record started, if its value is left in the file
@@ -378,7 +378,12 @@ extension StoreInstance {
       self.checkLoadData()
       self.filterExpiredKeysBeforeListing()
       if self.crypter != nil {
-        return self.dicCrypt.keys.map(\.string)
+        var keys = [String]()
+        keys.reserveCapacity(self.dicCrypt.count)
+        self.dicCrypt.forEachEntry { slot, _ in
+          keys.append(String(decoding: self.dicCrypt.key(at: slot), as: UTF8.self))
+        }
+        return keys
       }
       guard let base = self.dataBase else { return [] }
       var keys = [String]()
@@ -408,7 +413,7 @@ extension StoreInstance {
         if !self.enableKeyExpire {
           return self.crypter == nil
             ? self.dic.slot(of: key, base: self.dataBase) != nil
-            : self.dicCrypt[StoreKey(key)] != nil
+            : self.dicCrypt.contains(key)
         }
         return self.getDataWithoutMTimeForKey(key).count != 0
       }
@@ -457,7 +462,7 @@ extension StoreInstance {
         let removed = self.withKeyBytes(key) { key in
           self.crypter == nil
             ? self.dic.remove(key, base: self.dataBase) != nil
-            : self.dicCrypt.removeValue(forKey: StoreKey(key)) != nil
+            : self.dicCrypt.remove(key)
         }
         if removed {
           deleteCount += 1
@@ -477,12 +482,11 @@ extension StoreInstance {
     guard !key.isEmpty else { return false }
     let empty = UnsafeRawBufferPointer(start: nil, count: 0)
     if self.crypter != nil {
-      let storeKey = StoreKey(key)
-      guard self.dicCrypt[storeKey] != nil else { return false }
+      guard self.dicCrypt.contains(key) else { return false }
       self.hasFullWriteback = false
       let result = self.appendDataWithKey(empty, key: key, isDataHolder: false)
       if result != nil {
-        self.dicCrypt.removeValue(forKey: storeKey)
+        self.dicCrypt.remove(key)
       }
       return result != nil
     }
@@ -609,11 +613,19 @@ extension StoreInstance {
   /// rewrite every key and so cannot keep pointing into the file.
   func keysInRecordOrder() -> [StoreKey] {
     if self.crypter != nil {
-      return self.dicCrypt.sorted { $0.value.order < $1.value.order }.map(\.key)
+      var keys = [StoreKey]()
+      keys.reserveCapacity(self.dicCrypt.count)
+      for slot in self.dicCrypt.slotsInRecordOrder() {
+        keys.append(StoreKey(self.dicCrypt.key(at: slot)))
+      }
+      return keys
     }
     guard let base = self.dataBase else { return [] }
-    return self.dic.slotsInRecordOrder().map { slot in
-      StoreKey(RecordIndex.key(at: self.dic.location(at: slot), in: base))
+    var keys = [StoreKey]()
+    keys.reserveCapacity(self.dic.count)
+    for slot in self.dic.slotsInRecordOrder() {
+      keys.append(StoreKey(RecordIndex.key(at: self.dic.location(at: slot), in: base)))
     }
+    return keys
   }
 }

@@ -19,7 +19,7 @@ extension StoreInstance {
   /// The bytes of `key`'s value, including any expiry time, or no bytes (`getRawDataForKey`).
   func getRawDataForKey(_ key: UnsafeRawBufferPointer) -> RawValue {
     if self.crypter != nil {
-      guard let entry = self.dicCrypt[StoreKey(key)] else { return .empty }
+      guard let entry = self.dicCrypt.entry(of: key) else { return .empty }
       return self.value(of: entry)
     }
     guard let base = self.dataBase, let location = self.dic.location(of: key, base: base) else {
@@ -57,7 +57,7 @@ extension StoreInstance {
       return false
     }
     if self.crypter != nil {
-      guard self.setCryptDataForKey(data, StoreKey(key), isDataHolder: isDataHolder) else {
+      guard self.setCryptDataForKey(data, key, isDataHolder: isDataHolder) else {
         return false
       }
       self.hasFullWriteback = false

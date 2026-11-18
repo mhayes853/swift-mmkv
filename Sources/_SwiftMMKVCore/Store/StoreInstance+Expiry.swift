@@ -128,11 +128,10 @@ extension StoreInstance {
     if self.crypter != nil {
       return self.sharedProcessLock.withLock {
         let now = Self.currentTimeInSeconds()
-        var count = 0
-        for (key, entry) in self.dicCrypt {
+        return self.dicCrypt.removeAll { entry in
           guard entry.realValueSize >= fixed32Size else {
             Log.warning("key has invalid value size \(entry.realValueSize)")
-            continue
+            return false
           }
           let time = self.value(of: entry)
             .withBytes {
@@ -143,12 +142,8 @@ extension StoreInstance {
                 )
               )
             }
-          if time != 0 && time <= now {
-            self.dicCrypt.removeValue(forKey: key)
-            count += 1
-          }
+          return time != 0 && time <= now
         }
-        return count
       }
     }
     return self.sharedProcessLock.withLock {

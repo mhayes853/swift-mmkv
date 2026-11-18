@@ -6,36 +6,8 @@
 // in the file, and the index remembers the stream's state where their record starts so they can be
 // decrypted when read.
 
-/// An encrypted store's index entry (`KeyValueHolderCrypt`).
-enum CryptEntry {
-  /// A value of up to 256 bytes, decrypted. `order` is where its record was, which the C++ core
-  /// does not keep; the Swift core uses it to write these values back in a stable order.
-  case memory(value: [UInt8], order: UInt32)
-  /// A larger value, left in the file.
-  case offset(CryptRecord)
-
-  var realValueSize: Int {
-    switch self {
-    case .memory(let value, _): value.count
-    case .offset(let record): Int(record.valueSize)
-    }
-  }
-
-  var order: UInt32 {
-    switch self {
-    case .memory(_, let order): order
-    case .offset(let record): record.offset
-    }
-  }
-
-  /// Whether a value of `size` bytes stays in the file (`isValueStoredAsOffset`).
-  static func isValueStoredAsOffset(_ size: Int) -> Bool {
-    size > 256
-  }
-}
-
 /// A large encrypted value left in the file.
-struct CryptRecord {
+struct CryptRecord: Equatable {
   var offset: UInt32
   var keySize: UInt16
   var valueSize: UInt32
@@ -43,6 +15,20 @@ struct CryptRecord {
   var pbKeyValueSize: UInt8
   /// The stream's state where the record starts.
   var state: CipherState
+
+  init(
+    offset: UInt32,
+    keySize: UInt16,
+    valueSize: UInt32,
+    pbKeyValueSize: UInt8,
+    state: CipherState
+  ) {
+    self.offset = offset
+    self.keySize = keySize
+    self.valueSize = valueSize
+    self.pbKeyValueSize = pbKeyValueSize
+    self.state = state
+  }
 
   init(keySize: Int, valueSize: Int, offset: Int, state: CipherState) {
     self.keySize = UInt16(truncatingIfNeeded: keySize)
@@ -117,18 +103,21 @@ enum WriteBackEncryption {
 extension StoreInstance {
   // MARK: - Reading
 
-  /// The decrypted bytes of an entry (`KeyValueHolderCrypt::toMMBuffer`).
+  /// The decrypted bytes of an entry (`KeyValueHolderCrypt::toMMBuffer`). A value kept in memory
+  /// is read where the index keeps it, so it is valid until the index next changes.
   func value(of entry: CryptEntry) -> RawValue {
     switch entry {
     case .memory(let value, _):
-      return .owned(value)
+      return .mapped(value)
     case .offset(let record):
       guard let memory = self.file.memory, let crypter = self.crypter else { return .empty }
       var decrypter = crypter.cloned(at: record.state)
       let start = memory + fixed32Size + Int(record.offset)
       let position = Int(record.pbKeyValueSize) + Int(record.keySize)
-      var skipped = [UInt8](repeating: 0, count: position)
-      decrypter.decrypt(start, &skipped, count: position)
+      // The key and the lengths come first in the stream, and are decrypted only to reach the value.
+      withUnsafeTemporaryAllocation(byteCount: position, alignment: 1) { skipped in
+        decrypter.decrypt(start, skipped.baseAddress!, count: position)
+      }
       var value = [UInt8](repeating: 0, count: Int(record.valueSize))
       value.withUnsafeMutableBytes {
         decrypter.decrypt(start + position, $0.baseAddress!, count: Int(record.valueSize))
@@ -142,119 +131,122 @@ extension StoreInstance {
   /// Decrypts the data from `position` to `size`, advancing the store's cryptor to the end, and
   /// decodes its records into ``dicCrypt`` (`decodeOneMap(MMKVMapCrypt&)`).
   ///
+  /// The data is decrypted a window at a time as its records are read, as the C++ core's
+  /// `CodedInputDataCrypt` does, rather than all at once into memory of its own.
+  ///
   /// - Parameter greedy: Whether to keep what was decoded before an error.
   /// - Returns: Whether everything decoded.
   @discardableResult
   func decodeCrypt(from position: Int, size: Int, greedy: Bool) -> Bool {
-    guard let memory = self.file.memory, var crypter = self.crypter else { return false }
+    guard let memory = self.file.memory, let crypter = self.crypter else { return false }
     let ciphertext = UnsafeRawBufferPointer(start: memory + fixed32Size, count: size)
-    var plaintext = [UInt8](repeating: 0, count: size)
-    plaintext.withUnsafeMutableBytes { output in
-      crypter.decrypt(
-        ciphertext.baseAddress! + position,
-        output.baseAddress! + position,
-        count: size - position
-      )
-    }
-    let streamStart = crypter
-    self.crypter = crypter
-
-    var decoded = greedy ? self.dicCrypt : [StoreKey: CryptEntry]()
-    let succeeded = plaintext.withUnsafeBytes { plaintext in
-      var input = CodedInput(plaintext)
-      do throws(CodingError) {
-        if position != 0 {
-          try input.seek(position)
-        } else {
-          _ = try input.readInt32()
-        }
-        while !input.isAtEnd {
-          let offset = input.position
-          let keyRange = try input.readLengthDelimited()
-          guard keyRange.count <= keySizeLimit else { throw .entryTooLarge }
-          guard !keyRange.isEmpty else { continue }
-          let key = StoreKey(Array(input.bytes(in: keyRange)))
-          let valueRange = try input.readLengthDelimited()
-          let entry: CryptEntry
-          if CryptEntry.isValueStoredAsOffset(valueRange.count) {
-            entry = .offset(
-              CryptRecord(
-                keySize: keyRange.count,
-                valueSize: valueRange.count,
-                offset: offset,
-                state: streamStart.state(atOffset: offset, in: ciphertext)
-              )
-            )
-          } else {
-            entry = .memory(value: Array(input.bytes(in: valueRange)), order: UInt32(offset))
-          }
-          if entry.realValueSize > 0 {
-            decoded[key] = entry
-          } else {
-            decoded.removeValue(forKey: key)
-          }
-        }
-        return true
-      } catch {
-        Log.error("\(error)")
-        return false
+    var reader = DecryptingReader(ciphertext: ciphertext, position: position, decrypter: crypter)
+    let succeeded: Bool
+    if greedy {
+      succeeded = Self.decodeCryptRecords(&reader, into: &self.dicCrypt)
+    } else {
+      var decoded = CryptIndex()
+      succeeded = Self.decodeCryptRecords(&reader, into: &decoded)
+      if succeeded {
+        self.dicCrypt = decoded
       }
     }
-    if greedy || succeeded {
-      self.dicCrypt = decoded
-    }
+    self.dicCrypt.shrinkArenaToFit()
+    // The store goes on appending where the data ends, whether or not all of it decoded.
+    self.crypter = reader.decrypterAtEnd()
     return succeeded
+  }
+
+  private static func decodeCryptRecords(
+    _ reader: inout DecryptingReader,
+    into index: inout CryptIndex
+  ) -> Bool {
+    if index.isEmpty {
+      // No key or value takes more of the arena than of the data, so the arena never grows, and
+      // leaves behind the memory of every smaller one, while decoding.
+      index.reserveArena(reader.remaining)
+    }
+    do throws(CodingError) {
+      if reader.position == 0 {
+        _ = try reader.readUInt32()
+      }
+      while !reader.isAtEnd {
+        let offset = reader.position
+        let keyRange = try reader.readLengthDelimited()
+        guard keyRange.count <= keySizeLimit else { throw .entryTooLarge }
+        guard !keyRange.isEmpty else { continue }
+        // Decrypting the key decrypts enough after it for the value's length and a value kept in
+        // memory, so that the key stays in the window while they are read.
+        reader.decrypt(keyRange, reservingAfter: 10 + 256)
+        let valueRange = try reader.readLengthDelimited()
+        let key = reader.bytes(in: keyRange)
+        if CryptEntry.isValueStoredAsOffset(valueRange.count) {
+          let record = CryptRecord(
+            keySize: keyRange.count,
+            valueSize: valueRange.count,
+            offset: offset,
+            state: reader.state(atOffset: offset)
+          )
+          index.setRecord(record, for: key)
+        } else if valueRange.isEmpty {
+          index.remove(key)
+        } else {
+          reader.decrypt(valueRange, reservingAfter: 0)
+          index.setValue(reader.bytes(in: valueRange), order: UInt32(offset), for: key)
+        }
+      }
+      return true
+    } catch {
+      Log.error("\(error)")
+      return false
+    }
   }
 
   // MARK: - Writing
 
   /// Writes `data` as `key`'s value in an encrypted store (the encrypted branch of
   /// `setDataForKey`).
-  func setCryptDataForKey(_ data: UnsafeRawBufferPointer, _ key: StoreKey, isDataHolder: Bool)
-    -> Bool
-  {
-    // A small string or byte value is kept with its length, as it is stored.
-    var isDataHolder = isDataHolder
-    var holderData: [UInt8]?
+  func setCryptDataForKey(
+    _ data: UnsafeRawBufferPointer,
+    _ key: UnsafeRawBufferPointer,
+    isDataHolder: Bool
+  ) -> Bool {
     if isDataHolder {
+      // A small string or byte value is kept with its length, as it is stored.
       let sizeNeededForData = pbRawVarint32Size(UInt32(data.count)) + data.count
       if !CryptEntry.isValueStoredAsOffset(sizeNeededForData) {
-        var encoded = [UInt8](repeating: 0, count: sizeNeededForData)
-        encoded.withUnsafeMutableBytes { buffer in
+        return withUnsafeTemporaryAllocation(byteCount: sizeNeededForData, alignment: 1) { buffer in
           var output = CodedOutput(buffer)
           try? output.writeData(data)
+          return self.appendCryptData(UnsafeRawBufferPointer(buffer), key, isDataHolder: false)
         }
-        holderData = encoded
-        isDataHolder = false
       }
     }
-    func write(_ data: UnsafeRawBufferPointer) -> Bool {
-      // An encrypted store always appends, because rewriting in place would reuse the IV.
-      self.appendState = nil
-      let location = key.bytes.withUnsafeBytes { key in
-        self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder)
-      }
-      guard let location else { return false }
-      let entry: CryptEntry
-      if CryptEntry.isValueStoredAsOffset(Int(location.valueSize)), let state = self.appendState {
-        entry = .offset(
-          CryptRecord(
-            keySize: Int(location.keySize),
-            valueSize: Int(location.valueSize),
-            offset: Int(location.offset),
-            state: state
-          )
-        )
-      } else {
-        entry = .memory(value: Array(data), order: location.offset)
-      }
-      self.dicCrypt[key] = entry
-      return true
+    return self.appendCryptData(data, key, isDataHolder: isDataHolder)
+  }
+
+  private func appendCryptData(
+    _ data: UnsafeRawBufferPointer,
+    _ key: UnsafeRawBufferPointer,
+    isDataHolder: Bool
+  ) -> Bool {
+    // An encrypted store always appends, because rewriting in place would reuse the IV.
+    self.appendState = nil
+    guard let location = self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder) else {
+      return false
     }
-    if let holderData {
-      return holderData.withUnsafeBytes(write)
+    if CryptEntry.isValueStoredAsOffset(Int(location.valueSize)), let state = self.appendState {
+      let record = CryptRecord(
+        keySize: Int(location.keySize),
+        valueSize: Int(location.valueSize),
+        offset: Int(location.offset),
+        state: state
+      )
+      self.dicCrypt.setRecord(record, for: key)
+    } else {
+      self.dicCrypt.setValue(data, order: location.offset, for: key)
     }
-    return write(data)
+    return true
   }
 
   // MARK: - Full write-back
@@ -268,29 +260,46 @@ extension StoreInstance {
   func prepareEncodeCrypt() -> PreparedData {
     var totalSize = 0
     var smallestOffset = 5 + 1
-    var inMemory = [(key: StoreKey, value: [UInt8], order: UInt32)]()
-    for (key, entry) in self.dicCrypt {
+    var hasValuesInMemory = false
+    self.dicCrypt.forEachEntry { _, entry in
       switch entry {
       case .offset(let record):
         totalSize += record.size
         smallestOffset = min(smallestOffset, Int(record.offset))
-      case .memory(let value, let order):
-        inMemory.append((key, value, order))
+      case .memory:
+        hasValuesInMemory = true
       }
     }
     if smallestOffset > 5 {
       smallestOffset = itemSizeHolderSize
     }
     totalSize += smallestOffset
-    if inMemory.isEmpty {
+    guard hasValuesInMemory else {
       return PreparedData(encoded: nil, totalSize: totalSize)
     }
-    inMemory.sort { $0.order < $1.order }
-    let encoded = self.prepareEncode(inMemory.map { ($0.key, $0.value) })
-    return PreparedData(
-      encoded: encoded.encoded,
-      totalSize: totalSize + encoded.totalSize - itemSizeHolderSize
+    // Encoded as a container, as `prepareEncode(MMKVVector)` encodes them.
+    let order = self.dicCrypt.slotsInRecordOrder()
+    var containerSize = 0
+    for slot in order {
+      guard case .memory(let value, _) = self.dicCrypt.entry(at: slot) else { continue }
+      let keySize = self.dicCrypt.key(at: slot).count
+      containerSize += pbRawVarint32Size(UInt32(keySize)) + keySize
+      containerSize += pbRawVarint32Size(UInt32(value.count)) + value.count
+    }
+    var encoded = [UInt8](
+      repeating: 0,
+      count: pbRawVarint32Size(UInt32(containerSize)) + containerSize
     )
+    encoded.withUnsafeMutableBytes { buffer in
+      var output = CodedOutput(buffer)
+      try? output.writeUInt32(UInt32(containerSize))
+      for slot in order {
+        guard case .memory(let value, _) = self.dicCrypt.entry(at: slot) else { continue }
+        try? output.writeData(self.dicCrypt.key(at: slot))
+        try? output.writeData(value)
+      }
+    }
+    return PreparedData(encoded: encoded, totalSize: totalSize + containerSize)
   }
 
   /// Rewrites an encrypted store's data (the encrypted `memmoveDictionary`): the placeholder, then
@@ -301,11 +310,12 @@ extension StoreInstance {
     prepared: PreparedData
   ) {
     let base = self.file.memory! + fixed32Size
-    var records = self.dicCrypt.compactMap { key, entry -> (key: StoreKey, record: CryptRecord)? in
-      guard case .offset(let record) = entry else { return nil }
-      return (key, record)
+    var records = [(slot: Int, record: CryptRecord)]()
+    for slot in self.dicCrypt.slotsInRecordOrder() {
+      if case .offset(let record) = self.dicCrypt.entry(at: slot) {
+        records.append((slot, record))
+      }
     }
-    records.sort { $0.record.offset < $1.record.offset }
 
     var sizeHolderSize = itemSizeHolderSize
     var sizeHolder = Self.randomItemSizeHolder(size: sizeHolderSize)
@@ -340,12 +350,12 @@ extension StoreInstance {
       }
       if encrypter != nil {
         var offset = sizeHolderSize
-        for (key, record) in records {
+        for (slot, record) in records {
           var moved = record
           moved.offset = UInt32(offset)
           moved.state = encrypter!.state
           encrypter!.encrypt(base + offset, base + offset, count: record.size)
-          self.dicCrypt[key] = .offset(moved)
+          self.dicCrypt.setRecord(moved, at: slot)
           offset += record.size
         }
       }
@@ -402,19 +412,22 @@ extension StoreInstance {
           }
         } else {
           // Decrypting to plain text, which needs every pair to fit the plain index.
-          for (key, entry) in self.dicCrypt {
-            guard
-              Self.encodedEntrySize(
-                keyDataLength: key.bytes.count,
-                originKeyLength: key.bytes.count,
+          var fitsPlainIndex = true
+          self.dicCrypt.forEachEntry { slot, entry in
+            let keySize = self.dicCrypt.key(at: slot).count
+            fitsPlainIndex =
+              fitsPlainIndex
+              && Self.encodedEntrySize(
+                keyDataLength: keySize,
+                originKeyLength: keySize,
                 dataLength: entry.realValueSize,
                 isDataHolder: false,
                 needsPlainHolder: true
               ) != nil
-            else {
-              Log.error("[\(self.id)] reject decryption: key/value cannot fit a plain holder")
-              return false
-            }
+          }
+          guard fitsPlainIndex else {
+            Log.error("[\(self.id)] reject decryption: key/value cannot fit a plain holder")
+            return false
           }
           self.hasFullWriteback = false
           didRekey = self.fullWriteback(encryption: .plain)
@@ -438,5 +451,126 @@ extension StoreInstance {
       }
       return didRekey
     }
+  }
+}
+
+/// Decrypts an encrypted store's data a window at a time as its records are read, with the
+/// semantics of a ``CodedInput`` over the whole decrypted data.
+///
+/// The window holds at most 128 KiB, which is enough for the longest key and a value kept in
+/// memory. Ranges that are skipped, such as large values left in the file, are not decrypted:
+/// the stream's state after them is computed from the ciphertext.
+struct DecryptingReader: ~Copyable {
+  /// The data from its start.
+  let ciphertext: UnsafeRawBufferPointer
+  /// The cryptor at ``windowEnd``.
+  private var decrypter: AESCryptor
+  private let window: UnsafeMutableRawPointer
+  private let windowCapacity: Int
+  /// Where in the data the window starts and where its decrypted bytes end.
+  private var windowStart: Int
+  private var windowEnd: Int
+  private(set) var position: Int
+
+  private static let maximumWindow = 1 << 17
+
+  /// A reader from `position`, where `decrypter` is.
+  init(ciphertext: UnsafeRawBufferPointer, position: Int, decrypter: AESCryptor) {
+    self.ciphertext = ciphertext
+    self.decrypter = decrypter
+    self.windowCapacity = max(1, min(ciphertext.count - position, Self.maximumWindow))
+    self.window = .allocate(byteCount: self.windowCapacity, alignment: 1)
+    self.windowStart = position
+    self.windowEnd = position
+    self.position = position
+  }
+
+  deinit {
+    self.window.deallocate()
+  }
+
+  var isAtEnd: Bool {
+    self.position == self.ciphertext.count
+  }
+
+  var remaining: Int {
+    self.ciphertext.count - self.position
+  }
+
+  /// The stream's state after `offset` bytes.
+  func state(atOffset offset: Int) -> CipherState {
+    self.decrypter.state(atOffset: offset, in: self.ciphertext)
+  }
+
+  /// The cryptor at the end of the data.
+  consuming func decrypterAtEnd() -> AESCryptor {
+    let size = self.ciphertext.count
+    if self.windowEnd == size {
+      return self.decrypter
+    }
+    return self.decrypter.cloned(at: self.state(atOffset: size))
+  }
+
+  /// Reads a varint as ``CodedInput/readUInt32()`` does.
+  mutating func readUInt32() throws(CodingError) -> UInt32 {
+    // A varint takes at most ten bytes.
+    self.decrypt(from: self.position, to: self.position + 10)
+    var input = CodedInput(
+      base: self.window,
+      size: self.windowEnd - self.windowStart,
+      position: self.position - self.windowStart
+    )
+    defer { self.position = self.windowStart + input.position }
+    return try input.readUInt32()
+  }
+
+  /// Reads a length and skips that many bytes, as ``CodedInput/readLengthDelimited(exactly:)``
+  /// does, without decrypting them.
+  mutating func readLengthDelimited() throws(CodingError) -> Range<Int> {
+    let length = Int(try self.readUInt32())
+    guard length <= self.ciphertext.count - self.position else { throw .invalidLength }
+    let start = self.position
+    self.position += length
+    return start..<self.position
+  }
+
+  /// Decrypts `range` into the window, and up to `reservingAfter` bytes after it.
+  mutating func decrypt(_ range: Range<Int>, reservingAfter: Int) {
+    self.decrypt(from: range.lowerBound, to: range.upperBound + reservingAfter)
+  }
+
+  /// The decrypted bytes in `range`, which ``decrypt(_:reservingAfter:)`` put in the window.
+  func bytes(in range: Range<Int>) -> UnsafeRawBufferPointer {
+    precondition(range.lowerBound >= self.windowStart && range.upperBound <= self.windowEnd)
+    return UnsafeRawBufferPointer(
+      start: self.window + (range.lowerBound - self.windowStart),
+      count: range.count
+    )
+  }
+
+  /// Makes sure the window holds the decrypted bytes from `start` to `end`, or to the end of the
+  /// data.
+  private mutating func decrypt(from start: Int, to end: Int) {
+    let end = min(end, self.ciphertext.count)
+    guard end > self.windowEnd else { return }
+    if self.windowEnd < start {
+      // Skip what was not read, computing the state after it from the ciphertext.
+      self.decrypter = self.decrypter.cloned(at: self.state(atOffset: start))
+      self.windowStart = start
+      self.windowEnd = start
+    }
+    if end - self.windowStart > self.windowCapacity {
+      // Keep what is still to be read, and make room after it.
+      let kept = self.windowEnd - start
+      memmove(self.window, self.window + (start - self.windowStart), kept)
+      self.windowStart = start
+    }
+    let target = min(self.ciphertext.count, self.windowStart + self.windowCapacity)
+    self.decrypter.decrypt(
+      self.ciphertext.baseAddress! + self.windowEnd,
+      self.window + (self.windowEnd - self.windowStart),
+      count: target - self.windowEnd
+    )
+    self.windowEnd = target
   }
 }

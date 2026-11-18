@@ -99,6 +99,57 @@ import Testing
     try expectContents(of: back, match: model, "\(writer) reading what \(reader) appended")
   }
 
+  /// An encrypted store much larger than the window the Swift core decrypts at a time, with
+  /// values both kept in memory and left in the file, overwritten and removed, reads back in
+  /// both cores.
+  @Test(arguments: [MMKVConfiguration.Engine.cxx, .swift])
+  func `Each Core Reads A Large Encrypted Store The Other Wrote`(
+    writer: MMKVConfiguration.Engine
+  ) throws {
+    let encryption = MMKVConfiguration.Encryption.aes128(key: "large-store")
+    var generator = SplitMix64(seed: writer == .cxx ? 300 : 400)
+    let directory = temporaryRootDirectory()
+    let store = try makeStore(
+      id: "store",
+      rootDirectory: directory,
+      encryption: encryption,
+      engine: writer
+    )
+    var model = [String: TestValue]()
+    for index in 0..<6_000 {
+      let key = "key-\(Int.random(in: 0..<1_500, using: &generator))"
+      if index % 11 == 0 {
+        store.removeValue(forKey: key)
+        model[key] = nil
+        continue
+      }
+      // Values on both sides of the 256 bytes an encrypted store keeps in memory.
+      let length = [1, 40, 250, 300, 2_000][Int.random(in: 0..<5, using: &generator)]
+      let value = String(repeating: "\(index % 10)", count: length)
+      store.set(value, forKey: key)
+      model[key] = .string(value)
+    }
+    store.sync()
+    #expect(store.usedByteSize > 4 << 17, "the data should span several windows")
+
+    for reader in [MMKVConfiguration.Engine.cxx, .swift] {
+      let id = "copy-\(reader)"
+      for suffix in ["", ".crc"] {
+        try FileManager.default.copyItem(
+          atPath: "\(directory)/store\(suffix)",
+          toPath: "\(directory)/\(id)\(suffix)"
+        )
+      }
+      let copy = try makeStore(
+        id: id,
+        rootDirectory: directory,
+        encryption: encryption,
+        engine: reader
+      )
+      try expectContents(of: copy, match: model, "\(reader) reading a large store \(writer) wrote")
+    }
+  }
+
   /// Re-encrypting with one core, through every transition, leaves files the other core reads.
   @Test(arguments: [MMKVConfiguration.Engine.cxx, .swift])
   func `Each Core Reads What The Other Re-Encrypted`(writer: MMKVConfiguration.Engine) throws {

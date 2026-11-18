@@ -3,12 +3,32 @@ import CSwiftMMKVCrypto
 /// Where a CFB-128 stream is: the 16-byte feedback register and how far into the current block
 /// the stream has gone (MMKV's `AESCryptStatus`).
 package struct CipherState: Equatable, Sendable {
-  package var vector: [UInt8]
+  /// The register, kept inline so that copying a state allocates nothing.
+  var register: (UInt64, UInt64) = (0, 0)
   package var number: UInt32
 
   package init(vector: [UInt8], number: UInt32) {
-    self.vector = vector
     self.number = number
+    vector.prefix(16)
+      .withUnsafeBytes { source in
+        withUnsafeMutableBytes(of: &self.register) { $0.copyMemory(from: source) }
+      }
+  }
+
+  /// A state whose register is the 16 bytes at `vector`.
+  init(vector: UnsafeRawPointer, number: UInt32) {
+    self.number = number
+    withUnsafeMutableBytes(of: &self.register) {
+      $0.copyMemory(from: UnsafeRawBufferPointer(start: vector, count: 16))
+    }
+  }
+
+  package var vector: [UInt8] {
+    withUnsafeBytes(of: self.register) { Array($0) }
+  }
+
+  package static func == (lhs: CipherState, rhs: CipherState) -> Bool {
+    lhs.register == rhs.register && lhs.number == rhs.number
   }
 }
 
@@ -23,7 +43,11 @@ package struct AESCryptor: @unchecked Sendable {
   private let schedules: KeySchedules
   package private(set) var state: CipherState
   /// The IV the stream started from, at the start of the data.
-  package private(set) var streamIV: [UInt8]
+  package var streamIV: [UInt8] {
+    self.streamStart.vector
+  }
+  /// The state at the start of the data.
+  private var streamStart: CipherState
 
   /// A cryptor for `key`, starting a stream from `iv`, or from the key's first 16 bytes if `iv` is
   /// `nil` (`AESCrypt(key, keyLength, iv, ivLength, aes256)`).
@@ -36,7 +60,7 @@ package struct AESCryptor: @unchecked Sendable {
     self.schedules = KeySchedules(key: padded)
     let start = iv.map { Self.fit($0) } ?? Array(padded.prefix(Self.ivLength))
     self.state = CipherState(vector: start, number: 0)
-    self.streamIV = start
+    self.streamStart = self.state
   }
 
   private static func fit(_ iv: [UInt8]) -> [UInt8] {
@@ -54,7 +78,7 @@ package struct AESCryptor: @unchecked Sendable {
   package mutating func resetIV(_ iv: [UInt8]? = nil) {
     let start = iv.map { Self.fit($0) } ?? Array(self.key.prefix(Self.ivLength))
     self.state = CipherState(vector: start, number: 0)
-    self.streamIV = start
+    self.streamStart = self.state
   }
 
   /// A copy of this cryptor at `state` (`cloneWithStatus`).
@@ -70,16 +94,18 @@ package struct AESCryptor: @unchecked Sendable {
     count: Int
   ) {
     guard count > 0 else { return }
-    self.state.vector.withUnsafeMutableBufferPointer { vector in
+    var number = self.state.number
+    withUnsafeMutableBytes(of: &self.state.register) { register in
       swiftmmkv_aes_cfb128_encrypt(
         input.assumingMemoryBound(to: UInt8.self),
         output.assumingMemoryBound(to: UInt8.self),
         count,
         self.schedules.encrypt,
-        vector.baseAddress!,
-        &self.state.number
+        register.baseAddress!.assumingMemoryBound(to: UInt8.self),
+        &number
       )
     }
+    self.state.number = number
   }
 
   package mutating func decrypt(
@@ -88,16 +114,18 @@ package struct AESCryptor: @unchecked Sendable {
     count: Int
   ) {
     guard count > 0 else { return }
-    self.state.vector.withUnsafeMutableBufferPointer { vector in
+    var number = self.state.number
+    withUnsafeMutableBytes(of: &self.state.register) { register in
       swiftmmkv_aes_cfb128_decrypt(
         input.assumingMemoryBound(to: UInt8.self),
         output.assumingMemoryBound(to: UInt8.self),
         count,
         self.schedules.encrypt,
-        vector.baseAddress!,
-        &self.state.number
+        register.baseAddress!.assumingMemoryBound(to: UInt8.self),
+        &number
       )
     }
+    self.state.number = number
   }
 
   /// The state of the stream after `offset` bytes, computed from the stream's ciphertext.
@@ -111,19 +139,29 @@ package struct AESCryptor: @unchecked Sendable {
   package func state(atOffset offset: Int, in ciphertext: UnsafeRawBufferPointer) -> CipherState {
     let remainder = offset % Self.ivLength
     let blockStart = offset - remainder
-    let previous =
+    var previous =
       blockStart == 0
-      ? self.streamIV
-      : Array(ciphertext[(blockStart - Self.ivLength)..<blockStart])
+      ? self.streamStart
+      : CipherState(vector: ciphertext.baseAddress! + blockStart - Self.ivLength, number: 0)
     if remainder == 0 {
-      return CipherState(vector: previous, number: 0)
+      return previous
     }
-    var keystream = [UInt8](repeating: 0, count: Self.ivLength)
-    previous.withUnsafeBufferPointer { previous in
-      swiftmmkv_aes_encrypt(previous.baseAddress!, &keystream, self.schedules.encrypt)
+    var state = previous
+    state.number = UInt32(remainder)
+    withUnsafeMutableBytes(of: &state.register) { register in
+      let output = register.baseAddress!.assumingMemoryBound(to: UInt8.self)
+      // The block's keystream, of which the bytes already processed are replaced by ciphertext.
+      withUnsafeBytes(of: &previous.register) { input in
+        swiftmmkv_aes_encrypt(
+          input.baseAddress!.assumingMemoryBound(to: UInt8.self),
+          output,
+          self.schedules.encrypt
+        )
+      }
+      register.baseAddress!
+        .copyMemory(from: ciphertext.baseAddress! + blockStart, byteCount: remainder)
     }
-    let vector = Array(ciphertext[blockStart..<offset]) + keystream[remainder...]
-    return CipherState(vector: vector, number: UInt32(remainder))
+    return state
   }
 
   /// A random IV (`fillRandomIV`).
