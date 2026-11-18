@@ -12,6 +12,9 @@ extension MMKVStore {
   ///
   /// The default is only ever read. It is not written to the store, and storing a value equal
   /// to the default stores it like any other.
+  ///
+  /// Give a defaulted key a different name from any plain key over the same value type.
+  /// `store.contains(.volume)` is ambiguous when both `Key.volume` and `DefaultedKey.volume` exist.
   public struct DefaultedKey<Value: MMKVValue & Sendable>: Sendable {
     /// The key the value is stored under.
     public let key: Key<Value>

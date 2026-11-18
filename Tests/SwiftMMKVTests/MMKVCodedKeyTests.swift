@@ -18,6 +18,17 @@ extension MMKVStore.CodedKey where Value == [Int] {
   )
 }
 
+extension MMKVStore.DefaultedCodedKey where Value == Int {
+  fileprivate static let lives = Self(
+    "lives",
+    default: 3,
+    encoder: TextCoder.shared,
+    decoder: TextCoder.shared
+  )
+
+  fileprivate static let countOrZero = Self(.count, default: 0)
+}
+
 @Suite struct MMKVStoreCodedKeyTests {
   @Test func `Is Equal To A Key With The Same Name And Coders`() {
     let other = TextCoder()
@@ -113,5 +124,57 @@ extension MMKVStore.CodedKey where Value == [Int] {
 
     try store.set(3, for: .count)
     #expect(try await iterator.next() == nil)
+  }
+}
+
+@Suite struct MMKVStoreDefaultedCodedKeyTests {
+  @Test func `Is Made From A Name Or A Key`() {
+    #expect(MMKVStore.DefaultedCodedKey.countOrZero.key == .count)
+    #expect(MMKVStore.DefaultedCodedKey.countOrZero.defaultValue == 0)
+    #expect(MMKVStore.DefaultedCodedKey.lives.key.name == "lives")
+    #expect(
+      MMKVStore.DefaultedCodedKey.countOrZero == MMKVStore.DefaultedCodedKey(.count, default: 0)
+    )
+    #expect(
+      MMKVStore.DefaultedCodedKey.countOrZero != MMKVStore.DefaultedCodedKey(.count, default: 1)
+    )
+  }
+
+  @Test func `Reads The Default Until A Value Is Stored`() throws {
+    let store = try makeStore()
+
+    #expect(try store.value(for: .lives) == 3)
+    #expect(!store.contains(.lives))
+    #expect(store.keys.isEmpty)
+
+    #expect(try store.set(5, for: .lives))
+
+    #expect(try store.value(for: .lives) == 5)
+    #expect(store.contains(.lives))
+    #expect(store["lives", as: String.self] == "5")
+  }
+
+  @Test func `Stores A Value Equal To The Default`() throws {
+    let store = try makeStore()
+
+    try store.set(3, for: .lives)
+
+    #expect(store.contains(.lives))
+  }
+
+  @Test func `Reads The Default Again Once Removed`() throws {
+    let store = try makeStore()
+    try store.set(5, for: .lives)
+
+    #expect(store.removeValue(for: .lives))
+
+    #expect(try store.value(for: .lives) == 3)
+  }
+
+  @Test func `Throws Rather Than Reading The Default For A Value That Does Not Decode`() throws {
+    let store = try makeStore()
+    store.set("not a number", forKey: "lives")
+
+    #expect(throws: TextCoder.Failure.self) { try store.value(for: .lives) }
   }
 }
