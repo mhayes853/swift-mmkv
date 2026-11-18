@@ -108,3 +108,26 @@ final class ValueRecorder<Value: Sendable>: Sendable {
     self.values.withLock { self.recorded.append(value) }
   }
 }
+
+/// Encodes a value as its description and decodes it back, to stand in for a coder that is a
+/// class, as coded keys need, and that this package knows nothing about.
+final class TextCoder: MMKVTopLevelEncoder, MMKVTopLevelDecoder, Sendable {
+  struct Failure: Error {}
+
+  static let shared = TextCoder()
+
+  func encode<T: Encodable>(_ value: T) throws -> String {
+    guard let value = value as? any LosslessStringConvertible else { throw Failure() }
+    return value.description
+  }
+
+  func decode<T: Decodable>(_ type: T.Type, from input: String) throws -> T {
+    guard
+      let type = type as? any LosslessStringConvertible.Type,
+      let value = type.init(input) as? T
+    else {
+      throw Failure()
+    }
+    return value
+  }
+}
