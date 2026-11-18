@@ -21,6 +21,13 @@ let package = Package(
       ],
       path: "Benchmarks/MMKVBenchmarks",
       plugins: [.plugin(name: "BenchmarkPlugin", package: "package-benchmark")]
+    ),
+    // Measures memory rather than time, without package-benchmark, so that it also builds for
+    // Android.
+    .executableTarget(
+      name: "MemoryReport",
+      dependencies: [.product(name: "SwiftMMKV", package: "swift-mmkv")],
+      path: "MemoryReport"
     )
   ],
   swiftLanguageModes: [.v6]
