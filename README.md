@@ -132,28 +132,30 @@ what the coders throw, so a coded key is used through methods rather than a subs
 
 ```swift
 extension MMKVStore.CodedKey where Value == Settings {
-  static let settings = Self("settings", encoder: JSONEncoder(), decoder: JSONDecoder())
+  static let settings = Self("settings")
+}
+extension MMKVStore.CodedKey where Value == Feed {
+  static let feed = Self("feed", encoder: PropertyListEncoder(), decoder: PropertyListDecoder())
 }
 
 try store.set(Settings(fontSize: 16), for: .settings)
 let settings = try store.value(for: .settings)  // Settings?
 ```
 
+With the `Foundation` trait a coded key made from a name alone stores JSON, as `encode` and
+`decode` do. Such keys share one `JSONEncoder` and one `JSONDecoder` with default settings; pass
+your own coders for anything else.
+
 A `DefaultedCodedKey` adds a default, which is read only when the key is missing. A stored
 value that does not decode is still thrown.
 
 ```swift
 extension MMKVStore.DefaultedCodedKey where Value == Settings {
-  static let settings = Self(
-    "settings",
-    default: Settings(),
-    encoder: JSONEncoder(),
-    decoder: JSONDecoder()
-  )
+  static let settings = Self("settings", default: Settings())
 }
 ```
 
-Two things to know about coded keys:
+Two things to know about coded keys that are given their coders:
 
 - The coders must be classes, as `JSONEncoder`, `JSONDecoder` and the property list coders are.
 - Two coded keys are equal when they have the same name and the same coder objects. A key built
