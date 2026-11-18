@@ -12,11 +12,8 @@
 /// let store = try MMKVStore(configuration)
 /// ```
 public struct MMKVConfiguration: Sendable, Hashable {
-  /// The identifier react-native-mmkv, and MMKV itself, use for the default store.
-  public static let defaultID = "mmkv.default"
-
   /// The store's identifier, which names its files inside ``directory``.
-  public var id: String
+  public var id: MMKVStore.ID
 
   /// The directory holding the store's files. It is created if it does not exist, unless the
   /// store is read-only.
@@ -58,7 +55,7 @@ public struct MMKVConfiguration: Sendable, Hashable {
   ///   - compareBeforeSet: Whether a write of an identical value is skipped.
   ///   - itemSizeLimit: The largest key-value pair the store accepts, in bytes.
   public init(
-    id: String = MMKVConfiguration.defaultID,
+    id: MMKVStore.ID = .default,
     directory: MMKVDirectory,
     mode: Mode,
     isReadOnly: Bool = false,

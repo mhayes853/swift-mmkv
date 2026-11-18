@@ -78,7 +78,7 @@ public final class NativeMMKVModule: Module {
 }
 
 struct StoreOptions: Record {
-  @Field var id: String = MMKVConfiguration.defaultID
+  @Field var id: String = MMKVStore.ID.default.rawValue
   @Field var encryptionKey: String?
 }
 
@@ -110,7 +110,7 @@ private final class Stores: @unchecked Sendable {
       // multi-process mode on both sides.
       let store = try MMKVStore(
         MMKVConfiguration(
-          id: options.id,
+          id: MMKVStore.ID(rawValue: options.id),
           directory: .reactNative(),
           mode: .multiProcess,
           encryption: options.encryptionKey.map { .aes128(key: $0) }

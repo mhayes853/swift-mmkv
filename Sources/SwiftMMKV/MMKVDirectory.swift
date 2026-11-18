@@ -40,7 +40,7 @@ extension MMKVDirectory {
   ///
   /// A store counts as present when both of its files exist, which they do once the store has
   /// been opened. This does not open the store or create anything.
-  public func containsStore(id: String = MMKVConfiguration.defaultID) -> Bool {
+  public func containsStore(id: MMKVStore.ID = .default) -> Bool {
     self.storage.contains(id: id)
   }
 
@@ -57,7 +57,7 @@ extension MMKVDirectory {
   /// - Returns: Whether the store had files to delete.
   /// - Throws: ``MMKVError/storeIsOpen(id:directory:)`` if the store is open in this process.
   @discardableResult
-  public func removeStore(id: String = MMKVConfiguration.defaultID) throws(MMKVError) -> Bool {
+  public func removeStore(id: MMKVStore.ID = .default) throws(MMKVError) -> Bool {
     try self.storage.remove(id: id)
   }
 }
@@ -72,7 +72,7 @@ extension MMKVDirectory {
     /// A store's files are named after its identifier. An identifier that cannot be a file
     /// name, because it contains one of `\ / : * ? " < > |`, is replaced by a hash of itself,
     /// which cannot be turned back into the identifier.
-    public let id: String?
+    public let id: MMKVStore.ID?
 
     /// The path of the store's data file relative to the directory.
     public let relativePath: String
@@ -84,7 +84,7 @@ extension MMKVDirectory {
 
     /// Whether this is the store with the given identifier. This can be answered for a store
     /// whose ``id`` is `nil` too, because the identifier's hash can be compared.
-    public func isStore(id: String) -> Bool {
+    public func isStore(id: MMKVStore.ID) -> Bool {
       MMKVStorage.relativePath(forID: id) == self.relativePath
     }
   }
@@ -129,7 +129,7 @@ extension MMKVDirectory {
   @discardableResult
   public func removeAllStores() throws(MMKVError) -> Int {
     var removedCount = 0
-    var openIDs = [String]()
+    var openIDs = [MMKVStore.ID]()
     for entry in try self.stores {
       do {
         if try self.removeStore(entry) {

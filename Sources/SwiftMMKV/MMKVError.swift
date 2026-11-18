@@ -2,7 +2,7 @@
 public enum MMKVError: Error, Sendable, Hashable {
   /// The store could not be opened, for example because its identifier or its directory's path
   /// is empty.
-  case openFailed(id: String, directory: MMKVDirectory)
+  case openFailed(id: MMKVStore.ID, directory: MMKVDirectory)
 
   /// The encryption key is empty or longer than its cipher allows.
   case invalidEncryptionKey
@@ -18,16 +18,16 @@ public enum MMKVError: Error, Sendable, Hashable {
   case writeFailed(key: String)
 
   /// The store is open in this process, so its files cannot be removed.
-  case storeIsOpen(id: String, directory: MMKVDirectory)
+  case storeIsOpen(id: MMKVStore.ID, directory: MMKVDirectory)
 
   /// Some stores are open in this process, so their files were not removed along with the rest
   /// of their directory's stores.
-  case storesAreOpen(ids: [String], directory: MMKVDirectory)
+  case storesAreOpen(ids: [MMKVStore.ID], directory: MMKVDirectory)
 
   /// The directory exists but its contents cannot be listed.
   case directoryUnreadable(MMKVDirectory)
 
   /// The store is suspended, so it turned the operation away rather than take its file lock.
   /// The operation can be tried again once the store is resumed.
-  case storeIsSuspended(id: String)
+  case storeIsSuspended(id: MMKVStore.ID)
 }

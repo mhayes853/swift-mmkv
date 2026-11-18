@@ -14,13 +14,13 @@ final class MMKVStoreState: Sendable {
     var deferralDepth = 0
   }
 
-  let id: String
+  let id: MMKVStore.ID
   /// Turns operations away while the store is suspended. A single-process store takes no file
   /// lock, so it has nothing to suspend.
   let suspensionGate: SuspensionGate?
   private let registrations = Lock(Registrations())
 
-  private init(id: String, isMultiProcess: Bool) {
+  private init(id: MMKVStore.ID, isMultiProcess: Bool) {
     self.id = id
     self.suspensionGate = isMultiProcess ? SuspensionGate() : nil
   }
@@ -87,7 +87,7 @@ extension MMKVStoreState {
   /// The first open of an instance decides its mode, as it does in the core.
   static func shared(
     for handle: OpaquePointer,
-    id: String,
+    id: MMKVStore.ID,
     isMultiProcess: Bool
   ) -> MMKVStoreState {
     Self.installContentChangedCallback
@@ -112,7 +112,7 @@ extension MMKVStoreState {
         as: UTF8.self
       )
       let states = MMKVStoreState.all.withLock { states in
-        states.values.filter { $0.id == id }
+        states.values.filter { $0.id.rawValue == id }
       }
       for state in states {
         state.markExternalChange()

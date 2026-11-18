@@ -133,6 +133,22 @@ directory.containsStore(id: "session")  // false until the store is first opened
 try directory.removeStore(id: "session")
 ```
 
+Stores are named by `MMKVStore.ID`, which a string literal converts to. Extend it to keep your
+app's store names in one place:
+
+```swift
+extension MMKVStore.ID {
+  static let session: Self = "session"
+  static func user(_ userID: String) -> Self { "user.\(userID)" }
+}
+
+try directory.removeStore(id: .user("42"))
+```
+
+`MMKVStore.ID.default` is `mmkv.default`, the store react-native-mmkv opens when it is given no
+identifier. An identifier that is only known at runtime is made with
+`MMKVStore.ID(rawValue:)`.
+
 `stores` lists what the directory holds, and `removeAllStores()` deletes all of it:
 
 ```swift

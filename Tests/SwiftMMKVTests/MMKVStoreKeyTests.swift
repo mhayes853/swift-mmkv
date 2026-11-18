@@ -70,7 +70,7 @@ import Testing
   @Test func `Reports The Size Of Its File And Of The Data In It`() throws {
     let rootDirectory = temporaryRootDirectory()
     let store = try makeStore(rootDirectory: rootDirectory)
-    let path = "\(rootDirectory)/\(MMKVConfiguration.defaultID)"
+    let path = "\(rootDirectory)/\(MMKVStore.ID.default)"
     #expect(store.byteSize == (try fileSize(atPath: path)))
     #expect(store.byteSize > 0)
     let emptySize = store.byteSize
@@ -92,7 +92,7 @@ import Testing
   @Test func `Trimming After A Filtered Removal Shrinks The File`() throws {
     let rootDirectory = temporaryRootDirectory()
     let store = try makeStore(rootDirectory: rootDirectory)
-    let path = "\(rootDirectory)/\(MMKVConfiguration.defaultID)"
+    let path = "\(rootDirectory)/\(MMKVStore.ID.default)"
     for index in 0..<64 {
       store.set(String(repeating: "x", count: 16_384), forKey: "blob\(index)")
     }

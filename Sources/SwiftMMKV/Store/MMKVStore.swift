@@ -42,7 +42,7 @@ public final class MMKVStore: Sendable {
   }
 
   /// The store's identifier.
-  public var id: String {
+  public var id: MMKVStore.ID {
     self.core.state.id
   }
 

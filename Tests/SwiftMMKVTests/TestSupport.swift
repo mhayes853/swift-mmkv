@@ -14,7 +14,7 @@ func temporaryRootDirectory(function: String = #function) -> String {
 }
 
 func makeStore(
-  id: String = MMKVConfiguration.defaultID,
+  id: MMKVStore.ID = .default,
   rootDirectory: String = temporaryRootDirectory(),
   mode: MMKVConfiguration.Mode = .singleProcess,
   isReadOnly: Bool = false,
@@ -41,16 +41,26 @@ func makeLinkedStores(
   mode: MMKVConfiguration.Mode
 ) throws -> (first: MMKVStore, second: MMKVStore) {
   let rootDirectory = temporaryRootDirectory()
-  let first = try makeStore(id: "real", rootDirectory: rootDirectory, mode: mode)
+  // The core reports an outside change by identifier alone, so identifiers shared between
+  // tests running in parallel would report each other's changes.
+  let unique = UUID().uuidString
+  let (real, link) = ("real-\(unique)", "link-\(unique)")
+  let first = try makeStore(
+    id: MMKVStore.ID(rawValue: real),
+    rootDirectory: rootDirectory,
+    mode: mode
+  )
   // The files are created when the store is first used.
   _ = first.count
   for suffix in ["", ".crc"] {
     try FileManager.default.linkItem(
-      atPath: "\(rootDirectory)/real\(suffix)",
-      toPath: "\(rootDirectory)/link\(suffix)"
+      atPath: "\(rootDirectory)/\(real)\(suffix)",
+      toPath: "\(rootDirectory)/\(link)\(suffix)"
     )
   }
-  return (first, try makeStore(id: "link", rootDirectory: rootDirectory, mode: mode))
+  return (
+    first, try makeStore(id: MMKVStore.ID(rawValue: link), rootDirectory: rootDirectory, mode: mode)
+  )
 }
 
 /// Creates the two files of a store at `path` without opening that store in this process, by
