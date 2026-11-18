@@ -65,10 +65,13 @@ let coreTarget: Target = .target(
 )
 
 // AES, CFB-128, and MD5 for the Swift core that is replacing the C++ one, ported to C from the
-// OpenSSL-derived code MMKV ships. Its symbols are prefixed in source. See its README.md.
+// OpenSSL-derived code MMKV ships, and MMKV's CRC-32. Its symbols are prefixed in source. See its
+// README.md.
 let cryptoTarget: Target = .target(
   name: "CSwiftMMKVCrypto",
-  exclude: ["LICENSE.TXT", "README.md"]
+  exclude: ["LICENSE.TXT", "README.md"],
+  // For `crc32`, as the C++ core uses it.
+  linkerSettings: [.linkedLibrary("z")]
 )
 
 // The Swift implementation of MMKV's core that is replacing CSwiftMMKVCore. See

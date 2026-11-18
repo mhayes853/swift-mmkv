@@ -11,6 +11,9 @@ struct PreparedData {
   var encoded: [UInt8]?
   /// The size of the rewritten data, including the placeholder.
   var totalSize: Int
+  /// An encrypted store's slots in record order, sorted once for both preparing and rewriting,
+  /// and the index's version when they were.
+  var cryptOrder: (slots: LazyMapSequence<[UInt64], Int>, version: Int)? = nil
 }
 
 extension StoreInstance {

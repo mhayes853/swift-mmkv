@@ -296,6 +296,10 @@ struct CryptIndex: ~Copyable {
     }
   }
 
+  /// Changes whenever a key is added or removed or the slots move, so that slot numbers taken
+  /// before can be checked.
+  var version: Int { self.table.version }
+
   /// The occupied slots, ordered by where their records are or were.
   func slotsInRecordOrder() -> LazyMapSequence<[UInt64], Int> {
     self.table.slotIndices { $0.position }

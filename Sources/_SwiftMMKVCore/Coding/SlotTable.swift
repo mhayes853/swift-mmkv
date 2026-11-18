@@ -235,12 +235,75 @@ struct SlotTable<Slot: HashTableSlot>: ~Copyable {
     // Sorting plain integers that pack each slot's place in the order above its index is much
     // faster than sorting with a comparison that reads the table, and the indices are read back
     // out of them rather than copied into an array of their own.
-    var packed = [UInt64]()
-    packed.reserveCapacity(self.count)
-    for index in 0..<self.capacity where self.slots[index].hash != 0 {
-      packed.append(UInt64(order(self.slots[index])) << 32 | UInt64(index))
+    let slots = self.slots
+    let capacity = self.capacity
+    var packed = [UInt64](unsafeUninitializedCapacity: self.count) { buffer, initialized in
+      var packedCount = 0
+      for index in 0..<capacity where slots[index].hash != 0 {
+        buffer[packedCount] = UInt64(order(slots[index])) << 32 | UInt64(index)
+        packedCount += 1
+      }
+      initialized = packedCount
     }
-    packed.sort()
+    // The indices go in ascending, so a stable sort by the order alone sorts them by both.
+    packed.withUnsafeMutableBufferPointer { sortByHighWord($0) }
     return packed.lazy.map { Int(truncatingIfNeeded: $0 & 0xffff_ffff) }
+  }
+}
+
+/// Sorts `values`, whose low 32 bits are in ascending order, into ascending order.
+///
+/// Only the high 32 bits need sorting, as long as values whose high bits are equal stay in the
+/// order they were in. This is a least-significant-digit radix sort that does so a byte at a time:
+/// each pass moves the values into 256 buckets by one byte, keeping their order within a bucket,
+/// so after the pass for the top byte they are in order. One read of the values counts all four
+/// bytes, and a pass is skipped when every value has the same byte there, as the top byte of a
+/// file's offsets usually is. It does a fixed amount of work for each value, where a comparison
+/// sort's grows with the count.
+func sortByHighWord(_ values: UnsafeMutableBufferPointer<UInt64>) {
+  let count = values.count
+  // Below this, the setup costs more than comparing does.
+  guard count > 128 else {
+    var values = values
+    values.sort()
+    return
+  }
+  withUnsafeTemporaryAllocation(of: Int.self, capacity: 4 * 256) { counts in
+    counts.initialize(repeating: 0)
+    for value in values {
+      let high = Int(truncatingIfNeeded: value >> 32)
+      counts[high & 0xff] += 1
+      counts[256 + ((high >> 8) & 0xff)] += 1
+      counts[512 + ((high >> 16) & 0xff)] += 1
+      counts[768 + ((high >> 24) & 0xff)] += 1
+    }
+    withUnsafeTemporaryAllocation(of: UInt64.self, capacity: count) { scratch in
+      var source = values
+      var destination = scratch
+      for digit in 0..<4 {
+        let shift = UInt64(32 + digit * 8)
+        let base = digit * 256
+        // Every value is in one bucket, so this pass would leave them where they are.
+        if counts[base + Int(truncatingIfNeeded: (source[0] >> shift) & 0xff)] == count {
+          continue
+        }
+        // Each bucket's count becomes where its first value goes.
+        var start = 0
+        for bucket in base..<(base + 256) {
+          let bucketCount = counts[bucket]
+          counts[bucket] = start
+          start += bucketCount
+        }
+        for value in source {
+          let bucket = base + Int(truncatingIfNeeded: (value >> shift) & 0xff)
+          destination[counts[bucket]] = value
+          counts[bucket] += 1
+        }
+        swap(&source, &destination)
+      }
+      if source.baseAddress != values.baseAddress {
+        _ = values.update(fromContentsOf: source)
+      }
+    }
   }
 }

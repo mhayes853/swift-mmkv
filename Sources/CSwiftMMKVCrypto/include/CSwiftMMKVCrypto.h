@@ -1,4 +1,5 @@
-// The cryptography MMKV's core needs: AES-128 and AES-256 in CFB-128 mode, and MD5.
+// The cryptography MMKV's core needs: AES-128 and AES-256 in CFB-128 mode, and MD5. Also the
+// CRC-32 it checksums its data with.
 //
 // This is the OpenSSL-derived code MMKV ships, ported out of its C++ namespace into C. Every
 // symbol starts with `swiftmmkv_`, so it cannot collide with the copy of MMKV that
@@ -87,6 +88,18 @@ void swiftmmkv_secure_wipe(void *_Nullable pointer, size_t length);
 /// Writes the 16-byte MD5 digest of `length` bytes at `data` to `digest`.
 void swiftmmkv_md5_digest(
   const uint8_t *_Nullable data, size_t length, uint8_t *_Nonnull digest);
+
+/// Continues the CRC-32 `crc` over `length` bytes at `data`, as zlib's `crc32` does. Start from 0.
+///
+/// This uses the ARMv8 CRC32 instructions on 64-bit ARM when the CPU has them, and zlib's `crc32`
+/// everywhere else.
+uint32_t swiftmmkv_crc32(uint32_t crc, const uint8_t *_Nullable data, size_t length);
+
+/// Whether ``swiftmmkv_crc32`` uses the ARMv8 CRC32 instructions rather than zlib.
+bool swiftmmkv_crc32_uses_hardware(void);
+
+/// ``swiftmmkv_crc32`` computed with zlib only, so tests can compare it with the instructions.
+uint32_t swiftmmkv_crc32_zlib(uint32_t crc, const uint8_t *_Nullable data, size_t length);
 
 #ifdef __cplusplus
 }

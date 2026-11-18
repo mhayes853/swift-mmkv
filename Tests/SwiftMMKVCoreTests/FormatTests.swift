@@ -1,3 +1,4 @@
+import CSwiftMMKVCrypto
 import Foundation
 @_spi(Engines) import SwiftMMKV
 import Testing
@@ -123,6 +124,29 @@ import Testing
       let first = bytes[..<cut].withUnsafeBytes { CRC32.checksum(0, $0) }
       let continued = bytes[cut...].withUnsafeBytes { CRC32.checksum(first, $0) }
       #expect(continued == whole, "cut at \(cut)")
+    }
+  }
+
+  // On 64-bit ARM the checksum uses the CRC32 instructions, which must agree with zlib, used
+  // everywhere else, at every alignment and for every length of tail.
+  @Test func `The ARMv8 Instructions Agree With Zlib`() {
+    #if arch(arm64)
+      #expect(swiftmmkv_crc32_uses_hardware())
+    #endif
+    var generator = SplitMix64(seed: 32)
+    let bytes = (0..<4_096).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
+    bytes.withUnsafeBufferPointer { buffer in
+      let base = buffer.baseAddress!
+      for start in 0..<16 {
+        for length in [0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 63, 64, 65, 127, 1_000, 4_000] {
+          let crc = UInt32(truncatingIfNeeded: generator.next())
+          #expect(
+            swiftmmkv_crc32(crc, base + start, length)
+              == swiftmmkv_crc32_zlib(crc, base + start, length),
+            "start \(start), length \(length)"
+          )
+        }
+      }
     }
   }
 }

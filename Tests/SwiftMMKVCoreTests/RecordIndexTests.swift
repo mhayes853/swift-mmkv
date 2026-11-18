@@ -92,6 +92,20 @@ import Testing
     }
   }
 
+  @Test(arguments: [0, 1, 2, 128, 129, 1_000, 30_000], [UInt64(1) << 16, 1 << 24, 1 << 32, 7])
+  func `The Radix Sort Orders As A Comparison Sort Does`(count: Int, orderLimit: UInt64) {
+    // Order values below each limit leave the top bytes the same in every value, so that passes
+    // are skipped, or none, or have many values that tie and must keep their indices in order.
+    var generator = SeededGenerator(seed: UInt64(count) ^ orderLimit)
+    var values = [UInt64]()
+    for index in 0..<count {
+      values.append(UInt64.random(in: 0..<orderLimit, using: &generator) << 32 | UInt64(index * 3))
+    }
+    var sorted = values
+    sorted.withUnsafeMutableBufferPointer { sortByHighWord($0) }
+    #expect(sorted == values.sorted())
+  }
+
   @Test func `Removing Everything Empties The Index`() {
     let records = Records(count: 100)
     records.data.withUnsafeBytes { data in

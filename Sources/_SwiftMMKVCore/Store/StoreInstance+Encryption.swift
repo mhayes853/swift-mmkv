@@ -274,11 +274,12 @@ extension StoreInstance {
       smallestOffset = itemSizeHolderSize
     }
     totalSize += smallestOffset
+    let order = self.dicCrypt.slotsInRecordOrder()
+    let cryptOrder = (slots: order, version: self.dicCrypt.version)
     guard hasValuesInMemory else {
-      return PreparedData(encoded: nil, totalSize: totalSize)
+      return PreparedData(encoded: nil, totalSize: totalSize, cryptOrder: cryptOrder)
     }
     // Encoded as a container, as `prepareEncode(MMKVVector)` encodes them.
-    let order = self.dicCrypt.slotsInRecordOrder()
     var containerSize = 0
     for slot in order {
       guard case .memory(let value, _) = self.dicCrypt.entry(at: slot) else { continue }
@@ -299,7 +300,11 @@ extension StoreInstance {
         try? output.writeData(value)
       }
     }
-    return PreparedData(encoded: encoded, totalSize: totalSize + containerSize)
+    return PreparedData(
+      encoded: encoded,
+      totalSize: totalSize + containerSize,
+      cryptOrder: cryptOrder
+    )
   }
 
   /// Rewrites an encrypted store's data (the encrypted `memmoveDictionary`): the placeholder, then
@@ -311,7 +316,10 @@ extension StoreInstance {
   ) {
     let base = self.file.memory! + fixed32Size
     var records = [(slot: Int, record: CryptRecord)]()
-    for slot in self.dicCrypt.slotsInRecordOrder() {
+    let order =
+      prepared.cryptOrder.flatMap { $0.version == self.dicCrypt.version ? $0.slots : nil }
+      ?? self.dicCrypt.slotsInRecordOrder()
+    for slot in order {
       if case .offset(let record) = self.dicCrypt.entry(at: slot) {
         records.append((slot, record))
       }
