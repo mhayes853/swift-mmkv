@@ -96,6 +96,73 @@ objects. Any coder works if it conforms to `MMKVTopLevelEncoder` or `MMKVTopLeve
 its output is an `MMKVValue`, such as `Data`, `String`, or `[UInt8]`. Both methods throw the
 coder's errors, and `decode` returns `nil` only when the key has no value.
 
+## Typed keys
+
+The string APIs above are the quickest to use. A typed key writes a key's name and the type of
+its value once, so that every use agrees:
+
+```swift
+extension MMKVStore.Key where Value == String {
+  static let username: Self = "username"
+  static func draft(_ postID: Int) -> Self { "draft.\(postID)" }
+}
+
+store[.username] = "blob"
+let draft = store[.draft(42)]  // String?
+store.removeValue(for: .username)
+```
+
+A typed key reads and writes exactly what the string APIs do with the same name, so the two can
+be mixed, and a key can name a value written from JavaScript. `contains`, `set(_:for:)`,
+`value(for:)`, `subscribe(for:)` and `values(for:)` take a key as well.
+
+A `DefaultedKey` reads a default instead of `nil` when the store has no value:
+
+```swift
+extension MMKVStore.DefaultedKey where Value == Double {
+  static let volume = Self("volume", default: 0.5)
+}
+
+let volume = store[.volume]  // Double
+store[.volume] = 0.8
+```
+
+A `CodedKey` holds a `Codable` value and the coders that store it. Reading and writing throw
+what the coders throw, so a coded key is used through methods rather than a subscript:
+
+```swift
+extension MMKVStore.CodedKey where Value == Settings {
+  static let settings = Self("settings", encoder: JSONEncoder(), decoder: JSONDecoder())
+}
+
+try store.set(Settings(fontSize: 16), for: .settings)
+let settings = try store.value(for: .settings)  // Settings?
+```
+
+A `DefaultedCodedKey` adds a default, which is read only when the key is missing. A stored
+value that does not decode is still thrown.
+
+```swift
+extension MMKVStore.DefaultedCodedKey where Value == Settings {
+  static let settings = Self(
+    "settings",
+    default: Settings(),
+    encoder: JSONEncoder(),
+    decoder: JSONDecoder()
+  )
+}
+```
+
+Two things to know about coded keys:
+
+- The coders must be classes, as `JSONEncoder`, `JSONDecoder` and the property list coders are.
+- Two coded keys are equal when they have the same name and the same coder objects. A key built
+  in a `static func` should take its coders from a shared `static let` rather than create new
+  ones on each call.
+
+Give a defaulted key a different name from a plain key over the same value type, since
+`store.contains(.volume)` is ambiguous when both exist.
+
 ## Keys, removal, and locking
 
 ```swift
@@ -378,6 +445,14 @@ var settings = Settings()
 A property with a default uses it while the store has no value for the key. An optional
 property is `nil` then, and setting it to `nil` removes the key. `Codable` values need both
 coders, and a coder's error or a rejected write shows up in `loadError` or `saveError`.
+
+[Typed keys](#typed-keys) work too, and a defaulted key supplies the property's default:
+
+```swift
+@Shared(.mmkv(.username)) var username: String?  // MMKVStore.Key<String>
+@Shared(.mmkv(.volume)) var volume               // MMKVStore.DefaultedKey<Double>
+@Shared(.mmkv(.settings)) var settings           // MMKVStore.DefaultedCodedKey<Settings>
+```
 
 The keys use the store in the `defaultMMKVStore` dependency unless one is passed as `store:`.
 Set it once when the app launches:
