@@ -24,7 +24,9 @@ struct MemoryReport {
       let measurement = try Case(arguments: Array(arguments.dropFirst(2))).measure()
       print(measurement.encoded)
     } else {
-      try Self.report(keyCounts: arguments.count > 1 ? arguments.dropFirst().compactMap { Int($0) } : nil)
+      try Self.report(
+        keyCounts: arguments.count > 1 ? arguments.dropFirst().compactMap { Int($0) } : nil
+      )
     }
   }
 
@@ -163,6 +165,11 @@ struct Case {
         atPath: "\(self.template)/\(file)",
         toPath: "\(directory)/\(file)"
       )
+      // Written back, so that the copy's pages are clean. Linux counts the dirty pages of a file
+      // that only this process maps as its private dirty memory.
+      let handle = FileHandle(forUpdatingAtPath: "\(directory)/\(file)")
+      try handle?.synchronize()
+      try handle?.close()
     }
     // Opening another store first leaves out what the first open of any store allocates once,
     // such as the core's global state and the runtime's type metadata.
@@ -270,11 +277,14 @@ struct Snapshot {
       self.peakFootprint = result == KERN_SUCCESS ? Int(info.ledger_phys_footprint_peak) : nil
     #else
       #if canImport(Glibc)
+        // glibc counts blocks it maps on their own separately from the rest of the heap.
         let info = mallinfo2()
         self.heapInUse = Int(info.uordblks) + Int(info.hblkhd)
       #else
+        // Android's allocators count every allocated byte in `uordblks`, and every mapped one in
+        // `hblkhd`.
         let info = mallinfo()
-        self.heapInUse = Int(info.uordblks) + Int(info.hblkhd)
+        self.heapInUse = Int(info.uordblks)
       #endif
       self.peakFootprint = nil
       self.allocations = nil

@@ -179,3 +179,62 @@ differential tests and the benchmarks, so they keep running in CI. The README is
 | 5. Multi-process | Done in one process: both cores share files, report each other's changes, and exclude each other under concurrent writers. Android's migration lock and legacy file names are ported but only built, not run, on Android. A test across real processes is still to do |
 | 6. Encryption | Done: every encryption test passes against the Swift core, and each core reads what the other encrypts, appends, and re-encrypts |
 | 7. Cutover | Not started. The Swift core's `checkExist` and `removeStorage` (`StoreStorage`) are ready for `MMKVStorage` to switch to |
+
+## Optimization
+
+After the port, the first priorities are lower memory and faster writes. `Benchmarks/` measures
+time with package-benchmark and memory with `MemoryReport` (see its README).
+
+### Done
+
+1. **Indexes that do not copy keys.** A plain-text store's index (`RecordIndex`) is a hash table
+   of 16-byte slots, each a key's hash and its record's location, that compares keys against
+   the records in the mapped file. It is sized before loading, so it does not grow while it
+   loads. An encrypted store's index (`CryptIndex`) keeps its keys, and the values it holds in
+   memory, in one arena instead of an allocation each, with 20-byte slots in the same table
+   (`SlotTable`). An encrypted store is decrypted through a window of at most 128 KiB as it
+   loads, as the C++ core does, rather than into a copy of the whole data.
+2. **Writes that do not allocate.** A write looks its key up once, uses the string's own
+   UTF-8, encodes primitive values on the stack, and writes the key it was given rather than
+   copying it out of the old record. A cipher state keeps its register inline. Checking for
+   another process's changes reads only the metadata fields it compares.
+
+Neither changes the file format: the differential tests still compare the cores byte for byte.
+
+### Results
+
+Memory for a store of strings, after opening and loading it (macOS; Android emulator, API 36):
+
+| Store | C++ core | Swift core before | Swift core now |
+| --- | ---: | ---: | ---: |
+| Plain, 100,000 keys, heap per key (macOS) | 72 B | 100 B | 41 B |
+| Plain, 100,000 keys, footprint (macOS) | 8.0 MB | 15.3 MB | 4.1 MB |
+| Encrypted, 100,000 keys, heap per key (macOS) | 152 B | 249 B | 112 B |
+| Encrypted, 100,000 keys, footprint (macOS) | 15.9 MB | 41.1 MB | 16.4 MB |
+| Encrypted, 100,000 keys, peak footprint with a trim (macOS) | 36.9 MB | 42.6 MB | 23.7 MB |
+| Plain, 100,000 keys, private dirty (Android) | 8.8 MB | – | 4.1 MB |
+| Encrypted, 100,000 keys, private dirty (Android) | 18.1 MB | – | 11.1 MB |
+
+Time per operation, p50 on an M1 Pro:
+
+| Benchmark | C++ core | Swift core before | Swift core now |
+| --- | ---: | ---: | ---: |
+| `write.int32` | 143 ns | 657 ns | 225 ns |
+| `write.string` | 171 ns | 593 ns | 258 ns |
+| `write.double.overwrite` | 196 ns | 712 ns | 306 ns |
+| `write.string.encrypted` | 280 ns | – | 322 ns |
+| `read.int32` | 84 ns | 201 ns | 96 ns |
+| `read.string` | 362 ns | 363 ns | 173 ns |
+| `open.plain` | 1.33 ms | 2.82 ms | 1.31 ms |
+| `open.encrypted` | 2.06 ms | 3.79 ms | 2.13 ms |
+| `reload.full` | 142 µs | 328 µs | 130 µs |
+
+The Swift core now allocates nothing per write, as the C++ core does.
+
+### Next
+
+Writes are still about 1.5 times slower than the C++ core's. What remains is bookkeeping that
+was measured but not yet changed: the runtime's exclusivity checks on the store's state, which
+the store's lock already makes unnecessary (`@exclusivity(unchecked)`), retain and release
+around each write, `MetaInfo` keeping its IV and reserved words in arrays, which a reload
+allocates, and a table-driven CRC-32 where the C++ core uses the ARMv8 instructions.

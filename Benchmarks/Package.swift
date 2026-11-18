@@ -23,12 +23,16 @@ let package = Package(
       plugins: [.plugin(name: "BenchmarkPlugin", package: "package-benchmark")]
     ),
     // Measures memory rather than time, without package-benchmark, so that it also builds for
-    // Android.
+    // Android. Tools live outside the directory package-benchmark runs every executable in.
     .executableTarget(
       name: "MemoryReport",
-      dependencies: [.product(name: "SwiftMMKV", package: "swift-mmkv")],
-      path: "MemoryReport"
-    )
+      dependencies: [
+        .product(name: "SwiftMMKV", package: "swift-mmkv"),
+        .target(name: "AndroidLibcxxShim", condition: .when(platforms: [.android]))
+      ],
+      path: "Tools/MemoryReport"
+    ),
+    .target(name: "AndroidLibcxxShim", path: "Tools/AndroidLibcxxShim")
   ],
   swiftLanguageModes: [.v6]
 )

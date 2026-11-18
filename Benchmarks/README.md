@@ -23,6 +23,7 @@ jemalloc`). Set `BENCHMARK_DISABLE_JEMALLOC=1` to build without it.
 | Scenario | Measures |
 | --- | --- |
 | `write.int32`, `read.int32`, `write.string`, `read.string` | One operation over 10,000 keys, as in upstream's `MMKVPerformanceTest.mm` and `testGetStringSpeed` |
+| `write.string.encrypted` | A string write to an encrypted store |
 | `read.string.multiProcess` | A read from a multi-process store, which takes the file lock and checks the metadata |
 | `write.double.overwrite` | Writes that keep replacing 100 keys, so the file is compacted regularly |
 | `keys` | Listing 10,000 keys |
@@ -58,3 +59,19 @@ file. It reports:
 On Darwin the footprint is `phys_footprint`, what iOS counts against an app's memory limit. On
 Linux and Android it is private dirty memory from `/proc/self/smaps_rollup`, which is what
 Android's `dumpsys meminfo` reports as private dirty.
+
+To run it on an Android device or emulator, build it with a Swift SDK for Android and push it,
+with the NDK's C++ library, to the device:
+
+```sh
+swift build -c release --product MemoryReport --static-swift-stdlib \
+  --swift-sdk swift-6.4.2-RELEASE_android --triple aarch64-unknown-linux-android28 \
+  --scratch-path .build-android
+adb push .build-android/out/Products/Release-android-aarch64/MemoryReport /data/local/tmp/
+adb push "$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/*/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so /data/local/tmp/
+adb shell 'mkdir -p /data/local/tmp/mmkv && cd /data/local/tmp && LD_LIBRARY_PATH=. TMPDIR=/data/local/tmp/mmkv ./MemoryReport'
+```
+
+The SDK compiles C++ against libc++ headers newer than the NDK's library, which lacks
+`std::__hash_memory`, so linking the C++ core into an executable for Android fails. The
+`AndroidLibcxxShim` target defines it for the benchmark tools.

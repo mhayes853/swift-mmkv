@@ -60,6 +60,19 @@ private func registerValueBenchmarks(_ engine: MMKVConfiguration.Engine) {
     stringWrites.value = try openStore(engine: engine)
   }
 
+  let encryptedStringWrites = Fixture<MMKVStore>()
+  Benchmark("write.string.encrypted/\(engine)", configuration: perOperation) { benchmark in
+    for _ in benchmark.scaledIterations {
+      let index = encryptedStringWrites.next()
+      encryptedStringWrites.value.set(strings[index], forKey: keys[index])
+    }
+  } setup: {
+    encryptedStringWrites.value = try openStore(
+      engine: engine,
+      encryption: .aes128(key: "benchmark-key")
+    )
+  }
+
   // Upstream's `testGetStringSpeed` in `demo.cpp` measures the same read.
   let stringReads = Fixture<MMKVStore>()
   Benchmark("read.string/\(engine)", configuration: perOperation) { benchmark in
