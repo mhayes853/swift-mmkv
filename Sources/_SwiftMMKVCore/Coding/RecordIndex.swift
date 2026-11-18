@@ -258,6 +258,32 @@ package struct RecordIndex: ~Copyable {
     self.version &+= 1
   }
 
+  /// Makes room for `count` keys without growing again.
+  package mutating func reserveCapacity(_ count: Int) {
+    let capacity = Self.capacity(for: count)
+    if capacity > self.capacity {
+      self.resize(to: capacity)
+    }
+  }
+
+  /// Gives back memory the keys no longer need, after many have been removed or were found to be
+  /// overwrites of the same key.
+  package mutating func shrinkToFit() {
+    let capacity = Self.capacity(for: self.count)
+    if capacity < self.capacity {
+      self.resize(to: capacity)
+    }
+  }
+
+  /// The smallest capacity that holds `count` keys with a quarter of the slots empty.
+  private static func capacity(for count: Int) -> Int {
+    var capacity = Self.minimumCapacity
+    while count * 4 > capacity * 3 {
+      capacity *= 2
+    }
+    return capacity
+  }
+
   private mutating func resize(to newCapacity: Int) {
     let oldSlots = self.slots
     let oldCapacity = self.capacity
@@ -287,15 +313,16 @@ package struct RecordIndex: ~Copyable {
   }
 
   /// The occupied slots, ordered by where their records are.
-  package func slotsInRecordOrder() -> [Int] {
+  package func slotsInRecordOrder() -> LazyMapSequence<[UInt64], Int> {
     // Sorting plain integers that pack each record's offset above its slot is much faster than
-    // sorting with a comparison that reads the table.
+    // sorting with a comparison that reads the table, and the slots are read back out of them
+    // rather than copied into an array of their own.
     var packed = [UInt64]()
     packed.reserveCapacity(self.count)
     for index in 0..<self.capacity where self.slots[index].hash != 0 {
       packed.append(UInt64(self.slots[index].location.offset) << 32 | UInt64(index))
     }
     packed.sort()
-    return packed.map { Int(truncatingIfNeeded: $0 & 0xffff_ffff) }
+    return packed.lazy.map { Int(truncatingIfNeeded: $0 & 0xffff_ffff) }
   }
 }

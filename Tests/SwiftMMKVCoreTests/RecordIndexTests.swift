@@ -87,7 +87,7 @@ import Testing
       for (key, location) in zip(records.keys, records.locations).reversed() {
         key.withUnsafeBytes { index.set(location, for: $0, base: base) }
       }
-      let offsets = index.slotsInRecordOrder().map { index.location(at: $0).offset }
+      let offsets = Array(index.slotsInRecordOrder()).map { index.location(at: $0).offset }
       #expect(offsets == records.locations.map(\.offset))
     }
   }

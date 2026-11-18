@@ -84,12 +84,49 @@ package enum RecordDecoding {
     greedy: Bool
   ) -> Bool {
     if greedy {
-      return Self.decodeRecords(data, from: position, into: &index)
+      return Self.decodeAllRecords(data, from: position, into: &index)
     }
     var decoded = RecordIndex()
-    guard Self.decodeRecords(data, from: position, into: &decoded) else { return false }
+    guard Self.decodeAllRecords(data, from: position, into: &decoded) else { return false }
     index = decoded
     return true
+  }
+
+  /// Decodes the records, sizing the index for them first when it starts out empty, so that it
+  /// does not grow, and leave behind the memory of every smaller table, while decoding.
+  private static func decodeAllRecords(
+    _ data: UnsafeRawBufferPointer,
+    from position: Int,
+    into index: inout RecordIndex
+  ) -> Bool {
+    guard index.isEmpty else {
+      return Self.decodeRecords(data, from: position, into: &index)
+    }
+    index.reserveCapacity(Self.countValues(data, from: position))
+    let decoded = Self.decodeRecords(data, from: position, into: &index)
+    // Overwrites and removals leave fewer keys than records.
+    index.shrinkToFit()
+    return decoded
+  }
+
+  /// How many records hold a value, up to the first that cannot be read.
+  private static func countValues(_ data: UnsafeRawBufferPointer, from position: Int) -> Int {
+    var input = CodedInput(data)
+    var count = 0
+    do throws(CodingError) {
+      if position != 0 {
+        try input.seek(position)
+      } else {
+        _ = try input.readInt32()
+      }
+      while !input.isAtEnd {
+        guard !(try input.readLengthDelimited()).isEmpty else { continue }
+        if !(try input.readLengthDelimited()).isEmpty {
+          count += 1
+        }
+      }
+    } catch {}
+    return count
   }
 
   private static func decodeRecords(
