@@ -131,7 +131,7 @@ footer code{color:var(--muted)}
 <header class="hero">
   <div class="eyebrow">SwiftMMKV · Memory</div>
   <h1>How the Swift core keeps a store's index in <span class="t">half</span> the memory</h1>
-  <p>An MMKV store keeps every key's latest record in a memory-mapped file, plus an index in memory that says where each key's record is. In the C++ core, and in the first Swift port, that index holds its own copy of every key, and each entry costs a heap allocation or two. The Swift core now uses a hash table of fixed-size slots in one allocation. A plain store's slots hold no keys at all and compare against the keys already in the file. An encrypted store's slots point into a single arena of keys and small values. A plain store of 100,000 keys now takes 4.1 MB instead of the C++ core's 8.0 MB, and writes make no heap allocations.</p>
+  <p>An MMKV store keeps every key's latest record in a memory-mapped file, plus an index in memory that says where each key's record is. In the C++ core, that index holds its own copy of every key, and each entry costs a heap allocation or two. The Swift core uses a hash table of fixed-size slots in one allocation. A plain store's slots hold no keys at all and compare against the keys already in the file. An encrypted store's slots point into a single arena of keys and small values. A plain store of 100,000 keys now takes 4.1 MB instead of the C++ core's 8.0 MB, and writes make no heap allocations.</p>
   <div class="facts">
     <span class="fact">plain slot <b>16 B</b> · hash + location</span>
     <span class="fact">encrypted slot <b>20 B</b> · hash + arena offset + sizes</span>
@@ -143,7 +143,6 @@ footer code{color:var(--muted)}
   </div>
   <div class="legend" aria-label="Colours">
     <span style="--c:#ff9ecb">C++ core</span>
-    <span style="--c:#ffb454">Swift core before</span>
     <span style="--c:#8ea2ff">RecordIndex · slots</span>
     <span style="--c:#7ee08a">CryptIndex arena</span>
     <span style="--c:#34d6c3">mapped file</span>
@@ -157,7 +156,7 @@ footer code{color:var(--muted)}
 </header>
 <nav class="top" aria-label="Scenes"><div class="in">
   <a href="#cost"><span class="n">01</span>Cost per key</a>
-  <a href="#before"><span class="n">02</span>The old indexes</a>
+  <a href="#cpp"><span class="n">02</span>The C++ index</a>
   <a href="#index"><span class="n">03</span>RecordIndex</a>
   <a href="#lookup"><span class="n">04</span>Lookup</a>
   <a href="#write"><span class="n">05</span>Writes</a>
@@ -169,12 +168,12 @@ footer code{color:var(--muted)}
 <main>
 <section class="scene" id="cost">
   <div class="sh"><span class="num">01</span><h2>What one key costs</h2></div>
-  <p class="lede">Heap bytes per key in each core's index, for the memory report's store: keys like <code>key-12345</code> (9 bytes) holding strings of 50 characters (51 bytes stored). The parts are the allocations each index makes, and their totals match what <code>MemoryReport</code> measures at 100,000 keys. Switch to an encrypted store to see the second index.</p>
+  <p class="lede">Heap bytes per key in each core's index, for the memory report's store: keys like <code>key-12345</code> (9 bytes) holding strings of 50 characters (51 bytes stored). The parts are the allocations each index makes, and their totals match what <code>MemoryReport</code> measures at 100,000 keys. Switch to an encrypted store to compare the second pair of indexes.</p>
   <div class="card"><div class="stage wide"></div></div>
 </section>
-<section class="scene" id="before">
-  <div class="sh"><span class="num">02</span><h2>Where those bytes went: a copy of every key</h2></div>
-  <p class="lede">Both earlier indexes kept a copy of every key in a heap allocation of its own, next to a 12-byte record location. But a plain store's record starts with its key, and the file is mapped into memory already, so each key was held twice. The offsets in these pictures are examples.</p>
+<section class="scene" id="cpp">
+  <div class="sh"><span class="num">02</span><h2>Where the C++ core's bytes go: a copy of every key</h2></div>
+  <p class="lede">The C++ core keeps a copy of every key in a heap node of its own, next to a 12-byte record location. But a plain store's record starts with its key, and the file is mapped into memory already, so each key is held twice. The offsets in these pictures are examples.</p>
   <div class="card"><div class="stage wide"></div></div>
 </section>
 <section class="scene" id="index">
@@ -189,7 +188,7 @@ footer code{color:var(--muted)}
 </section>
 <section class="scene" id="write">
   <div class="sh"><span class="num">05</span><h2>A write without a heap allocation</h2></div>
-  <p class="lede">A write uses the key's bytes where the <code>String</code> keeps them, encodes the value on the stack, and looks the key up once. Then it appends the record to the file and points the slot at it. Before, the same write made several heap allocations, starting with an array holding a copy of the key. Pick an overwrite or a new key.</p>
+  <p class="lede">A write uses the key's bytes where the <code>String</code> keeps them, encodes the value on the stack, and looks the key up once. Then it appends the record to the file and points the slot at it. Like the C++ core, it makes no heap allocation. Pick an overwrite or a new key.</p>
   <div class="card"><div class="stage wide"></div></div>
 </section>
 <section class="scene" id="remove">
@@ -204,29 +203,29 @@ footer code{color:var(--muted)}
 </section>
 <section class="scene" id="load">
   <div class="sh"><span class="num">08</span><h2>Loading an encrypted store a window at a time</h2></div>
-  <p class="lede">The data is one AES-CFB-128 stream. The first port decrypted all of it into a buffer the size of the data and built the index from that. The Swift core now decrypts at most 128 KiB at a time, as the C++ core does, and never decrypts a large value while loading. Records are not drawn to scale.</p>
+  <p class="lede">The data is one AES-CFB-128 stream. The Swift core decrypts it at most 128 KiB at a time, as the C++ core does, and doesn't decrypt a large value while loading. Records are not drawn to scale.</p>
   <div class="card"><div class="stage wide"></div></div>
 </section>
 <section class="scene" id="results">
   <div class="sh"><span class="num">09</span><h2>Results, and what checks them</h2></div>
   <p class="lede">Measured by <code>Benchmarks/Tools/MemoryReport</code>. Each case runs in a fresh process, which copies a store of string values, opens it, loads every key, then trims it. Footprint is <code>phys_footprint</code> on macOS (M1 Pro) and private dirty memory on an Android emulator (API 36). Heap per key is the heap the store retains, divided by its keys.</p>
   <div class="card"><div class="tablewrap"><table class="results">
-    <thead><tr><th>100,000 keys</th><th>C++ core</th><th>Swift core before</th><th>Swift core now</th></tr></thead>
+    <thead><tr><th>100,000 keys</th><th>C++ core</th><th>Swift core</th></tr></thead>
     <tbody>
-      <tr class="grp"><td colspan="4">Plain store</td></tr>
-      <tr><td>Heap per key (macOS)</td><td>72 B</td><td>100 B</td><td class="now">41 B</td></tr>
-      <tr><td>Footprint after opening (macOS)</td><td>8.0 MB</td><td>15.3 MB</td><td class="now">4.1 MB</td></tr>
-      <tr><td>Private dirty after opening (Android)</td><td>8.8 MB</td><td class="na">–</td><td class="now">4.1 MB</td></tr>
-      <tr><td>Heap per key (Android)</td><td>88 B</td><td class="na">–</td><td class="now">42 B</td></tr>
-      <tr class="grp"><td colspan="4">Encrypted store</td></tr>
-      <tr><td>Heap per key (macOS)</td><td>152 B</td><td>249 B</td><td class="now">112 B</td></tr>
-      <tr><td>Footprint after opening (macOS)</td><td>15.9 MB</td><td>41.1 MB</td><td class="now">16.4 MB</td></tr>
-      <tr><td>Peak footprint through opening and a trim (macOS)</td><td>36.9 MB</td><td>42.6 MB</td><td class="now">23.7 MB</td></tr>
-      <tr><td>Private dirty after opening (Android)</td><td>18.1 MB</td><td class="na">–</td><td class="now">11.1 MB</td></tr>
-      <tr><td>Heap per key (Android)</td><td>184 B</td><td class="na">–</td><td class="now">112 B</td></tr>
+      <tr class="grp"><td colspan="3">Plain store</td></tr>
+      <tr><td>Heap per key (macOS)</td><td>72 B</td><td class="now">41 B</td></tr>
+      <tr><td>Footprint after opening (macOS)</td><td>8.0 MB</td><td class="now">4.1 MB</td></tr>
+      <tr><td>Private dirty after opening (Android)</td><td>8.8 MB</td><td class="now">4.1 MB</td></tr>
+      <tr><td>Heap per key (Android)</td><td>88 B</td><td class="now">42 B</td></tr>
+      <tr class="grp"><td colspan="3">Encrypted store</td></tr>
+      <tr><td>Heap per key (macOS)</td><td>152 B</td><td class="now">112 B</td></tr>
+      <tr><td>Footprint after opening (macOS)</td><td>15.9 MB</td><td class="now">16.4 MB</td></tr>
+      <tr><td>Peak footprint through opening and a trim (macOS)</td><td>36.9 MB</td><td class="now">23.7 MB</td></tr>
+      <tr><td>Private dirty after opening (Android)</td><td>18.1 MB</td><td class="now">11.1 MB</td></tr>
+      <tr><td>Heap per key (Android)</td><td>184 B</td><td class="now">112 B</td></tr>
     </tbody>
   </table></div></div>
-  <p class="lede" style="margin-top:14px">“Before” was measured only on macOS, before these changes; the Android measurements came after them. The same changes made writes 2.3 to 2.9 times faster: <code>write.string</code> went from 593 ns to 258 ns (171 ns in the C++ core), and <code>write.int32</code> from 657 ns to 225 ns (143 ns).</p>
+  <p class="lede" style="margin-top:14px">Neither core allocates on a write, but the Swift core's writes are still slower: <code>write.string</code> takes 258 ns against the C++ core's 171 ns, and <code>write.int32</code> 225 ns against 143 ns. Reads are close or faster: <code>read.int32</code> takes 96 ns against 84 ns, and <code>read.string</code> 173 ns against 362 ns.</p>
   <div class="policy tg" role="note" aria-label="What checks it">
     <div class="ph"><span class="pk">What checks it</span><span class="pn">The file format didn't change: both cores still write the same bytes.</span></div>
     <dl>
@@ -729,18 +728,14 @@ function plainSlots(recs) {
 /* ====================================================================================
    01 · What one key costs
    ==================================================================================== */
-const COST_X = 250, COST_S = 2.6;
+const COST_X = 250, COST_S = 3.4;
 const COST = {
   plain: [
     { who: 'C++ core', sub: ['std::unordered_map<std::string,', '  KeyValueHolder>'], c: C.cpp, total: 72,
       segs: [['hash node', 64], ['bucket', 8]], foot: 'heap 7.2 MB · footprint 8.0 MB · Android 8.8 MB',
       t: 'C++ core: a node per key',
       cap: 'The C++ core\'s index is a <code>std::unordered_map</code> from a copy of each key to a 12-byte <code>KeyValueHolder</code>. A key costs a 56-byte node, which malloc rounds up to a 64-byte block, and a pointer in the bucket array: 72 bytes, exactly what the memory report measures. A key longer than 22 bytes needs another allocation, because it no longer fits inside the <code>std::string</code>.' },
-    { who: 'Swift core before', sub: ['[StoreKey: RecordLocation]'], c: C.old, total: 100,
-      segs: [['Dictionary storage', 52], ['key array', 48]], foot: 'heap 10.0 MB · footprint 15.3 MB',
-      t: 'Swift core before: a Dictionary and an array per key',
-      cap: 'The first port used a <code>Dictionary</code> from <code>StoreKey</code>, a wrapper around a <code>[UInt8]</code> copy of the key, to a 12-byte <code>RecordLocation</code>. The dictionary keeps an 8-byte reference and a location per bucket. At 100,000 keys it has 262,144 buckets, which comes to 52 bytes a key. Each key\'s array is a heap object of its own: a 32-byte header and the key\'s 9 bytes, in a 48-byte block.' },
-    { who: 'Swift core now', sub: ['RecordIndex'], c: C.idx, total: 42, measured: 41,
+    { who: 'Swift core', sub: ['RecordIndex'], c: C.idx, total: 42, measured: 41,
       segs: [['16-byte slots', 42]], foot: 'heap 4.1 MB · footprint 4.1 MB · Android 4.1 MB',
       t: 'Swift core now: one 16-byte slot per bucket',
       cap: '<code>RecordIndex</code> keeps no keys. Each bucket is a 16-byte slot holding the key\'s hash and its record\'s location, and the whole table is one allocation. At 100,000 keys that is 262,144 slots, or 4 MiB, about 42 bytes a key. The report measures 41. Scenes 03 to 06 show how the table finds keys it doesn\'t keep.' },
@@ -750,24 +745,20 @@ const COST = {
       segs: [['hash node', 80], ['bucket', 8], ['value buffer', 64]], foot: 'heap 15.2 MB · footprint 15.9 MB · Android 18.1 MB',
       t: 'C++ core: a node and a value buffer per key',
       cap: 'An encrypted store\'s file is ciphertext, so its index can\'t read keys from it. The C++ core maps a copy of each key to a 29-byte <code>KeyValueHolderCrypt</code>, in a 72-byte node that malloc puts in an 80-byte block. It keeps each value of 28 to 256 bytes decrypted, in a buffer of its own: these 51-byte values take 64-byte blocks. With the bucket pointer, that is 152 bytes, as measured.' },
-    { who: 'Swift core before', sub: ['[StoreKey: CryptEntry]'], c: C.old, total: 249,
-      segs: [['Dictionary storage', 105], ['key array', 48], ['value array', 96]], foot: 'heap 24.9 MB · footprint 41.1 MB',
-      t: 'Swift core before: an array per key and per value',
-      cap: 'The first port mapped <code>StoreKey</code> to <code>CryptEntry</code>, an enum holding either the decrypted value as a <code>[UInt8]</code> or a large value\'s location and cipher state. Every key and every small value was an array of its own: 48 bytes for the key and 96 for the value. Each dictionary bucket took 40 bytes, an 8-byte key reference and a 32-byte entry. That is 249 bytes in all.' },
-    { who: 'Swift core now', sub: ['CryptIndex'], c: C.idx, total: 112,
+    { who: 'Swift core', sub: ['CryptIndex'], c: C.idx, total: 112,
       segs: [['20-byte slots', 52], ['arena', 60]], c2: C.arena, foot: 'heap 11.2 MB · footprint 16.4 MB · Android 11.1 MB',
       t: 'Swift core now: 20-byte slots and one arena',
       cap: '<code>CryptIndex</code> packs every key and every small value into one arena, back to back, with no header and no rounding: 9 + 51 = 60 bytes here. Each bucket is a 20-byte slot that says where its key starts in the arena: 52 bytes a key at 262,144 slots. 112 bytes in all, as measured. Scene 07 shows the arena.' },
   ],
 };
 const COST_TOTALS = {
-  plain: 'Multiplied out to 100,000 keys, with the footprint each store adds to its process after opening. The plain store\'s footprint is about half the C++ core\'s on both platforms, and about a quarter of the first port\'s. The file is mapped by every core alike, so this saving is all in the index.',
-  crypt: 'Multiplied out to 100,000 keys. On macOS the encrypted store\'s footprint after opening is close to the C++ core\'s, and on Android it is 39% lower. The bigger difference is the peak: through opening and a trim, the store peaks at 23.7 MB against the C++ core\'s 36.9 MB and the first port\'s 42.6 MB, because it no longer decrypts the whole file to load it (scene 08).',
+  plain: 'Multiplied out to 100,000 keys, with the footprint each store adds to its process after opening. The plain store\'s footprint is about half the C++ core\'s on both platforms. The file is mapped by every core alike, so this saving is all in the index.',
+  crypt: 'Multiplied out to 100,000 keys. On macOS the encrypted store\'s footprint after opening is close to the C++ core\'s, and on Android it is 39% lower. The bigger difference is the peak: through opening and a trim, the store peaks at 23.7 MB against the C++ core\'s 36.9 MB.',
 };
 function costAxis(ctx) {
-  for (let b = 0; b <= 250; b += 50) {
+  for (let b = 0; b <= 200; b += 50) {
     const x = COST_X + b * COST_S;
-    ctx.line(x, 34, x, 370, { stroke: C.line, op: 0.7, dash: b ? '2 4' : null });
+    ctx.line(x, 34, x, 262, { stroke: C.line, op: 0.7, dash: b ? '2 4' : null });
     ctx.text(x, 26, b + ' B', { anchor: 'middle', mono: true, size: 10.5, fill: C.dim });
   }
 }
@@ -789,13 +780,13 @@ function costRow(ctx, mode, i, totals) {
   });
   ctx.text(x + 10, y + 30, r.total + ' B', { size: 18, weight: 750, fill: r.c });
   if (r.measured) ctx.text(x + 22 + tw(r.total + ' B', 18), y + 30, `(${r.measured} measured)`, { size: 11, fill: C.muted });
-  if (totals) ctx.text(COST_X, y + 66, '100,000 keys → ' + r.foot, { mono: true, size: 11.5, fill: i === 2 ? C.text : C.muted, weight: i === 2 ? 650 : null });
+  if (totals) ctx.text(COST_X, y + 66, '100,000 keys → ' + r.foot, { mono: true, size: 11.5, fill: i === 1 ? C.text : C.muted, weight: i === 1 ? 650 : null });
 }
 new Scene({
   id: 'cost',
   modes: [{ key: 'plain', label: 'Plain store' }, { key: 'crypt', label: 'Encrypted store' }],
   modesLabel: 'Store',
-  build(ctx) { ctx.svg(1000, 380, 'Heap bytes per key in each core'); costAxis(ctx); },
+  build(ctx) { ctx.svg(1000, 270, 'Heap bytes per key in each core'); costAxis(ctx); },
   steps(mode) {
     const rows = COST[mode];
     return [
@@ -806,7 +797,7 @@ new Scene({
 });
 
 /* ====================================================================================
-   02 · The old indexes
+   02 · The C++ index
    ==================================================================================== */
 const OLD_NODES = [
   { r: RECS.theme, y: 70, bucket: 1, next: 'null' },
@@ -847,48 +838,15 @@ function cppNodes(ctx) {
   const n1 = ctx.d.nodes[1].next;
   ctx.path(`M${n1.cx},${n1.y + n1.h} L${n1.cx},${OLD_NODES[2].y - 8}`, { stroke: C.muted, arrow: true, sw: 1.4, parent: ctx.dyn });
 }
-function swiftOldBuild(ctx) {
-  ctx.text(30, 28, 'Dictionary storage', { mono: true, size: 12, weight: 650, fill: C.old });
-  ctx.text(30, 48, 'values · 12 B', { mono: true, size: 10.5, fill: C.dim });
-  ctx.text(190, 48, 'keys · 8 B', { mono: true, size: 10.5, fill: C.dim });
-  ctx.d.keyCells = {};
-  const rows = { 1: RECS.theme, 4: RECS.launches, 6: RECS.key42 };
-  for (let i = 0; i < 9; i++) {
-    const y = 58 + i * 34, r = rows[i];
-    ctx.rect(30, y, 150, 28, { fill: C.idx, fo: r ? 0.12 : 0.03, stroke: C.idx, so: r ? 0.6 : 0.22, rx: 5 });
-    ctx.rect(186, y, 86, 28, { fill: C.old, fo: r ? 0.14 : 0.03, stroke: C.old, so: r ? 0.7 : 0.22, rx: 5 });
-    if (r) {
-      ctx.text(105, y + 18, locText(r), { anchor: 'middle', mono: true, size: 10.5, fill: C.text });
-      ctx.text(229, y + 18, 'ref •', { anchor: 'middle', mono: true, size: 10.5, fill: C.old });
-      ctx.d.keyCells[r.id] = { x: 186, y, w: 86, h: 28 };
-    }
-  }
-}
-function swiftOldArrays(ctx) {
-  ctx.d.arrays = {};
-  OLD_NODES.forEach(nd => {
-    const r = nd.r, s = strip(ctx, 340, nd.y, 8, 44, [
-      { id: 'hdr', n: 'header', v: 'isa · refcount · count · capacity', b: 32, c: C.old, fo: 0.08 },
-      { id: 'key', n: r.key, b: r.key.length, c: C.key },
-    ], { parent: ctx.dyn });
-    ctx.rect(334, nd.y - 6, 48 * 8 + 12, 56, { stroke: C.old, so: 0.55, dash: '5 4', rx: 9, parent: ctx.dyn });
-    ctx.text(334 + 48 * 8 + 12, nd.y - 11, `[UInt8] · ${32 + r.key.length} B in a 48-byte block`, { anchor: 'end', size: 10.5, fill: C.old, parent: ctx.dyn });
-    const k = ctx.d.keyCells[r.id];
-    curve(ctx, [k.x + k.w, k.y + 14], [332, nd.y + 22], C.old, { horizontal: true, sw: 1.4 });
-    ctx.d.arrays[r.id] = s;
-  });
-}
 new Scene({
-  id: 'before',
-  modes: [{ key: 'cpp', label: 'C++ core' }, { key: 'swift', label: 'Swift core before' }],
-  modesLabel: 'Core',
+  id: 'cpp',
   build(ctx) {
-    ctx.svg(1000, 450, 'How the C++ core and the first Swift port indexed a plain store');
+    ctx.svg(1000, 450, 'How the C++ core indexes a plain store');
     ctx.d.file = oldFile(ctx);
-    if (this.mode === 'cpp') cppBuild(ctx); else swiftOldBuild(ctx);
+    cppBuild(ctx);
   },
-  steps(mode) {
-    if (mode === 'cpp') return [
+  steps() {
+    return [
       { t: 'A bucket array', cap: 'An <code>std::unordered_map</code> starts with an array of bucket pointers, about one per key. A key\'s hash picks its bucket, and the bucket points to a chain of nodes.',
         run(ctx) { ctx.d.buckets.forEach(b => ring(ctx, b, C.cpp, 2)); } },
       { t: 'A node for each key', cap: 'Each key gets a node of its own from malloc: a pointer to the next node in the bucket, the cached hash, the key, and the <code>KeyValueHolder</code>. Here <code>launches</code> and <code>key-42</code> share a bucket, so one node points to the other. That is 56 bytes, which malloc rounds up to 64.',
@@ -905,24 +863,6 @@ new Scene({
           const h = ctx.d.nodes[2].kvh, rec = ctx.d.file.key42;
           curve(ctx, bottomOf(h), [rec.x + 4, rec.y - 4], C.idx);
           ring(ctx, h, C.idx, 3); ring(ctx, rec, C.idx, 3);
-        } },
-    ];
-    return [
-      { t: 'Dictionary storage', cap: 'A Swift <code>Dictionary</code> keeps its keys and values in two arrays of buckets, with a bitmap of the occupied ones, and grows when it is three-quarters full. A value here is the 12-byte <code>RecordLocation</code>, and a key is a <code>StoreKey</code>, which holds a reference to a <code>[UInt8]</code>.',
-        run(ctx) { ring(ctx, { x: 30, y: 58, w: 242, h: 300 }, C.old, 4); } },
-      { t: 'An array object per key', cap: 'Each key\'s bytes are a heap object of their own: a 32-byte header (its class, reference count, count and capacity) followed by the bytes, in a 48-byte block for keys this short.',
-        run(ctx) { swiftOldArrays(ctx); if (ctx.cur) Object.values(ctx.d.arrays).forEach(a => ring(ctx, a.hdr, C.old, 3)); } },
-      { t: 'A copy of the key', cap: 'As in the C++ core, those bytes are a copy of what the record in the file starts with. Comparing two <code>StoreKey</code>s compares the arrays, and hashing one runs Swift\'s seeded <code>Hasher</code> over every byte.',
-        run(ctx) {
-          const a = ctx.d.arrays.key42.key, k = ctx.d.file.key42.key;
-          curve(ctx, bottomOf(a), [k.x + k.w / 2, k.y - 4], C.key);
-          note(ctx, k.x + k.w + 16, k.y - 12, 'the same 6 bytes', C.key);
-          ring(ctx, a, C.key, 3); ring(ctx, k, C.key, 3);
-        } },
-      { t: 'A new array for every access', cap: 'Every get and set took a <code>String</code> and built a <code>StoreKey</code> from it, <code>Array(key.utf8)</code>, before it could look the key up. That was one heap allocation per access, even for a read.',
-        run(ctx) {
-          ctx.box('alloc', 760, 64, 220, 84, C.old, 'StoreKey(key)', ['Array(key.utf8)', 'an allocation per get and set'], { parent: ctx.dyn });
-          ctx.hot('alloc');
         } },
     ];
   },
@@ -1315,28 +1255,8 @@ function arenaParts(ctx, upTo) {
 }
 new Scene({
   id: 'load',
-  modes: [{ key: 'now', label: 'Swift core now' }, { key: 'before', label: 'Swift core before' }],
-  modesLabel: 'Core',
-  build(ctx) { ctx.svg(1000, 360, 'Loading an encrypted store'); ldFile(ctx); },
-  steps(mode) {
-    if (mode === 'before') return [
-      { t: 'Decrypt everything', cap: 'The first port allocated a <code>[UInt8]</code> as large as the data and decrypted the whole stream into it, large values included, before reading a single record.',
-        run(ctx) {
-          ctx.text(40, 176, '[UInt8] · the whole data, decrypted', { mono: true, size: 12, weight: 650, fill: C.old, parent: ctx.dyn });
-          ctx.rect(40, 186, ctx.d.fileEnd - 40, 44, { fill: C.old, fo: 0.16, stroke: C.old, so: 0.8, rx: 8, parent: ctx.dyn, glow: ctx.cur });
-        } },
-      { t: 'Copy every key and small value', cap: 'Then it copied each key, and each value of up to 256 bytes, out of that buffer into arrays of their own, and added them to a <code>Dictionary</code>. At the peak, the process held the decrypted data and the whole index at once.',
-        run(ctx) {
-          for (let i = 0; i < 18; i++) ctx.rect(40 + i * 51, 262 + (i % 2) * 26, 44, 20, { fill: C.old, fo: 0.2, stroke: C.old, so: 0.7, rx: 4, parent: ctx.dyn });
-          ctx.text(40, 252, 'an array per key and per value', { mono: true, size: 12, weight: 650, fill: C.old, parent: ctx.dyn });
-        } },
-      { t: 'Free the copy', cap: 'Only then was the decrypted copy freed. That copy is why the first port\'s encrypted store peaked at 42.6 MB with 100,000 keys, and why its footprint stayed at 41.1 MB after opening: memory freed late often isn\'t handed back to the system.',
-        run(ctx) {
-          ctx.dyn.querySelectorAll('rect')[0].setAttribute('fill-opacity', 0.03);
-          ctx.dyn.querySelectorAll('rect')[0].setAttribute('stroke-dasharray', '5 4');
-          ctx.text(ctx.d.fileEnd - 4, 176, 'freed after loading', { anchor: 'end', size: 11.5, fill: C.bad, parent: ctx.dyn });
-        } },
-    ];
+  build(ctx) { ctx.svg(1000, 320, 'Loading an encrypted store'); ldFile(ctx); },
+  steps() {
     return [
       { t: 'Reserve the arena once', cap: 'Before decoding, the arena is reserved at the size of the data left to read. No entry takes more arena bytes than its record takes in the file, so the arena never grows during the load. Growing would copy it and leave the old blocks behind. Pages that are never written cost nothing.',
         run(ctx) { ctx.dyn.textContent = ''; ctx.d.arenaParts = []; ldArena(ctx, 0, true); } },
@@ -1367,7 +1287,7 @@ new Scene({
           ctx.chip(big.x + 30, 210, 'state from the previous block', C.cs, { parent: ctx.dyn, anchor: 'middle' });
           const filled = arenaParts(ctx, 6); ldArena(ctx, filled, true);
         } },
-      { t: 'Shrink to fit', cap: 'At the end, the arena is shrunk to what it holds and the window is freed. The peak is the arena\'s pages, the slots and one window, never a decrypted copy of the data. Through opening and a trim, a store of 100,000 keys peaks at 23.7 MB, against 36.9 MB for the C++ core and 42.6 MB before.',
+      { t: 'Shrink to fit', cap: 'At the end, the arena is shrunk to what it holds and the window is freed. The peak is the arena\'s pages, the slots and one window. Through opening and a trim, a store of 100,000 keys peaks at 23.7 MB, against 36.9 MB for the C++ core.',
         run(ctx) { ctx.dyn.textContent = ''; const filled = arenaParts(ctx, LD_RECS.length); ldArena(ctx, filled, false); ctx.text(48 + filled + 10, 278, 'realloc to the bytes used', { size: 11.5, fill: C.arena, parent: ctx.dyn }); } },
     ];
   },
