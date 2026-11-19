@@ -213,6 +213,10 @@ time with package-benchmark and memory with `MemoryReport` (see its README).
    noncopyable struct within it. The lock stays recursive for `withExclusiveLock`, but reaching
    the state again while an operation has it stops the process. Each write also takes the lock
    once, where it used to take it twice.
+5. **Less work around each operation.** `MMKVCore` is a final class, so a value reader or writer
+   holds a reference to it instead of copying the engine on every call, and a write takes the
+   listener lock once instead of twice. A cryptor expands only the AES encryption schedule, the
+   one CFB uses in both directions.
 
 None of these changes the file format: the differential tests still compare the cores byte for
 byte.
@@ -237,18 +241,18 @@ Time per operation, p50 on an M1 Pro:
 
 | Benchmark | C++ core | Swift core before | Swift core now |
 | --- | ---: | ---: | ---: |
-| `write.int32` | 146 ns | 657 ns | 157 ns |
-| `write.string` | 176 ns | 593 ns | 170 ns |
-| `write.double.overwrite` | 197 ns | 712 ns | 213 ns |
-| `write.string.encrypted` | 281 ns | – | 246 ns |
-| `read.int32` | 86 ns | 201 ns | 94 ns |
-| `read.string` | 361 ns | 363 ns | 176 ns |
+| `write.int32` | 147 ns | 657 ns | 150 ns |
+| `write.string` | 177 ns | 593 ns | 173 ns |
+| `write.double.overwrite` | 203 ns | 712 ns | 204 ns |
+| `write.string.encrypted` | 286 ns | – | 240 ns |
+| `read.int32` | 81 ns | 201 ns | 84 ns |
+| `read.string` | 354 ns | 363 ns | 164 ns |
 | `open.plain` | 1.33 ms | 2.82 ms | 1.31 ms |
 | `open.encrypted` | 2.06 ms | 3.79 ms | 2.13 ms |
 | `reload.full` | 142 µs | 328 µs | 130 µs |
 
 The Swift core now allocates nothing per write, as the C++ core does. The write and read rows were
-measured together, after item 4, so their C++ figures differ slightly from earlier runs.
+measured together, after item 5, so their C++ figures differ slightly from earlier runs.
 
 The p50 of a write misses most of the cost of the full write-backs that keep a store compact.
 A loop of 2,000,000 writes to the same 10,000 keys, which includes them, took on average (not
@@ -263,9 +267,9 @@ yet one of the benchmarks):
 ### Next
 
 Over many writes the Swift core is now faster than the C++ core, and level with it when
-encrypted. A single write's p50 is faster for strings, but still 7 to 8% slower for `Int32` and
-`Double`. What remains was measured but not yet changed: the store's lock is a recursive pthread
-mutex, which takes the slow path on every call, where `os_unfair_lock` was about 8 ns a call
-faster in a microbenchmark, though it would need an owner check to stay recursive; the public
-layer copies `MMKVCore`, with its `any MMKVEngine`, on every write, which costs both engines;
-and `MetaInfo` keeps its IV and reserved words in arrays, which a reload allocates.
+encrypted. A single write's p50 is level with the C++ core's or faster, except `Int32`, which is
+2% slower. What remains was measured but not yet changed: the store's lock is a recursive
+pthread mutex, which takes the slow path on every call, where `os_unfair_lock` was about 8 ns a
+call faster in a microbenchmark, though it would need an owner check to stay recursive; every
+operation in the public layer takes a lock just to see whether another process changed the
+store; and `MetaInfo` keeps its IV and reserved words in arrays, which a reload allocates.
