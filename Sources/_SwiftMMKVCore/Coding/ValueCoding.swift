@@ -101,9 +101,16 @@ package enum EncodedValue {
     case .strings(let strings):
       try output.writeUInt32(UInt32(truncatingIfNeeded: Self.containerSize(strings)))
       for var string in strings {
-        try string.withUTF8 { (utf8) throws(CodingError) in
-          try output.writeData(UnsafeRawBufferPointer(utf8))
+        // Before Swift 6.4, `withUTF8` rethrows untyped errors, so the error is carried out.
+        var failure: CodingError?
+        string.withUTF8 { utf8 in
+          do throws(CodingError) {
+            try output.writeData(UnsafeRawBufferPointer(utf8))
+          } catch {
+            failure = error
+          }
         }
+        if let failure { throw failure }
       }
     }
     if let expiry {
