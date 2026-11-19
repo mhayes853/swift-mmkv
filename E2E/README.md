@@ -31,7 +31,8 @@ Metro server is needed, runs it, and exits non-zero if any check fails.
 
 The Android script also builds the module's Swift code, which needs a Swift toolchain with the
 matching [Swift SDK for Android](https://www.swift.org/documentation/articles/swift-sdk-for-android-getting-started.html)
-and the Android NDK. Set `SWIFT` to use a toolchain other than the default one. The app's minimum
+and the Android NDK. Set `SWIFT` to use a toolchain other than the default one, and `SWIFT_SDK`
+to the name of the Swift SDK to use when more than one for Android is installed. The app's minimum
 Android API level is 28, the level the Swift SDK targets.
 
 ## Layout

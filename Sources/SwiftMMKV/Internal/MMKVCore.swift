@@ -15,6 +15,7 @@ final class MMKVCore: Sendable {
     if let encryption = configuration.encryption, !encryption.isValid {
       throw .invalidEncryptionKey
     }
+    LogSink.prepare()
     let engine: any MMKVEngine =
       switch configuration.engine {
       case .cxx: try CxxEngine(configuration)
@@ -122,16 +123,20 @@ extension MMKVCore {
 extension MMKVCore {
   /// Runs `body` with the instance's recursive lock held.
   ///
-  /// Listeners are not told about an external change while the lock is held, because a listener
-  /// that waits on another thread would deadlock against it. They are told once the outermost
-  /// call releases the lock.
+  /// Listeners are not told about a change while the lock is held: about an external one because
+  /// a listener that waits on another thread would deadlock against it, and about a key so that
+  /// they never see part of what `body` writes. They are told once the outermost call releases
+  /// the lock.
+  ///
+  /// While the store is suspended `body` runs without the lock, and every operation in it is
+  /// turned away.
   func locked<R, E: Error>(_ body: () throws(E) -> R) throws(E) -> R {
     let gate = self.state.suspensionGate
     guard gate?.enter() ?? true else { return try body() }
     self.engine.lock()
-    self.state.beginDeferringExternalChanges()
+    self.state.beginDeferringChanges()
     defer {
-      self.state.endDeferringExternalChanges()
+      self.state.endDeferringChanges()
       self.engine.unlock()
       gate?.leave()
       self.state.deliverChanges()

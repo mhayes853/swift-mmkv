@@ -22,16 +22,17 @@ extension MMKVStorage {
   /// An identifier that cannot be a file name is replaced by its MD5 hash and moved into a
   /// subdirectory. This repeats what the core does when it opens a store, because the core
   /// only offers it together with creating that subdirectory.
-  static func relativePath(forID id: String) -> String {
+  static func relativePath(forID id: MMKVStore.ID) -> String {
     let unusable: Set<Unicode.Scalar> = ["\\", "/", ":", "*", "?", "\"", "<", ">", "|"]
-    guard id.unicodeScalars.contains(where: unusable.contains) else { return id }
-    return "\(Self.hashedDirectoryName)/\(Self.md5(id))"
+    let name = id.rawValue
+    guard name.unicodeScalars.contains(where: unusable.contains) else { return name }
+    return "\(Self.hashedDirectoryName)/\(Self.md5(name))"
   }
 
   /// The identifier of the store whose data file is at `relativePath`, or `nil` if the path
   /// holds a hash of it instead.
-  static func id(forRelativePath relativePath: String) -> String? {
-    relativePath.contains("/") ? nil : relativePath
+  static func id(forRelativePath relativePath: String) -> MMKVStore.ID? {
+    relativePath.contains("/") ? nil : MMKVStore.ID(rawValue: relativePath)
   }
 
   private static func md5(_ string: String) -> String {
@@ -58,14 +59,14 @@ extension MMKVStorage {
   }
 
   /// The paths the data file of the store with this identifier may have.
-  private func dataPaths(forID id: String) -> [String] {
+  private func dataPaths(forID id: MMKVStore.ID) -> [String] {
     let directory = self.resolvedPath
     var paths = ["\(directory)/\(Self.relativePath(forID: id))"]
     #if os(Android)
       // An older MMKV on Android named a store's files after a hash of their path. The core
       // moves such a store to its proper name when it can, and goes on using the old name when
       // it cannot.
-      paths.append("\(directory)/\(Self.md5("\(directory)/\(id)"))")
+      paths.append("\(directory)/\(Self.md5("\(directory)/\(id.rawValue)"))")
     #endif
     return paths
   }
@@ -80,10 +81,10 @@ extension MMKVStorage {
   /// ``MMKVStore`` over it holding a dangling pointer, so removal is refused for these. The
   /// lock is held across opening and removing, so that a store cannot be opened while it is
   /// being removed.
-  private static let openStores = Lock([String: String]())
+  private static let openStores = Lock([String: MMKVStore.ID]())
 
   /// Runs `open`, and records the store as open if it returns an instance.
-  func opening<Handle>(id: String, _ open: () -> sending Handle?) -> Handle? {
+  func opening<Handle>(id: MMKVStore.ID, _ open: () -> sending Handle?) -> Handle? {
     Self.openStores.withLock { openStores in
       let handle = open()
       if handle != nil {
@@ -99,8 +100,8 @@ extension MMKVStorage {
   /// that file's path is spelled.
   private static func openID(
     forDataPaths dataPaths: [String],
-    in openStores: [String: String]
-  ) -> String? {
+    in openStores: [String: MMKVStore.ID]
+  ) -> MMKVStore.ID? {
     func files(_ dataPath: String) -> [FileIdentity] {
       [dataPath, dataPath + Self.crcSuffix].compactMap(FileIdentity.init(path:))
     }
@@ -121,8 +122,8 @@ extension MMKVStorage {
     MMKVDirectory(path: self.path)
   }
 
-  func contains(id: String) -> Bool {
-    id.withMMKVBytes { id in
+  func contains(id: MMKVStore.ID) -> Bool {
+    id.rawValue.withMMKVBytes { id in
       self.path.withMMKVBytes { mmkv_storage_exists(id, $0) }
     }
   }
@@ -157,14 +158,14 @@ extension MMKVStorage {
   /// Removes the store with this identifier.
   ///
   /// - Returns: Whether the store had files to remove.
-  func remove(id: String) throws(MMKVError) -> Bool {
-    guard !id.isEmpty, !self.path.isEmpty else { return false }
+  func remove(id: MMKVStore.ID) throws(MMKVError) -> Bool {
+    guard !id.rawValue.isEmpty, !self.path.isEmpty else { return false }
     return try Self.openStores.withLock { openStores throws(MMKVError) in
       let dataPaths = self.dataPaths(forID: id)
       if Self.openID(forDataPaths: dataPaths, in: openStores) != nil {
         throw .storeIsOpen(id: id, directory: self.directory)
       }
-      return id.withMMKVBytes { id in
+      return id.rawValue.withMMKVBytes { id in
         self.path.withMMKVBytes { mmkv_remove_storage(id, $0) }
       }
     }

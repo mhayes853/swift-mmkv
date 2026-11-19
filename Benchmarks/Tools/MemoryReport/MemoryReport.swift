@@ -339,7 +339,7 @@ private func temporaryDirectory() -> String {
 
 private func openStore(
   engine: MMKVConfiguration.Engine,
-  id: String = "store",
+  id: MMKVStore.ID = "store",
   directory: String,
   encryption: MMKVConfiguration.Encryption?
 ) throws -> MMKVStore {

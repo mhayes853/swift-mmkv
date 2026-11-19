@@ -131,5 +131,60 @@
 
       #expect(store.toJSONData() == Data(#"{"json":["a"]}"#.utf8))
     }
+
+    @Test func `A JSON Coded Key Stores What The JSON Methods Do`() throws {
+      let store = try makeStore()
+      let key = MMKVStore.CodedKey<Settings>("settings")
+      let settings = Settings(notificationsEnabled: true, fontSize: 16)
+
+      #expect(try store.value(for: key) == nil)
+      #expect(try store.set(settings, for: key))
+
+      #expect(try store.value(for: key) == settings)
+      #expect(try store.decode(Settings.self, forKey: "settings") == settings)
+      let json = try #require(store["settings", as: String.self])
+      #expect(try JSONDecoder().decode(Settings.self, from: Data(json.utf8)) == settings)
+    }
+
+    @Test func `A JSON Coded Key Reads JSON Written As A String`() throws {
+      let store = try makeStore()
+      store.set(#"{"notificationsEnabled":false,"fontSize":18}"#, forKey: "settings")
+
+      #expect(
+        try store.value(for: MMKVStore.CodedKey<Settings>("settings"))
+          == Settings(notificationsEnabled: false, fontSize: 18)
+      )
+    }
+
+    @Test func `A JSON Coded Key Throws For A Value That Is Not JSON`() throws {
+      let store = try makeStore()
+      store.set("not json", forKey: "settings")
+
+      #expect(throws: DecodingError.self) {
+        try store.value(for: MMKVStore.CodedKey<Settings>("settings"))
+      }
+    }
+
+    @Test func `JSON Coded Keys With The Same Name Are Equal`() {
+      #expect(MMKVStore.CodedKey<Settings>("settings") == MMKVStore.CodedKey("settings"))
+      #expect(MMKVStore.CodedKey<Settings>("settings") != MMKVStore.CodedKey("other"))
+      #expect(
+        MMKVStore.CodedKey<Settings>("settings")
+          != MMKVStore.CodedKey("settings", encoder: JSONEncoder(), decoder: JSONDecoder())
+      )
+    }
+
+    @Test func `A Defaulted JSON Coded Key Reads Its Default Until A Value Is Stored`() throws {
+      let store = try makeStore()
+      let fallback = Settings(notificationsEnabled: false, fontSize: 12)
+      let key = MMKVStore.DefaultedCodedKey("settings", default: fallback)
+
+      #expect(try store.value(for: key) == fallback)
+      #expect(key == MMKVStore.DefaultedCodedKey(MMKVStore.CodedKey("settings"), default: fallback))
+
+      try store.set(Settings(notificationsEnabled: true, fontSize: 20), for: key)
+
+      #expect(try store.value(for: key) == Settings(notificationsEnabled: true, fontSize: 20))
+    }
   }
 #endif

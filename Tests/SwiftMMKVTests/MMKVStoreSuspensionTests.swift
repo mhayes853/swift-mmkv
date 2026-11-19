@@ -68,21 +68,21 @@ import Testing
 
   @Test func `Throwing Operations Report The Suspension`() throws {
     let store = try makeStore(mode: .multiProcess)
-    try store.encode(1, forKey: "number", with: DescriptionCoder())
+    try store.encode(1, forKey: "number", with: TextCoder.shared)
     store.suspend()
 
     #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
-      try store.decode(Int.self, forKey: "number", with: DescriptionCoder())
+      try store.decode(Int.self, forKey: "number", with: TextCoder.shared)
     }
     #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
-      try store.encode(2, forKey: "number", with: DescriptionCoder())
+      try store.encode(2, forKey: "number", with: TextCoder.shared)
     }
     #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
       try store.rekey(.aes128(key: "key"))
     }
 
     store.resume()
-    #expect(try store.decode(forKey: "number", with: DescriptionCoder()) == 1)
+    #expect(try store.decode(forKey: "number", with: TextCoder.shared) == 1)
   }
 
   @Test func `An Exclusive Lock Body Runs Without The Lock While Suspended`() throws {
@@ -175,9 +175,9 @@ import Testing
 
   @Test func `A Decoding Sequence Survives A Suspension`() async throws {
     let store = try makeStore(mode: .multiProcess)
-    try store.encode(1, forKey: "number", with: DescriptionCoder())
+    try store.encode(1, forKey: "number", with: TextCoder.shared)
     store.suspend()
-    var values = store.values(forKey: "number", as: Int.self, with: DescriptionCoder())
+    var values = store.values(forKey: "number", as: Int.self, with: TextCoder.shared)
       .makeAsyncIterator()
 
     store.resume()

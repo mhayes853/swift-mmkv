@@ -65,6 +65,26 @@ import Testing
     #expect(recorder.all == [nil, nil, "blob"])
     subscription.cancel()
   }
+
+  @Test func `Delivers Decoded Values With A Custom Decoder`() throws {
+    let store = try makeStore()
+    store.set("1", forKey: "count")
+    let recorder = ValueRecorder<Result<Int?, any Error>>()
+
+    let subscription = store.subscribe(
+      forKey: "count",
+      as: Int.self,
+      with: TextCoder.shared,
+      recorder.record
+    )
+    store.set("two", forKey: "count")
+    store.set("3", forKey: "count")
+    store.removeValue(forKey: "count")
+
+    #expect(recorder.all.map(\.success) == [.some(1), nil, .some(3), .some(nil)])
+    #expect(throws: TextCoder.Failure.self) { try recorder.all[1].get() }
+    subscription.cancel()
+  }
 }
 
 @Suite(.requires(.store)) struct MMKVValuesTests {
@@ -155,7 +175,7 @@ import Testing
 
   @Test func `Decodes Values With A Custom Decoder`() async throws {
     let store = try makeStore()
-    var values = store.values(forKey: "count", as: Int.self, with: DescriptionCoder())
+    var values = store.values(forKey: "count", as: Int.self, with: TextCoder.shared)
       .makeAsyncIterator()
     #expect(try await values.next() == .some(nil))
 
@@ -166,10 +186,10 @@ import Testing
   @Test func `A Value That Cannot Be Decoded Is Thrown And Ends The Sequence`() async throws {
     let store = try makeStore()
     store.set("not a number", forKey: "count")
-    var values = store.values(forKey: "count", as: Int.self, with: DescriptionCoder())
+    var values = store.values(forKey: "count", as: Int.self, with: TextCoder.shared)
       .makeAsyncIterator()
 
-    await #expect(throws: DescriptionCoder.Failure.self) { try await values.next() }
+    await #expect(throws: TextCoder.Failure.self) { try await values.next() }
 
     store.set("42", forKey: "count")
     #expect(try await values.next() == nil)

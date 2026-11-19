@@ -41,8 +41,27 @@ public final class MMKVStore: Sendable {
     self.currentConfiguration = Lock(configuration)
   }
 
+  /// Opens a new, empty single-process store in a temporary directory, for a store that does
+  /// not need to last, such as one for a test or a preview.
+  ///
+  /// ```swift
+  /// let store = try MMKVStore.temporary()
+  /// ```
+  ///
+  /// This opens ``MMKVConfiguration/temporary(id:)``. Start from that configuration to change
+  /// anything else about the store. It is a store like any other, and lasts until the system
+  /// clears its temporary directory.
+  ///
+  /// - Parameter id: The store's identifier.
+  /// - Throws: ``MMKVError/openFailed(id:directory:)`` if the store cannot be opened, which is
+  ///   the case where the system's temporary directory cannot be written to. See
+  ///   ``MMKVDirectory/temporary()``.
+  public static func temporary(id: MMKVStore.ID = .default) throws(MMKVError) -> MMKVStore {
+    try MMKVStore(.temporary(id: id))
+  }
+
   /// The store's identifier.
-  public var id: String {
+  public var id: MMKVStore.ID {
     self.core.state.id
   }
 
@@ -185,6 +204,70 @@ extension MMKVStore {
     let didWrite = body()
     self.core.operationDidFinish(writingTo: didWrite ? key : nil)
     return didWrite
+  }
+}
+
+// MARK: - Batches
+
+extension MMKVStore {
+  /// Reads the values stored under `keys` as `V`s, all at once.
+  ///
+  /// ```swift
+  /// let scores = store.values(forKeys: ["score.1", "score.2"], as: Double.self)
+  /// ```
+  ///
+  /// The store is locked once for the whole read, so the values are those the keys held at
+  /// one moment, and for a multi-process store the file lock is taken once rather than once
+  /// for each key.
+  ///
+  /// - Parameters:
+  ///   - keys: The keys to read.
+  ///   - type: The type to read each value as. See ``value(forKey:as:)``.
+  /// - Returns: The values by key. A key is left out when it has no value or its value is not
+  ///   a valid `V`.
+  public func values<V: MMKVValue>(
+    forKeys keys: some Sequence<String>,
+    as type: V.Type = V.self
+  ) -> [String: V] {
+    self.core.locked {
+      var values = [String: V]()
+      for key in keys {
+        values[key] = self.core.value(forKey: key, as: type)
+      }
+      return values
+    }
+  }
+
+  /// Stores each value of `values` under its key, replacing any existing values, all at once.
+  ///
+  /// ```swift
+  /// store.set(["score.1": 10.0, "score.2": 12.5])
+  /// ```
+  ///
+  /// The store is locked once for the whole write, so nothing else reads or writes it part of
+  /// the way through, and for a multi-process store the file lock is taken once rather than
+  /// once for each key. Listeners are told about each key after every value has been written.
+  ///
+  /// The write is not atomic if the process is killed during it: the values written by then
+  /// are kept.
+  ///
+  /// - Parameters:
+  ///   - values: The values to store, by key.
+  ///   - expiringIn: How long to keep the values. See ``set(_:forKey:expiringIn:)``.
+  /// - Returns: Whether every value was stored. A value that cannot be stored does not stop
+  ///   the others from being stored. See ``set(_:forKey:expiringIn:)`` for why a write fails.
+  @discardableResult
+  public func set<V: MMKVValue>(_ values: [String: V], expiringIn: Duration? = nil) -> Bool {
+    let expiresInSeconds = expiringIn.mmkvExpirySeconds
+    let stored = self.core.locked {
+      values.keys.filter { key in
+        self.core.set(values[key]!, forKey: key, expiresInSeconds: expiresInSeconds)
+      }
+    }
+    for key in stored {
+      self.core.state.notify(.key(key))
+    }
+    return stored.count == values.count
   }
 }
 
@@ -344,6 +427,24 @@ extension MMKVStore {
   /// }
   /// ```
   ///
+  /// ## Batches
+  ///
+  /// The lock is taken once however much `body` does, which for a multi-process store means
+  /// taking the file lock once rather than once for each read and write. Listeners are told
+  /// about the keys `body` changed once it returns, each key once, so they never see part of
+  /// what it writes. That makes this the way to read or write a batch that mixes kinds of key:
+  ///
+  /// ```swift
+  /// try store.withExclusiveLock { store in
+  ///   store[.username] = "blob"
+  ///   try store.set(settings, for: .settings)
+  ///   store.removeValue(forKey: "legacy")
+  /// }
+  /// ```
+  ///
+  /// The writes are not atomic if the process is killed during `body`: those made by then are
+  /// kept.
+  ///
   /// - Returns: The result of `body`.
   public func withExclusiveLock<R, E: Error>(
     _ body: (MMKVStore) throws(E) -> R
@@ -438,6 +539,45 @@ extension MMKVStore {
       onChange(self.value(forKey: key, as: V.self))
     }
     onChange(self.value(forKey: key, as: V.self))
+    return subscription
+  }
+
+  /// Calls `onChange` with the `Decodable` value of `key`, read with `decoder`, once before this
+  /// function returns and then whenever the value may have changed, until the returned
+  /// subscription is cancelled or released.
+  ///
+  /// ```swift
+  /// let subscription = store.subscribe(forKey: "settings", as: Settings.self, with: decoder) {
+  ///   switch $0 {
+  ///   case .success(let settings): apply(settings ?? Settings())
+  ///   case .failure(let error): report(error)
+  ///   }
+  /// }
+  /// ```
+  ///
+  /// The result is a success of `nil` when the store has no value for `key`. It is a failure
+  /// with whatever `decoder` throws when the stored value does not decode, and with
+  /// ``MMKVError/storeIsSuspended(id:)`` while the store is suspended. The subscription
+  /// carries on after a failure, so a later write that decodes is delivered as a success.
+  ///
+  /// In other respects this behaves like ``subscribe(forKey:as:_:)``, including running with a
+  /// value it was already given.
+  ///
+  /// - Parameters:
+  ///   - key: The key to observe.
+  ///   - type: The type to decode.
+  ///   - decoder: The decoder that reads the value.
+  ///   - onChange: Runs with the current value, and again after each change.
+  public func subscribe<T: Decodable & SendableMetatype, Decoder: MMKVTopLevelDecoder & Sendable>(
+    forKey key: String,
+    as type: T.Type = T.self,
+    with decoder: Decoder,
+    _ onChange: @escaping @Sendable (Result<T?, any Error>) -> Void
+  ) -> MMKVSubscription where Decoder.Input: MMKVValue {
+    let subscription = self.subscribe(forKey: key) {
+      onChange(Result { try self.decode(T.self, forKey: key, with: decoder) })
+    }
+    onChange(Result { try self.decode(T.self, forKey: key, with: decoder) })
     return subscription
   }
 

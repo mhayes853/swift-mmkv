@@ -420,7 +420,7 @@ import Testing
     try await Task.sleep(for: oneSecondExpiry)
 
     // Each check is the first operation on a read-only instance of its own.
-    func openReadOnly(_ id: String) throws -> MMKVStore {
+    func openReadOnly(_ id: MMKVStore.ID) throws -> MMKVStore {
       try copyFiles(of: store, in: rootDirectory, to: id)
       return try makeStore(
         id: id,

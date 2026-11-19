@@ -76,6 +76,10 @@ plus the operations that do not open a store:
 - **Opening**: the C interface's own rules (an empty identifier or directory fails, the directory is
   created unless the store is read-only), and the instance registry, so that every open of the
   same files in a process shares one instance.
+- **Process-wide reports**: the core's log messages at or above `MMKVLog`'s minimum level, which
+  the C++ core hands to `mmkv_set_log_callback`, and files that fail their integrity check as they
+  load, which it reports through `mmkv_set_integrity_failure_callback` with the checksum or
+  file-length kind. The Swift core has neither yet, so the tests for them are skipped against it.
 
 Suspension (`SuspensionGate`) lives above the engine and needs nothing from it.
 

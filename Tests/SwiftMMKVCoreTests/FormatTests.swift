@@ -329,7 +329,7 @@ import Testing
   @Test func `The C++ Core Writes Its Files Where The Paths Say`() throws {
     let root = temporaryDirectory()
     for id in ["plain", "with/slash"] {
-      try makeCxxStore(id: id, rootDirectory: root).set(true, forKey: "key")
+      try makeCxxStore(id: MMKVStore.ID(rawValue: id), rootDirectory: root).set(true, forKey: "key")
       let dataPath = StorePaths.dataPath(id: id, root: StorePaths.normalizedRoot(root))
       #expect(FileManager.default.fileExists(atPath: dataPath), "\(id)")
       #expect(FileManager.default.fileExists(atPath: StorePaths.metaPath(dataPath: dataPath)))

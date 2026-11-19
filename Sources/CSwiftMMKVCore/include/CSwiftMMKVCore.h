@@ -62,6 +62,40 @@ typedef void (*mmkv_content_changed_callback)(mmkv_bytes id);
 void mmkv_set_content_changed_callback(mmkv_content_changed_callback _Nullable callback)
   CSWIFTMMKV_SYMBOL(set_content_changed_callback);
 
+enum {
+  MMKV_LOG_INFO = 1,
+  MMKV_LOG_WARNING = 2,
+  MMKV_LOG_ERROR = 3,
+  MMKV_LOG_NONE = 4,
+};
+
+/// Receives a message the core logged. The core's locks may be held, so the callback must not
+/// call back into a store.
+typedef void (*mmkv_log_callback)(
+  int32_t level, mmkv_bytes file, int32_t line, mmkv_bytes function, mmkv_bytes message);
+
+/// Installs the process-wide callback for log messages, or with NULL has them printed to
+/// standard error, or to the system log on Android. Safe to call more than once.
+void mmkv_set_log_callback(mmkv_log_callback _Nullable callback)
+  CSWIFTMMKV_SYMBOL(set_log_callback);
+
+/// The least severe level the core logs, which starts as `MMKV_LOG_WARNING`.
+int32_t mmkv_log_level(void) CSWIFTMMKV_SYMBOL(log_level);
+void mmkv_set_log_level(int32_t level) CSWIFTMMKV_SYMBOL(set_log_level);
+
+enum {
+  MMKV_INTEGRITY_FAILURE_CHECKSUM = 0,
+  MMKV_INTEGRITY_FAILURE_FILE_LENGTH = 1,
+};
+
+/// Called when a store's file fails its integrity check as it is loaded. The store's locks are
+/// held, so the callback must not call back into it.
+typedef void (*mmkv_integrity_failure_callback)(mmkv_bytes id, int32_t kind);
+
+/// Installs the process-wide callback for integrity failures. Safe to call more than once.
+void mmkv_set_integrity_failure_callback(mmkv_integrity_failure_callback _Nullable callback)
+  CSWIFTMMKV_SYMBOL(set_integrity_failure_callback);
+
 /// Opens the store described by `configuration`, or returns the instance already open for its
 /// root directory and identifier. Returns NULL if the store could not be opened.
 mmkv_store *_Nullable mmkv_open(const mmkv_configuration *_Nonnull configuration)

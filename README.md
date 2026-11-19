@@ -96,6 +96,94 @@ objects. Any coder works if it conforms to `MMKVTopLevelEncoder` or `MMKVTopLeve
 its output is an `MMKVValue`, such as `Data`, `String`, or `[UInt8]`. Both methods throw the
 coder's errors, and `decode` returns `nil` only when the key has no value.
 
+## Typed keys
+
+The string APIs above are the quickest to use. A typed key writes a key's name and the type of
+its value once, so that every use agrees:
+
+```swift
+extension MMKVStore.Key where Value == String {
+  static let username: Self = "username"
+  static func draft(_ postID: Int) -> Self { "draft.\(postID)" }
+}
+
+store[.username] = "blob"
+let draft = store[.draft(42)]  // String?
+store.removeValue(for: .username)
+```
+
+A typed key reads and writes exactly what the string APIs do with the same name, so the two can
+be mixed, and a key can name a value written from JavaScript. `contains`, `set(_:for:)`,
+`value(for:)`, `subscribe(for:)` and `values(for:)` take a key as well.
+
+A `DefaultedKey` reads a default instead of `nil` when the store has no value:
+
+```swift
+extension MMKVStore.DefaultedKey where Value == Double {
+  static let volume = Self("volume", default: 0.5)
+}
+
+let volume = store[.volume]  // Double
+store[.volume] = 0.8
+```
+
+A `CodedKey` holds a `Codable` value and the coders that store it. Reading and writing throw
+what the coders throw, so a coded key is used through methods rather than a subscript:
+
+```swift
+extension MMKVStore.CodedKey where Value == Settings {
+  static let settings = Self("settings")
+}
+extension MMKVStore.CodedKey where Value == Feed {
+  static let feed = Self("feed", encoder: PropertyListEncoder(), decoder: PropertyListDecoder())
+}
+
+try store.set(Settings(fontSize: 16), for: .settings)
+let settings = try store.value(for: .settings)  // Settings?
+```
+
+With the `Foundation` trait a coded key made from a name alone stores JSON, as `encode` and
+`decode` do. Such keys share one `JSONEncoder` and one `JSONDecoder` with default settings; pass
+your own coders for anything else.
+
+A `DefaultedCodedKey` adds a default, which is read only when the key is missing. A stored
+value that does not decode is still thrown.
+
+```swift
+extension MMKVStore.DefaultedCodedKey where Value == Settings {
+  static let settings = Self("settings", default: Settings())
+}
+```
+
+Every kind of key can be followed with `subscribe(for:)` and `values(for:)`. A defaulted key
+delivers its default in place of a missing value, and a coded key's listener is given a `Result`,
+since it cannot throw:
+
+```swift
+for await volume in store.values(for: .volume) {  // Double, from the DefaultedKey
+  player.volume = volume
+}
+
+let subscription = store.subscribe(for: .settings) { result in
+  switch result {
+  case .success(let settings): apply(settings)
+  case .failure(let error): report(error)
+  }
+}
+```
+
+See [Change listeners](#change-listeners) for when these run.
+
+Two things to know about coded keys that are given their coders:
+
+- The coders must be classes, as `JSONEncoder`, `JSONDecoder` and the property list coders are.
+- Two coded keys are equal when they have the same name and the same coder objects. A key built
+  in a `static func` should take its coders from a shared `static let` rather than create new
+  ones on each call.
+
+Give a defaulted key a different name from a plain key over the same value type, since
+`store.contains(.volume)` is ambiguous when both exist.
+
 ## Keys, removal, and locking
 
 ```swift
@@ -110,6 +198,39 @@ store.withExclusiveLock { store in
   store.set(count + 1, forKey: "launchCount")
 }
 ```
+
+To read or write several keys of one type at once, pass them together. The store is locked once
+for the whole batch, which for a multi-process store means taking the file lock once instead of
+once for each key, and listeners are told after every value is written:
+
+```swift
+store.set(["score.1": 10.0, "score.2": 12.5])
+let scores = store.values(forKeys: ["score.1", "score.2"], as: Double.self)  // [String: Double]
+```
+
+Keys of different types go in as pairs. With string keys, a read pairs each key with its type and
+a write pairs it with its value:
+
+```swift
+store.set(("username", "blob"), ("volume", 0.8))
+let (username, volume) = store.values(forKeys: ("username", String.self), ("volume", Double.self))
+```
+
+[Typed keys](#typed-keys) carry their types already:
+
+```swift
+store.set((.username, "blob"), (.draft(42), "Hello"))
+let (username, draft) = store.values(forKeys: .username, .draft(42))  // (String?, String?)
+let (volume, theme) = store.values(forKeys: .volume, .theme)          // defaulted: (Double, String)
+try store.set((.settings, settings), (.feed, feed))                   // coded keys
+```
+
+A batch of coded keys encodes every value before it stores anything, so nothing is stored when
+one of them does not encode. Each of these takes keys of one kind. For a batch that mixes kinds,
+or mixes writes with removals, use `withExclusiveLock`: it locks once however much its body does,
+and listeners are told about the keys it changed once it returns.
+
+A batch is not atomic if the process is killed during it: the values written by then are kept.
 
 A store's file grows as values are written and does not shrink by itself. `byteSize` is the size
 of the file, `usedByteSize` is how much of it holds data, and `trim()` rewrites the file without
@@ -133,6 +254,22 @@ directory.containsStore(id: "session")  // false until the store is first opened
 try directory.removeStore(id: "session")
 ```
 
+Stores are named by `MMKVStore.ID`, which a string literal converts to. Extend it to keep your
+app's store names in one place:
+
+```swift
+extension MMKVStore.ID {
+  static let session: Self = "session"
+  static func user(_ userID: String) -> Self { "user.\(userID)" }
+}
+
+try directory.removeStore(id: .user("42"))
+```
+
+`MMKVStore.ID.default` is `mmkv.default`, the store react-native-mmkv opens when it is given no
+identifier. An identifier that is only known at runtime is made with
+`MMKVStore.ID(rawValue:)`.
+
 `stores` lists what the directory holds, and `removeAllStores()` deletes all of it:
 
 ```swift
@@ -152,6 +289,21 @@ A store that is open in this process cannot be removed: `removeStore(id:)` throw
 been created for it, so remove a store before opening it, or empty an open one with
 `removeAll()`. `removeAllStores()` removes every store that is not open and then throws
 `MMKVError.storesAreOpen`, naming the ones it left.
+
+For a store that does not need to last, such as one for a test or a preview, use a temporary
+directory. Every call makes a new one, so the store starts empty:
+
+```swift
+let store = try MMKVStore.temporary()
+
+var configuration = MMKVConfiguration.temporary()  // to change anything else about the store
+let directory = MMKVDirectory.temporary()          // to open several stores side by side
+```
+
+It is a store like any other, in a new directory inside the system's temporary directory, and
+it lasts until the system clears that. On Android this relies on `TMPDIR`, which recent versions
+set to the app's cache directory; on one that does not, set it at launch or use a directory in
+the cache directory.
 
 `importAll(from:)` copies one store's keys and values into another, replacing the keys the
 destination already has. The two stores may differ in mode and encryption:
@@ -195,6 +347,18 @@ for await volume in store.values(forKey: "volume", as: Double.self) {
 
 for try await settings in store.values(forKey: "settings", as: Settings.self, with: JSONDecoder()) {
   apply(settings ?? Settings())
+}
+```
+
+A listener cannot throw, so one that decodes is given a `Result`. It carries on after a failure,
+whereas the sequence ends with the error:
+
+```swift
+let subscription = store.subscribe(forKey: "settings", as: Settings.self, with: JSONDecoder()) {
+  switch $0 {
+  case .success(let settings): apply(settings ?? Settings())
+  case .failure(let error): report(error)
+  }
 }
 ```
 
@@ -313,6 +477,9 @@ WindowGroup {
 }
 ```
 
+The controller and the modifiers take several stores at once, either listed or as any sequence:
+`.mmkvSuspension(settings, session)` or `.mmkvSuspension(stores)`.
+
 Things to know:
 
 - The stores stay usable while the app is only inactive, as it is under the app switcher, because
@@ -324,6 +491,33 @@ Things to know:
 - An app launched in the background starts with its stores usable, and never enters the
   background. Suspend the stores when that work is done.
 - On macOS there is nothing to observe, so only the manual forms are available.
+
+## Logging and integrity failures
+
+MMKV logs when something goes wrong with a store's files. Warnings and errors are printed to
+standard error, or to logcat on Android. `MMKVLog` changes the level and the destination for
+every store in the process:
+
+```swift
+MMKVLog.minimumLevel = .info  // or nil to log nothing
+MMKVLog.setHandler { message in
+  crashReporter.addBreadcrumb("\(message.level): \(message.text)")
+}
+```
+
+A store's file can fail its integrity check after the process is killed in the middle of a
+write. The store's `recovery` setting decides what becomes of the contents; to be told when it
+happens, subscribe before using the stores:
+
+```swift
+let subscription = MMKVStore.subscribeToIntegrityFailures { failure in
+  analytics.record("mmkv_corruption", store: failure.id.rawValue, kind: "\(failure.kind)")
+}
+```
+
+Both the log handler and this listener run while MMKV holds the store's lock, so they must not
+read or write a store. A failure carries the store's identifier alone, so stores with the same
+identifier in different directories cannot be told apart.
 
 ## The `Foundation` trait
 
@@ -360,6 +554,14 @@ A property with a default uses it while the store has no value for the key. An o
 property is `nil` then, and setting it to `nil` removes the key. `Codable` values need both
 coders, and a coder's error or a rejected write shows up in `loadError` or `saveError`.
 
+[Typed keys](#typed-keys) work too, and a defaulted key supplies the property's default:
+
+```swift
+@Shared(.mmkv(.username)) var username: String?  // MMKVStore.Key<String>
+@Shared(.mmkv(.volume)) var volume               // MMKVStore.DefaultedKey<Double>
+@Shared(.mmkv(.settings)) var settings           // MMKVStore.DefaultedCodedKey<Settings>
+```
+
 The keys use the store in the `defaultMMKVStore` dependency unless one is passed as `store:`.
 Set it once when the app launches:
 
@@ -379,6 +581,34 @@ is only seen when the store is next read or written, or when the app calls
 
 swift-sharing and its dependencies use Foundation, whether or not the `Foundation` trait is on.
 
+## The `Logging` trait
+
+The `Logging` trait, off by default, sends MMKV's log messages to
+[swift-log](https://github.com/apple/swift-log) instead of standard error or logcat:
+
+```swift
+.package(
+  url: "https://github.com/mhayes853/swift-mmkv",
+  branch: "main",
+  traits: ["Foundation", "Logging"]
+)
+```
+
+Messages go to `Logger(label: "swift-mmkv")`, which is made when the first one is logged, so
+bootstrap your logging system before using a store. Or assign a logger of your own:
+
+```swift
+MMKVLog.logger = Logger(label: "com.example.storage")
+MMKVLog.logger.logLevel = .info
+```
+
+Setting the logger, or its level, also sets `MMKVLog.minimumLevel` to match, so the second line
+is all it takes to see MMKV's info messages. A handler set with `MMKVLog.setHandler` still takes
+over from the logger.
+
+On Android, swift-log's own handler writes to the console rather than to logcat. Bootstrap a
+handler that writes to logcat to keep MMKV's messages there.
+
 ## Platforms
 
 | Platform | Status |
@@ -393,8 +623,8 @@ swift-sharing and its dependencies use Foundation, whether or not the `Foundatio
 - On iOS the store's files keep the default file protection. Upstream's Objective-C++ build
   relaxes it to "until first user authentication" so a store can be read while the device is
   locked; this package builds the core's POSIX variant, which does not.
-- Backup and restore, log and recovery handlers, and encoding an `Encodable` value into store
-  keys are not implemented yet.
+- Backup and restore, and encoding an `Encodable` value into store keys, are not implemented
+  yet.
 
 ## The vendored core
 

@@ -222,7 +222,7 @@ private func temporaryDirectory() -> String {
 /// Opens a store, and writes every key with `fill` when one is given.
 private func openStore(
   engine: MMKVConfiguration.Engine,
-  id: String = "store",
+  id: MMKVStore.ID = "store",
   rootDirectory: String = temporaryDirectory(),
   mode: MMKVConfiguration.Mode = .singleProcess,
   encryption: MMKVConfiguration.Encryption? = nil,

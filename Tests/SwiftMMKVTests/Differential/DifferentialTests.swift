@@ -124,7 +124,7 @@ import Testing
     #expect(store.usedByteSize > 4 << 17, "the data should span several windows")
 
     for reader in [MMKVConfiguration.Engine.cxx, .swift] {
-      let id = "copy-\(reader)"
+      let id: MMKVStore.ID = "copy-\(reader)"
       try copyStoreFiles(id: "store", to: id, in: directory)
       let copy = try makeStore(
         id: id,
@@ -158,7 +158,7 @@ import Testing
       store.set("written after rekey \(index)", forKey: "k2")
       model["k2"] = .string("written after rekey \(index)")
       store.sync()
-      let id = "reader-\(index)"
+      let id: MMKVStore.ID = "reader-\(index)"
       try copyStoreFiles(id: "store", to: id, in: directory)
       let copy = try makeStore(
         id: id,
@@ -185,7 +185,7 @@ import Testing
   ) throws {
     var generator = SplitMix64(seed: UInt64(1_000 + seed))
     let directory = temporaryRootDirectory()
-    let id = "shared-\(seed)"
+    let id: MMKVStore.ID = "shared-\(seed)"
     let cxx = try makeStore(
       id: id,
       rootDirectory: directory,

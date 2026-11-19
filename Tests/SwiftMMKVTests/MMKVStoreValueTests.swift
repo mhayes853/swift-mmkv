@@ -159,22 +159,22 @@ import Testing
   @Test func `Encodes And Decodes With A Custom Coder`() throws {
     let store = try makeStore()
 
-    #expect(try store.encode(42, forKey: "answer", with: DescriptionCoder()))
+    #expect(try store.encode(42, forKey: "answer", with: TextCoder.shared))
 
     #expect(store.value(forKey: "answer", as: String.self) == "42")
-    #expect(try store.decode(Int.self, forKey: "answer", with: DescriptionCoder()) == 42)
-    #expect(try store.decode(Int.self, forKey: "missing", with: DescriptionCoder()) == nil)
+    #expect(try store.decode(Int.self, forKey: "answer", with: TextCoder.shared) == 42)
+    #expect(try store.decode(Int.self, forKey: "missing", with: TextCoder.shared) == nil)
   }
 
   @Test func `Coder Errors Are Thrown`() throws {
     let store = try makeStore()
     store.set("not a number", forKey: "answer")
 
-    #expect(throws: DescriptionCoder.Failure()) {
-      try store.decode(Int.self, forKey: "answer", with: DescriptionCoder())
+    #expect(throws: TextCoder.Failure()) {
+      try store.decode(Int.self, forKey: "answer", with: TextCoder.shared)
     }
-    #expect(throws: DescriptionCoder.Failure()) {
-      try store.encode([1], forKey: "list", with: DescriptionCoder())
+    #expect(throws: TextCoder.Failure()) {
+      try store.encode([1], forKey: "list", with: TextCoder.shared)
     }
     #expect(!store.contains("list"))
   }

@@ -30,7 +30,7 @@ func enableExpiration(on store: MMKVStore) throws {
 
 /// A store's pair of files: the data file `<root>/<id>` and the metadata file `<root>/<id>.crc`.
 struct StoreFiles {
-  let id: String
+  let id: MMKVStore.ID
   let rootDirectory: String
 
   var dataPath: String { "\(self.rootDirectory)/\(self.id)" }
@@ -82,7 +82,7 @@ struct StoreFiles {
 /// instance over the store's contents as they are now, which is how these ports stand in for
 /// upstream closing a store and opening it again.
 @discardableResult
-func copyFiles(of store: MMKVStore, in rootDirectory: String, to newID: String) throws
+func copyFiles(of store: MMKVStore, in rootDirectory: String, to newID: MMKVStore.ID) throws
   -> StoreFiles
 {
   store.sync()

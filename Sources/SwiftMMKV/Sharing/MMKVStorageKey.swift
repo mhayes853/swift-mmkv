@@ -201,6 +201,122 @@
     }
   }
 
+  // MARK: - Typed keys
+
+  extension SharedReaderKey {
+    /// A key for the value of an ``MMKVStore/Key``.
+    ///
+    /// ```swift
+    /// @Shared(.mmkv(.username)) var username = "blob"
+    /// ```
+    ///
+    /// When the store has no value for `key`, the state holds the `@Shared` property's default.
+    ///
+    /// - Parameters:
+    ///   - key: The key in the store.
+    ///   - store: The store to use, or `nil` for the `defaultMMKVStore` dependency.
+    public static func mmkv<Value: MMKVValue & Sendable>(
+      _ key: MMKVStore.Key<Value>,
+      store: MMKVStore? = nil
+    ) -> Self where Self == MMKVStorageKey<Value> {
+      .mmkv(key.name, store: store)
+    }
+
+    /// A key for the optional value of an ``MMKVStore/Key``. The state is `nil` when the store
+    /// has no value for `key`, and setting it to `nil` removes the key.
+    ///
+    /// ```swift
+    /// @Shared(.mmkv(.username)) var username: String?
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - key: The key in the store.
+    ///   - store: The store to use, or `nil` for the `defaultMMKVStore` dependency.
+    public static func mmkv<Value: MMKVValue & Sendable>(
+      _ key: MMKVStore.Key<Value>,
+      store: MMKVStore? = nil
+    ) -> Self where Self == MMKVStorageKey<Value?> {
+      .mmkv(key.name, store: store)
+    }
+
+    /// A key for the value of an ``MMKVStore/DefaultedKey``, which supplies the state's default,
+    /// so the `@Shared` property needs none.
+    ///
+    /// ```swift
+    /// @Shared(.mmkv(.volume)) var volume
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - key: The key in the store.
+    ///   - store: The store to use, or `nil` for the `defaultMMKVStore` dependency.
+    public static func mmkv<Value: MMKVValue & Sendable>(
+      _ key: MMKVStore.DefaultedKey<Value>,
+      store: MMKVStore? = nil
+    ) -> Self where Self == MMKVStorageKey<Value>.Default {
+      Self[.mmkv(key.key, store: store), default: key.defaultValue]
+    }
+
+    /// A key for the value of an ``MMKVStore/CodedKey``.
+    ///
+    /// ```swift
+    /// @Shared(.mmkv(.settings)) var settings = Settings()
+    /// ```
+    ///
+    /// When the store has no value for `key`, the state holds the `@Shared` property's default.
+    /// A value that does not decode is reported through `loadError`.
+    ///
+    /// - Parameters:
+    ///   - key: The key in the store.
+    ///   - store: The store to use, or `nil` for the `defaultMMKVStore` dependency.
+    public static func mmkv<Value>(
+      _ key: MMKVStore.CodedKey<Value>,
+      store: MMKVStore? = nil
+    ) -> Self where Self == MMKVStorageKey<Value> {
+      MMKVStorageKey(key: key.name, store: store) { store, _ in
+        try store.value(for: key)
+      } save: { value, store, name in
+        try store.write(name) { try store.set(value, for: key) }
+      }
+    }
+
+    /// A key for the optional value of an ``MMKVStore/CodedKey``. The state is `nil` when the
+    /// store has no value for `key`, and setting it to `nil` removes the key.
+    ///
+    /// - Parameters:
+    ///   - key: The key in the store.
+    ///   - store: The store to use, or `nil` for the `defaultMMKVStore` dependency.
+    public static func mmkv<Value>(
+      _ key: MMKVStore.CodedKey<Value>,
+      store: MMKVStore? = nil
+    ) -> Self where Self == MMKVStorageKey<Value?> {
+      MMKVStorageKey(key: key.name, store: store) { store, _ in
+        .some(try store.value(for: key))
+      } save: { value, store, name in
+        try store.write(name) {
+          guard let value else { return store.removeValue(for: key) }
+          return try store.set(value, for: key)
+        }
+      }
+    }
+
+    /// A key for the value of an ``MMKVStore/DefaultedCodedKey``, which supplies the state's
+    /// default, so the `@Shared` property needs none.
+    ///
+    /// ```swift
+    /// @Shared(.mmkv(.settings)) var settings
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - key: The key in the store.
+    ///   - store: The store to use, or `nil` for the `defaultMMKVStore` dependency.
+    public static func mmkv<Value>(
+      _ key: MMKVStore.DefaultedCodedKey<Value>,
+      store: MMKVStore? = nil
+    ) -> Self where Self == MMKVStorageKey<Value>.Default {
+      Self[.mmkv(key.key, store: store), default: key.defaultValue]
+    }
+  }
+
   extension MMKVStore {
     /// Runs a write to `key`, turning a write the store did not accept into an error.
     fileprivate func write(_ key: String, _ body: () throws -> Bool) throws {
@@ -248,21 +364,17 @@
         as early as possible in the app's lifetime, or pass a store to the 'mmkv' shared key.
         """
       )
-      return .temporary()
+      return .temporaryDefault()
     }
 
-    static var testValue: MMKVStore { .temporary() }
+    static var testValue: MMKVStore { .temporaryDefault() }
   }
 
   extension MMKVStore {
-    /// An empty store in a directory of its own, which the system cleans up.
-    fileprivate static func temporary() -> MMKVStore {
-      let directory = MMKVDirectory(
-        path: temporaryDirectory() + "swift-mmkv-sharing-"
-          + String(UInt64.random(in: .min ... .max), radix: 16)
-      )
+    /// An empty store in a temporary directory, for a default that has no way to fail.
+    fileprivate static func temporaryDefault() -> MMKVStore {
       do {
-        return try MMKVStore(MMKVConfiguration(directory: directory, mode: .singleProcess))
+        return try .temporary()
       } catch {
         fatalError("A temporary MMKV store could not be opened: \(error)")
       }

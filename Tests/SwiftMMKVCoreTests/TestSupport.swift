@@ -16,7 +16,7 @@ func readFile(atPath path: String) throws -> [UInt8] {
 
 /// Opens a store with the C++ core, whatever the tests' engine.
 func makeCxxStore(
-  id: String,
+  id: MMKVStore.ID,
   rootDirectory: String,
   mode: MMKVConfiguration.Mode = .singleProcess
 ) throws -> MMKVStore {

@@ -274,7 +274,7 @@ extension MMKVConfiguration.Encryption? {
 
 extension MMKVConfiguration {
   fileprivate func withCConfiguration<R>(_ body: (inout mmkv_configuration) -> R) -> R {
-    self.id.withMMKVBytes { id in
+    self.id.rawValue.withMMKVBytes { id in
       self.directory.path.withMMKVBytes { rootDirectory in
         (self.encryption?.key ?? [])
           .withUnsafeBytes { key in

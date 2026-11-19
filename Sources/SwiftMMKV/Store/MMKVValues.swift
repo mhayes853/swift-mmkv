@@ -41,8 +41,11 @@ extension MMKVStore {
   public func values<V: MMKVValue & Sendable>(
     forKey key: String,
     as type: V.Type = V.self
-  ) -> MMKVValues<V> {
-    MMKVValues(store: self, key: key)
+  ) -> MMKVValues<V?> {
+    MMKVValues(store: self, key: key) { store in
+      let value = store.value(forKey: key, as: V.self)
+      return value == nil && store.isSuspended ? nil : .some(value)
+    }
   }
 
   /// The `Decodable` values of `key` over time, read with `decoder`, starting with the value
@@ -66,110 +69,170 @@ extension MMKVStore {
     forKey key: String,
     as type: T.Type = T.self,
     with decoder: Decoder
-  ) -> MMKVDecodedValues<T, Decoder> where Decoder.Input: MMKVValue {
-    MMKVDecodedValues(store: self, key: key, decoder: decoder)
+  ) -> MMKVThrowingValues<T?> where Decoder.Input: MMKVValue {
+    MMKVThrowingValues(store: self, key: key) { store in
+      try store.decode(T.self, forKey: key, with: decoder)
+    }
+  }
+}
+
+// MARK: - Typed Keys
+
+extension MMKVStore {
+  /// The values of `key` over time, starting with the value the store holds when iteration
+  /// begins.
+  ///
+  /// ```swift
+  /// for await volume in store.values(for: .volume) {
+  ///   player.volume = volume
+  /// }
+  /// ```
+  ///
+  /// An element is the key's default whenever the store has no value for the key. In every
+  /// other respect this behaves like ``values(forKey:as:)``, including producing repeated
+  /// values.
+  public func values<V>(for key: DefaultedKey<V>) -> MMKVValues<V> {
+    MMKVValues(store: self, key: key.key.name) { store in
+      let value = store.value(for: key.key)
+      return value == nil && store.isSuspended ? nil : value ?? key.defaultValue
+    }
+  }
+
+  /// The decoded values of `key` over time, starting with the value the store holds when
+  /// iteration begins.
+  ///
+  /// ```swift
+  /// for try await settings in store.values(for: .settings) {
+  ///   apply(settings ?? Settings())
+  /// }
+  /// ```
+  ///
+  /// An element is `nil` when the store has no value for `key`. A value that the key's decoder
+  /// cannot read is thrown from the iteration, which ends the sequence. In every other respect
+  /// this behaves like ``values(forKey:as:)``, including producing repeated values.
+  public func values<V>(for key: CodedKey<V>) -> MMKVThrowingValues<V?> {
+    MMKVThrowingValues(store: self, key: key.name) { store in
+      try store.value(for: key)
+    }
+  }
+
+  /// The decoded values of `key` over time, starting with the value the store holds when
+  /// iteration begins.
+  ///
+  /// ```swift
+  /// for try await settings in store.values(for: .settings) {
+  ///   apply(settings)
+  /// }
+  /// ```
+  ///
+  /// An element is the key's default whenever the store has no value for the key. A value
+  /// that the key's decoder cannot read is thrown from the iteration, which ends the sequence.
+  /// In every other respect this behaves like ``values(forKey:as:)``, including producing
+  /// repeated values.
+  public func values<V>(for key: DefaultedCodedKey<V>) -> MMKVThrowingValues<V> {
+    MMKVThrowingValues(store: self, key: key.key.name) { store in
+      try store.value(for: key)
+    }
   }
 }
 
 // MARK: - MMKVValues
 
-/// The values of one key of an ``MMKVStore`` over time, from ``MMKVStore/values(forKey:as:)``.
-public struct MMKVValues<Value: MMKVValue & Sendable>: AsyncSequence, Sendable {
-  public typealias Element = Value?
-
+/// The values of one key of an ``MMKVStore`` over time, from the store's `values` methods that
+/// cannot fail, such as ``MMKVStore/values(forKey:as:)``.
+///
+/// `Element` is what each iteration produces: an optional for a key that may have no value,
+/// and the value itself for a key with a default.
+public struct MMKVValues<Element: Sendable>: AsyncSequence, Sendable {
   private let store: MMKVStore
   private let key: String
+  private let read: Read
 
-  fileprivate init(store: MMKVStore, key: String) {
+  /// Reads the element, or returns `nil` if the store is suspended and turned the read away.
+  /// Resuming the store signals a change, which reads the element again.
+  fileprivate typealias Read = @Sendable (MMKVStore) -> Element?
+
+  fileprivate init(store: MMKVStore, key: String, read: @escaping Read) {
     self.store = store
     self.key = key
+    self.read = read
   }
 
   public func makeAsyncIterator() -> AsyncIterator {
-    AsyncIterator(store: self.store, key: self.key)
+    AsyncIterator(store: self.store, key: self.key, read: self.read)
   }
 
   public struct AsyncIterator: AsyncIteratorProtocol {
+    private let read: Read
     private var values: KeyValueIterator
 
-    fileprivate init(store: MMKVStore, key: String) {
+    fileprivate init(store: MMKVStore, key: String, read: @escaping Read) {
+      self.read = read
       self.values = KeyValueIterator(store: store, key: key)
     }
 
-    public mutating func next() async -> Value?? {
-      await self.values.next(Self.read)
+    public mutating func next() async -> Element? {
+      await self.values.next(self.read)
     }
 
     @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
-    public mutating func next(isolation actor: isolated (any Actor)?) async -> Value?? {
-      await self.values.next(isolation: actor, Self.read)
-    }
-
-    /// Reads the value, or returns `nil` if the store is suspended and turned the read away.
-    private static func read(from store: MMKVStore, key: String) -> Value?? {
-      let value = store.value(forKey: key, as: Value.self)
-      return value == nil && store.isSuspended ? nil : .some(value)
+    public mutating func next(isolation actor: isolated (any Actor)?) async -> Element? {
+      await self.values.next(isolation: actor, self.read)
     }
   }
 }
 
-// MARK: - MMKVDecodedValues
+// MARK: - MMKVThrowingValues
 
-/// The decoded values of one key of an ``MMKVStore`` over time, from
-/// ``MMKVStore/values(forKey:as:with:)``.
-public struct MMKVDecodedValues<
-  Value: Decodable & Sendable,
-  Decoder: MMKVTopLevelDecoder & Sendable
->: AsyncSequence, Sendable where Decoder.Input: MMKVValue {
-  public typealias Element = Value?
-
+/// The decoded values of one key of an ``MMKVStore`` over time, from the store's `values`
+/// methods that can fail, such as ``MMKVStore/values(forKey:as:with:)``.
+///
+/// `Element` is what each iteration produces: an optional for a key that may have no value,
+/// and the value itself for a key with a default. An error ends the sequence.
+public struct MMKVThrowingValues<Element: Sendable>: AsyncSequence, Sendable {
   private let store: MMKVStore
   private let key: String
-  private let decoder: Decoder
+  private let read: Read
 
-  fileprivate init(store: MMKVStore, key: String, decoder: Decoder) {
+  fileprivate typealias Read = @Sendable (MMKVStore) throws -> Element
+
+  fileprivate init(store: MMKVStore, key: String, read: @escaping Read) {
     self.store = store
     self.key = key
-    self.decoder = decoder
+    self.read = read
   }
 
   public func makeAsyncIterator() -> AsyncIterator {
-    AsyncIterator(store: self.store, key: self.key, decoder: self.decoder)
+    AsyncIterator(store: self.store, key: self.key, read: self.read)
   }
 
   public struct AsyncIterator: AsyncIteratorProtocol {
-    private let decoder: Decoder
+    private let read: Read
     private var values: KeyValueIterator
 
-    fileprivate init(store: MMKVStore, key: String, decoder: Decoder) {
-      self.decoder = decoder
+    fileprivate init(store: MMKVStore, key: String, read: @escaping Read) {
+      self.read = read
       self.values = KeyValueIterator(store: store, key: key)
     }
 
-    public mutating func next() async throws -> Value?? {
-      let decoder = self.decoder
-      return try await self.values.next { store, key in
-        try Self.decode(from: store, key: key, with: decoder)
-      }
+    public mutating func next() async throws -> Element? {
+      let read = self.read
+      return try await self.values.next { try Self.element(from: $0, reading: read) }
     }
 
     @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
-    public mutating func next(isolation actor: isolated (any Actor)?) async throws -> Value?? {
-      let decoder = self.decoder
-      return try await self.values.next(isolation: actor) { store, key in
-        try Self.decode(from: store, key: key, with: decoder)
+    public mutating func next(isolation actor: isolated (any Actor)?) async throws -> Element? {
+      let read = self.read
+      return try await self.values.next(isolation: actor) {
+        try Self.element(from: $0, reading: read)
       }
     }
 
-    /// Decodes the value, or returns `nil` if the store is suspended and turned the read away.
-    /// A value that cannot be decoded is thrown, which ends the sequence.
-    private static func decode(
-      from store: MMKVStore,
-      key: String,
-      with decoder: Decoder
-    ) throws -> Value?? {
+    /// Reads the element, or returns `nil` if the store is suspended and turned the read away.
+    /// Resuming the store signals a change, which reads the element again.
+    private static func element(from store: MMKVStore, reading read: Read) throws -> Element? {
       do {
-        return .some(try store.decode(Value.self, forKey: key, with: decoder))
+        return try read(store)
       } catch MMKVError.storeIsSuspended {
         return nil
       }

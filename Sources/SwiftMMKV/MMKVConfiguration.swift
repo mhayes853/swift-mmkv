@@ -12,11 +12,8 @@
 /// let store = try MMKVStore(configuration)
 /// ```
 public struct MMKVConfiguration: Sendable, Hashable {
-  /// The identifier react-native-mmkv, and MMKV itself, use for the default store.
-  public static let defaultID = "mmkv.default"
-
   /// The store's identifier, which names its files inside ``directory``.
-  public var id: String
+  public var id: MMKVStore.ID
 
   /// The directory holding the store's files. It is created if it does not exist, unless the
   /// store is read-only.
@@ -64,7 +61,7 @@ public struct MMKVConfiguration: Sendable, Hashable {
   ///   - compareBeforeSet: Whether a write of an identical value is skipped.
   ///   - itemSizeLimit: The largest key-value pair the store accepts, in bytes.
   public init(
-    id: String = MMKVConfiguration.defaultID,
+    id: MMKVStore.ID = .default,
     directory: MMKVDirectory,
     mode: Mode,
     isReadOnly: Bool = false,
@@ -83,6 +80,24 @@ public struct MMKVConfiguration: Sendable, Hashable {
     self.recovery = recovery
     self.compareBeforeSet = compareBeforeSet
     self.itemSizeLimit = itemSizeLimit
+  }
+}
+
+extension MMKVConfiguration {
+  /// A configuration for a single-process store in a new temporary directory, for stores that
+  /// do not need to last, such as those of tests and previews.
+  ///
+  /// ```swift
+  /// let store = try MMKVStore(.temporary())
+  /// ```
+  ///
+  /// Every call uses a different directory, so the store starts empty. It is a store like any
+  /// other, in ``MMKVDirectory/temporary()``, and lasts until the system clears its temporary
+  /// directory.
+  ///
+  /// - Parameter id: The store's identifier.
+  public static func temporary(id: MMKVStore.ID = .default) -> MMKVConfiguration {
+    MMKVConfiguration(id: id, directory: .temporary(), mode: .singleProcess)
   }
 }
 

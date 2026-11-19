@@ -250,7 +250,7 @@ extension UpstreamSingleKeyIVTests {
       rootDirectory: String = temporaryRootDirectory(),
       reopenings: Int = 0
     ) throws {
-      let fileID = reopenings == 0 ? id : "\(id)-\(reopenings)"
+      let fileID = MMKVStore.ID(rawValue: reopenings == 0 ? id : "\(id)-\(reopenings)")
       self.store = try makeStore(
         id: fileID,
         rootDirectory: rootDirectory,

@@ -6,7 +6,9 @@
 #
 # Needs a Swift toolchain with a matching Swift SDK for Android installed (see
 # https://www.swift.org/documentation/articles/swift-sdk-for-android-getting-started.html), and
-# the Android NDK. Set SWIFT to use a toolchain other than the default one.
+# the Android NDK. Set SWIFT to use a toolchain other than the default one, and SWIFT_SDK to the
+# name of the Swift SDK to use, such as swift-6.4.2-RELEASE_android, when more than one for
+# Android is installed.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -21,10 +23,18 @@ swift="${SWIFT:-swift}"
 package=modules/native-mmkv/android/swift
 output="modules/native-mmkv/android/src/main/jniLibs/$abi"
 
-"$swift" build --package-path "$package" -c release --swift-sdk "$triple"
+if [ -n "${SWIFT_SDK:-}" ]; then
+  build=("$swift" build --package-path "$package" -c release --swift-sdk "$SWIFT_SDK" --triple "$triple")
+else
+  build=("$swift" build --package-path "$package" -c release --swift-sdk "$triple")
+fi
+"${build[@]}"
+# Where the build puts its products depends on the toolchain's build system.
+products=$("${build[@]}" --show-bin-path)
 
 runtime=$(find "$HOME/Library/org.swift.swiftpm/swift-sdks" "$HOME/.swiftpm/swift-sdks" \
-  "$HOME/.config/swiftpm/swift-sdks" -type d -path "*swift-$arch/android" 2> /dev/null | head -1 || true)
+  "$HOME/.config/swiftpm/swift-sdks" -type d -path "*${SWIFT_SDK:-}*swift-$arch/android" \
+  2> /dev/null | head -1 || true)
 [ -n "$runtime" ] || { echo "Could not find the Swift SDK for Android's runtime." >&2; exit 1; }
 sdk="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 readelf=$(find "$sdk/ndk" -name llvm-readelf 2> /dev/null | sort | tail -1 || true)
@@ -32,7 +42,7 @@ readelf=$(find "$sdk/ndk" -name llvm-readelf 2> /dev/null | sort | tail -1 || tr
 
 rm -rf "$output"
 mkdir -p "$output"
-cp "$package/.build/$triple/release/libNativeMMKVBridge.so" "$output/"
+cp "$products/libNativeMMKVBridge.so" "$output/"
 
 # Copy every Swift runtime library the bridge needs, directly or not. Libraries that are not in
 # the Swift SDK come from Android itself, or from React Native in the case of libc++_shared.

@@ -33,6 +33,38 @@ extension MMKVDirectory {
   }
 }
 
+// MARK: - Temporary Directories
+
+extension MMKVDirectory {
+  /// A new directory inside the system's temporary directory, for stores that do not need to
+  /// last, such as those of tests and previews.
+  ///
+  /// ```swift
+  /// let directory = MMKVDirectory.temporary()
+  /// let store = try MMKVStore(MMKVConfiguration(directory: directory, mode: .singleProcess))
+  /// ```
+  ///
+  /// Every call returns a different directory, so the stores in it start empty. Like any
+  /// directory this is only a path, and nothing is created until a store is opened in it.
+  ///
+  /// Nothing removes the directory, and its stores are stores like any other. They last
+  /// until the system clears its temporary directory, which it may do whenever the process is
+  /// not running.
+  ///
+  /// The system's temporary directory is the `TMPDIR` environment variable. Where that is not
+  /// set it is `/tmp`, or `/data/local/tmp` on Android, which an app cannot write to. Recent
+  /// versions of Android set `TMPDIR` to the app's cache directory. On one that does not,
+  /// opening a store here throws ``MMKVError/openFailed(id:directory:)``, so either set
+  /// `TMPDIR` when the app launches or make a directory in the app's cache directory with
+  /// ``init(path:)``.
+  public static func temporary() -> MMKVDirectory {
+    MMKVDirectory(
+      path: temporaryDirectory() + "swift-mmkv-"
+        + String(UInt64.random(in: .min ... .max), radix: 16)
+    )
+  }
+}
+
 // MARK: - Stores
 
 extension MMKVDirectory {
@@ -40,7 +72,7 @@ extension MMKVDirectory {
   ///
   /// A store counts as present when both of its files exist, which they do once the store has
   /// been opened. This does not open the store or create anything.
-  public func containsStore(id: String = MMKVConfiguration.defaultID) -> Bool {
+  public func containsStore(id: MMKVStore.ID = .default) -> Bool {
     self.storage.contains(id: id)
   }
 
@@ -57,7 +89,7 @@ extension MMKVDirectory {
   /// - Returns: Whether the store had files to delete.
   /// - Throws: ``MMKVError/storeIsOpen(id:directory:)`` if the store is open in this process.
   @discardableResult
-  public func removeStore(id: String = MMKVConfiguration.defaultID) throws(MMKVError) -> Bool {
+  public func removeStore(id: MMKVStore.ID = .default) throws(MMKVError) -> Bool {
     try self.storage.remove(id: id)
   }
 }
@@ -72,7 +104,7 @@ extension MMKVDirectory {
     /// A store's files are named after its identifier. An identifier that cannot be a file
     /// name, because it contains one of `\ / : * ? " < > |`, is replaced by a hash of itself,
     /// which cannot be turned back into the identifier.
-    public let id: String?
+    public let id: MMKVStore.ID?
 
     /// The path of the store's data file relative to the directory.
     public let relativePath: String
@@ -84,7 +116,7 @@ extension MMKVDirectory {
 
     /// Whether this is the store with the given identifier. This can be answered for a store
     /// whose ``id`` is `nil` too, because the identifier's hash can be compared.
-    public func isStore(id: String) -> Bool {
+    public func isStore(id: MMKVStore.ID) -> Bool {
       MMKVStorage.relativePath(forID: id) == self.relativePath
     }
   }
@@ -129,7 +161,7 @@ extension MMKVDirectory {
   @discardableResult
   public func removeAllStores() throws(MMKVError) -> Int {
     var removedCount = 0
-    var openIDs = [String]()
+    var openIDs = [MMKVStore.ID]()
     for entry in try self.stores {
       do {
         if try self.removeStore(entry) {

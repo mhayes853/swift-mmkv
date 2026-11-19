@@ -5,7 +5,6 @@
 /// newest value.
 struct KeyValueIterator {
   private let store: MMKVStore
-  private let key: String
   private var changes: AsyncStream<Void>.Iterator
   private let subscription: MMKVSubscription
   private var isFinished = false
@@ -16,7 +15,6 @@ struct KeyValueIterator {
       bufferingPolicy: .bufferingNewest(1)
     )
     self.store = store
-    self.key = key
     self.subscription = store.subscribe(forKey: key) { continuation.yield() }
     continuation.yield()
     self.changes = stream.makeAsyncIterator()
@@ -24,11 +22,11 @@ struct KeyValueIterator {
 
   /// Waits for changes until `read` produces an element. `read` returns `nil` to skip a change,
   /// as it does when the store is suspended and turns the read away: resuming the store signals
-  /// a change, which reads the value again. An error `read` throws ends the iteration.
+  /// a change, which reads the element again. An error `read` throws ends the iteration.
   ///
   /// - Returns: `nil` once the task is cancelled or an error has ended the iteration.
   mutating func next<Element, E: Error>(
-    _ read: (MMKVStore, String) throws(E) -> Element?
+    _ read: (MMKVStore) throws(E) -> Element?
   ) async throws(E) -> Element? {
     while !self.isFinished, await self.changes.next() != nil {
       if let element = try self.element(read) { return element }
@@ -39,7 +37,7 @@ struct KeyValueIterator {
   @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
   mutating func next<Element, E: Error>(
     isolation actor: isolated (any Actor)?,
-    _ read: (MMKVStore, String) throws(E) -> Element?
+    _ read: (MMKVStore) throws(E) -> Element?
   ) async throws(E) -> Element? {
     while !self.isFinished, await self.changes.next(isolation: actor) != nil {
       if let element = try self.element(read) { return element }
@@ -48,10 +46,10 @@ struct KeyValueIterator {
   }
 
   private mutating func element<Element, E: Error>(
-    _ read: (MMKVStore, String) throws(E) -> Element?
+    _ read: (MMKVStore) throws(E) -> Element?
   ) throws(E) -> Element? {
     do {
-      return try read(self.store, self.key)
+      return try read(self.store)
     } catch {
       self.isFinished = true
       throw error

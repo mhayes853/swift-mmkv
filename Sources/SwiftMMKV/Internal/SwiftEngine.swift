@@ -10,7 +10,7 @@ struct SwiftEngine: MMKVEngine {
       .opening(id: configuration.id) {
         StoreRegistry.open(
           StoreConfiguration(
-            id: configuration.id,
+            id: configuration.id.rawValue,
             rootDirectory: configuration.directory.path,
             isMultiProcess: configuration.mode == .multiProcess,
             isReadOnly: configuration.isReadOnly,

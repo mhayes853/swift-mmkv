@@ -132,4 +132,55 @@
       Data(self.toJSON())
     }
   }
+
+  // MARK: - JSON keys
+
+  extension MMKVStore.CodedKey {
+    /// Creates a key for a value stored as a JSON string, which is how React Native apps store
+    /// objects.
+    ///
+    /// ```swift
+    /// extension MMKVStore.CodedKey where Value == Settings {
+    ///   static let settings = Self("settings")
+    /// }
+    ///
+    /// try store.set(Settings(fontSize: 16), for: .settings)
+    /// // JavaScript: JSON.parse(storage.getString('settings'))
+    /// ```
+    ///
+    /// Every key made this way shares one `JSONEncoder` and one `JSONDecoder`, both with their
+    /// default settings, so two such keys with the same name are equal. For other settings,
+    /// such as a date strategy, pass coders to ``init(_:as:encoder:decoder:)``.
+    ///
+    /// - Parameters:
+    ///   - name: The key in the store, which must not be empty.
+    ///   - type: The type the value is read and written as.
+    public init(_ name: String, as type: Value.Type = Value.self) {
+      self.init(name, as: type, encoder: JSONCoders.encoder, decoder: JSONCoders.decoder)
+    }
+  }
+
+  extension MMKVStore.DefaultedCodedKey {
+    /// Creates a key for a value stored as a JSON string, which reads `defaultValue` when the
+    /// store has no value for `name`. See ``MMKVStore/CodedKey/init(_:as:)``.
+    ///
+    /// ```swift
+    /// extension MMKVStore.DefaultedCodedKey where Value == Settings {
+    ///   static let settings = Self("settings", default: Settings())
+    /// }
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - name: The key in the store, which must not be empty.
+    ///   - defaultValue: The value to read when the store has none.
+    public init(_ name: String, default defaultValue: Value) {
+      self.init(MMKVStore.CodedKey(name), default: defaultValue)
+    }
+  }
+
+  /// The coders every JSON key shares, so that such keys compare by name.
+  private enum JSONCoders {
+    static let encoder = JSONEncoder()
+    static let decoder = JSONDecoder()
+  }
 #endif

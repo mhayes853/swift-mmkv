@@ -41,7 +41,7 @@ public func open(
   // React Native links its own copy of MMKV into this process, so the store is opened in
   // multi-process mode on both sides.
   let configuration = MMKVConfiguration(
-    id: env.string(id),
+    id: MMKVStore.ID(rawValue: env.string(id)),
     directory: MMKVDirectory(path: env.string(rootDirectory)),
     mode: .multiProcess,
     encryption: encryptionKey.map { .aes128(key: env.bytes($0)) }

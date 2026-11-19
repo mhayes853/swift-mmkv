@@ -15,7 +15,7 @@ extension MMKVStore: CustomStringConvertible {
   public func toJSON() -> [UInt8] {
     var json = [UInt8]()
     json.append(UInt8(ascii: "{"))
-    json.appendJSONString(self.id)
+    json.appendJSONString(self.id.rawValue)
     json.append(UInt8(ascii: ":"))
     json.append(UInt8(ascii: "["))
     for (index, key) in self.keys.sorted().enumerated() {

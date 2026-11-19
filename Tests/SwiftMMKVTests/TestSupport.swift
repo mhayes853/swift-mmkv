@@ -28,6 +28,10 @@ enum EngineFeature: String, CaseIterable, CustomStringConvertible {
   case importing
   /// Checking for, listing, and removing a directory's stores without opening them.
   case directory
+  /// Sending the core's log messages to ``MMKVLog``'s handler and logger.
+  case logging
+  /// Reporting files that fail their integrity check as they load.
+  case integrityFailures
 
   var description: String { self.rawValue }
 }
@@ -69,7 +73,7 @@ func temporaryRootDirectory() -> String {
 }
 
 func makeStore(
-  id: String = MMKVConfiguration.defaultID,
+  id: MMKVStore.ID = .default,
   rootDirectory: String = temporaryRootDirectory(),
   mode: MMKVConfiguration.Mode = .singleProcess,
   isReadOnly: Bool = false,
@@ -107,23 +111,32 @@ func makeLinkedStores(
   mode: MMKVConfiguration.Mode
 ) throws -> (first: MMKVStore, second: MMKVStore) {
   let rootDirectory = temporaryRootDirectory()
-  let suffix = UUID().uuidString
-  let first = try makeStore(id: "real-\(suffix)", rootDirectory: rootDirectory, mode: mode)
+  // The core reports an outside change by identifier alone, so identifiers shared between
+  // tests running in parallel would report each other's changes.
+  let unique = UUID().uuidString
+  let (real, link) = ("real-\(unique)", "link-\(unique)")
+  let first = try makeStore(
+    id: MMKVStore.ID(rawValue: real),
+    rootDirectory: rootDirectory,
+    mode: mode
+  )
   // The files are created when the store is first used.
   _ = first.count
   for extensionSuffix in ["", ".crc"] {
     try FileManager.default.linkItem(
-      atPath: "\(rootDirectory)/real-\(suffix)\(extensionSuffix)",
-      toPath: "\(rootDirectory)/link-\(suffix)\(extensionSuffix)"
+      atPath: "\(rootDirectory)/\(real)\(extensionSuffix)",
+      toPath: "\(rootDirectory)/\(link)\(extensionSuffix)"
     )
   }
-  return (first, try makeStore(id: "link-\(suffix)", rootDirectory: rootDirectory, mode: mode))
+  return (
+    first, try makeStore(id: MMKVStore.ID(rawValue: link), rootDirectory: rootDirectory, mode: mode)
+  )
 }
 
 /// Copies the two files of the store `id` in `rootDirectory` to `newID`. MMKV keeps one instance
 /// per identifier, so opening the copy gives an instance of its own over the store's contents as
 /// they are now.
-func copyStoreFiles(id: String, to newID: String, in rootDirectory: String) throws {
+func copyStoreFiles(id: MMKVStore.ID, to newID: MMKVStore.ID, in rootDirectory: String) throws {
   for suffix in ["", ".crc"] {
     try FileManager.default.copyItem(
       atPath: "\(rootDirectory)/\(id)\(suffix)",
@@ -179,10 +192,19 @@ func sizeOfFile(atPath path: String) throws -> Int {
 
 // MARK: - Coding and randomness
 
-/// Encodes a value as its description and decodes it back, to stand in for a coder this package
-/// knows nothing about.
-struct DescriptionCoder: MMKVTopLevelEncoder, MMKVTopLevelDecoder, Sendable {
+extension Result {
+  /// The success, or `nil` for a failure, to compare what a subscription delivered.
+  var success: Success? {
+    try? self.get()
+  }
+}
+
+/// Encodes a value as its description and decodes it back, to stand in for a coder that is a
+/// class, as coded keys need, and that this package knows nothing about.
+final class TextCoder: MMKVTopLevelEncoder, MMKVTopLevelDecoder, Sendable {
   struct Failure: Error, Equatable {}
+
+  static let shared = TextCoder()
 
   func encode<T: Encodable>(_ value: T) throws -> String {
     guard let value = value as? any LosslessStringConvertible else { throw Failure() }
