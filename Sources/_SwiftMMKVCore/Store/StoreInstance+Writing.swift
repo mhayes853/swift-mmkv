@@ -71,6 +71,7 @@ extension StoreState {
     let hash = self.dic.hash(key)
     let probe = self.dic.probe(key, hash: hash, base: self.dataBase)
     let version = self.dic.version
+    let location: RecordLocation?
     if case .found(let slot) = probe {
       let existing = self.dic.location(at: slot)
       if self.isCompareBeforeSetEnabled, let base = self.dataBase {
@@ -91,7 +92,6 @@ extension StoreState {
       }
       // A single-process store whose only key this is rewrites the file from the start.
       let onlyOneKey = !self.isMultiProcess && self.dic.count == 1
-      let location: RecordLocation?
       if !self.enableKeyExpire {
         location =
           onlyOneKey
@@ -103,17 +103,15 @@ extension StoreState {
           ? self.overrideDataWithKey(data, key: key, isDataHolder: isDataHolder)
           : self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder)
       }
-      guard let location else { return false }
-      self.setLocation(location, for: key, hash: hash, probe: probe, version: version)
     } else {
       let needOverride = !self.isMultiProcess && self.dic.isEmpty && self.actualSize > 0
-      let location =
+      location =
         needOverride
         ? self.overrideDataWithKey(data, key: key, isDataHolder: isDataHolder)
         : self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder)
-      guard let location else { return false }
-      self.setLocation(location, for: key, hash: hash, probe: probe, version: version)
     }
+    guard let location else { return false }
+    self.setLocation(location, for: key, hash: hash, probe: probe, version: version)
     self.hasFullWriteback = false
     return true
   }
@@ -188,6 +186,50 @@ extension StoreState {
     )
   }
 
+  /// The size of a record for `key`, which the index holds, whose current record has the key's
+  /// length before it (the `encodedEntrySize` of the `kvHolder` overloads).
+  private static func encodedEntrySize(
+    holderOf key: UnsafeRawBufferPointer,
+    dataLength: Int,
+    isDataHolder: Bool
+  ) -> EncodedEntrySize? {
+    Self.encodedEntrySize(
+      keyDataLength: key.count + pbRawVarint32Size(UInt32(key.count)),
+      originKeyLength: key.count,
+      dataLength: dataLength,
+      isDataHolder: isDataHolder,
+      needsPlainHolder: true
+    )
+  }
+
+  /// The size of a record of `data` for `keyData`, or `nil`, with an error logged, if it cannot be
+  /// written: the checks that `doAppendDataWithKey` and `doOverrideDataWithKey` start with.
+  @inline(__always)
+  private func checkedEntrySize(
+    _ data: UnsafeRawBufferPointer,
+    keyData: UnsafeRawBufferPointer,
+    isDataHolder: Bool,
+    originKeyLength: Int,
+    function: StaticString = #function
+  ) -> EncodedEntrySize? {
+    guard
+      let entry = Self.encodedEntrySize(
+        keyDataLength: keyData.count,
+        originKeyLength: originKeyLength,
+        dataLength: data.count,
+        isDataHolder: isDataHolder,
+        needsPlainHolder: self.crypter == nil
+      )
+    else {
+      Log.error(
+        "[\(self.id)] reject unrepresentable key/value lengths, key=\(originKeyLength), value=\(data.count)",
+        function: function
+      )
+      return nil
+    }
+    return self.checkSizeLimit(entry.totalSize) ? entry : nil
+  }
+
   /// Appends a record for `key` (`appendDataWithKey(data, key)`).
   mutating func appendDataWithKey(
     _ data: UnsafeRawBufferPointer,
@@ -214,14 +256,11 @@ extension StoreState {
   ) -> RecordLocation? {
     self.exclusiveProcessLock.lock()
     defer { self.exclusiveProcessLock.unlock() }
-    let rawKeySize = key.count + pbRawVarint32Size(UInt32(key.count))
     guard
       let entry = Self.encodedEntrySize(
-        keyDataLength: rawKeySize,
-        originKeyLength: key.count,
+        holderOf: key,
         dataLength: data.count,
-        isDataHolder: isDataHolder,
-        needsPlainHolder: true
+        isDataHolder: isDataHolder
       ),
       self.ensureMemorySize(entry.totalSize)
     else {
@@ -242,26 +281,18 @@ extension StoreState {
     originKeyLength: Int
   ) -> RecordLocation? {
     guard
-      let entry = Self.encodedEntrySize(
-        keyDataLength: keyData.count,
-        originKeyLength: originKeyLength,
-        dataLength: data.count,
+      let entry = self.checkedEntrySize(
+        data,
+        keyData: keyData,
         isDataHolder: isDataHolder,
-        needsPlainHolder: self.crypter == nil
+        originKeyLength: originKeyLength
       )
-    else {
-      Log.error(
-        "[\(self.id)] reject unrepresentable key/value lengths, key=\(originKeyLength), value=\(data.count)"
-      )
-      return nil
-    }
+    else { return nil }
     self.exclusiveProcessLock.lock()
     defer { self.exclusiveProcessLock.unlock() }
-    guard self.checkSizeLimit(entry.totalSize, keyData: keyData, originKeyLength: originKeyLength)
-    else { return nil }
     guard self.ensureMemorySize(entry.totalSize), self.isFileValid else { return nil }
-    if let crypter = self.crypter, CryptEntry.isValueStoredAsOffset(entry.valueLength) {
-      self.appendState = crypter.state
+    if CryptEntry.isValueStoredAsOffset(entry.valueLength), let state = self.crypter?.state {
+      self.appendState = state
     }
     do throws(CodingError) {
       try self.withOutput { (output) throws(CodingError) in
@@ -280,9 +311,7 @@ extension StoreState {
     }
     let offset = self.actualSize
     let pointer = self.file.memory! + fixed32Size + self.actualSize
-    if self.crypter != nil {
-      self.crypter!.encrypt(pointer, pointer, count: entry.totalSize)
-    }
+    self.crypter?.encrypt(pointer, pointer, count: entry.totalSize)
     self.actualSize += entry.totalSize
     self.updateCRCDigest(UnsafeRawBufferPointer(start: pointer, count: entry.totalSize))
     return RecordLocation(keySize: originKeyLength, valueSize: entry.valueLength, offset: offset)
@@ -310,14 +339,11 @@ extension StoreState {
     holderOf key: UnsafeRawBufferPointer,
     isDataHolder: Bool
   ) -> RecordLocation? {
-    let rawKeySize = key.count + pbRawVarint32Size(UInt32(key.count))
     guard
       let entry = Self.encodedEntrySize(
-        keyDataLength: rawKeySize,
-        originKeyLength: key.count,
+        holderOf: key,
         dataLength: data.count,
-        isDataHolder: isDataHolder,
-        needsPlainHolder: true
+        isDataHolder: isDataHolder
       )
     else { return nil }
     if !self.checkSizeForOverride(entry.totalSize) {
@@ -338,20 +364,12 @@ extension StoreState {
     originKeyLength: Int
   ) -> RecordLocation? {
     guard
-      let entry = Self.encodedEntrySize(
-        keyDataLength: keyData.count,
-        originKeyLength: originKeyLength,
-        dataLength: data.count,
+      let entry = self.checkedEntrySize(
+        data,
+        keyData: keyData,
         isDataHolder: isDataHolder,
-        needsPlainHolder: self.crypter == nil
+        originKeyLength: originKeyLength
       )
-    else {
-      Log.error(
-        "[\(self.id)] reject unrepresentable key/value lengths, key=\(originKeyLength), value=\(data.count)"
-      )
-      return nil
-    }
-    guard self.checkSizeLimit(entry.totalSize, keyData: keyData, originKeyLength: originKeyLength)
     else { return nil }
     // Rewriting encrypted data in place would reuse the IV, so an encrypted store appends.
     if self.crypter != nil || !self.checkSizeForOverride(entry.totalSize) {
@@ -409,16 +427,13 @@ extension StoreState {
 
   /// Whether a record of `size` fits in the file without growing it (`checkSizeForOverride`).
   func checkSizeForOverride(_ size: Int) -> Bool {
-    guard self.isFileValid else {
-      Log.warning("[\(self.id)] file not valid")
-      return false
-    }
-    let fileSize = self.file.size
+    guard self.checkFileValid() else { return false }
     let spaceNeededForOverride = size + fixed32Size + itemSizeHolderSize
-    return !(size > fileSize || spaceNeededForOverride > fileSize)
+    return spaceNeededForOverride <= self.file.size
   }
 
-  func checkSizeLimit(_ size: Int, keyData: UnsafeRawBufferPointer, originKeyLength: Int) -> Bool {
+  /// Whether a record of `size` is within the item size limit (`checkSizeLimit`).
+  func checkSizeLimit(_ size: Int) -> Bool {
     if self.itemSizeLimit != 0 && size > Int(self.itemSizeLimit) {
       Log.error(
         "[\(self.id)] itemSizeLimit \(self.itemSizeLimit): ignore value size \(size) too large"
@@ -434,8 +449,7 @@ extension StoreState {
     throws(CodingError) -> R
   {
     guard let state = self.output, let memory = self.file.memory else { throw .outOfSpace }
-    // `body` writes to a copy, so no access to `self.output` is open while it runs (rule 2 in
-    // `StoreInstance`'s documentation).
+    // `body` writes to a copy, which is stored back once it returns or throws.
     var output = CodedOutput(base: memory + fixed32Size, size: state.size, position: state.position)
     defer { self.output = OutputState(position: output.position, size: state.size) }
     return try body(&output)
@@ -452,14 +466,7 @@ extension StoreState {
   /// Makes room for `newSize` more bytes, compacting the file, and growing it if that is not
   /// enough (`ensureMemorySize`).
   mutating func ensureMemorySize(_ newSize: Int) -> Bool {
-    guard self.isFileValid else {
-      Log.warning("[\(self.id)] file not valid")
-      return false
-    }
-    if self.isReadOnly {
-      Log.warning("[\(self.id)] file readonly")
-      return false
-    }
+    guard self.checkFileValid(), self.checkWritable() else { return false }
     let maximumActualSize = Int(UInt32.max)
     if newSize > maximumActualSize {
       return false
@@ -547,11 +554,7 @@ extension StoreState {
         }
         fileSize *= 2
       } while expectedUsage >= fileSize
-      guard self.file.truncate(to: fileSize) else { return false }
-      guard self.isFileValid else {
-        Log.warning("[\(self.id)] file not valid")
-        return false
-      }
+      guard self.file.truncate(to: fileSize), self.checkFileValid() else { return false }
     }
     return self.doFullWriteBack(prepared, needSync: needSync)
   }
@@ -571,14 +574,7 @@ extension StoreState {
     if self.hasFullWriteback || self.needLoadFromFile {
       return true
     }
-    guard self.isFileValid else {
-      Log.warning("[\(self.id)] file not valid")
-      return false
-    }
-    if self.isReadOnly {
-      Log.warning("[\(self.id)] file readonly")
-      return false
-    }
+    guard self.checkFileValid(), self.checkWritable() else { return false }
     if self.enableKeyExpire {
       let expiredCount = self.filterExpiredKeys()
       if onlyWhileExpire && expiredCount == 0 {
@@ -614,11 +610,8 @@ extension StoreState {
     case .plain: encrypter = nil
     case .new(let crypter): encrypter = crypter
     }
-    var newIV: [UInt8]?
-    if encrypter != nil {
-      newIV = AESCryptor.randomIV()
-      encrypter!.resetIV(newIV)
-    }
+    let newIV = encrypter != nil ? AESCryptor.randomIV() : nil
+    encrypter?.resetIV(newIV)
     self.output = OutputState(position: 0, size: self.file.size - fixed32Size)
     if let decrypter = self.crypter {
       self.memmoveCryptDictionary(decrypter: decrypter, encrypter: &encrypter, prepared: prepared)
@@ -689,9 +682,7 @@ extension StoreState {
       try output.writeUInt32(Self.randomItemSizeHolder())
     }
     let writtenSize = writePosition - originPosition
-    if encrypter != nil {
-      encrypter!.encrypt(base + originPosition, base + originPosition, count: writtenSize)
-    }
+    encrypter?.encrypt(base + originPosition, base + originPosition, count: writtenSize)
     self.output!.position += writtenSize - itemSizeHolderSize
   }
 
@@ -725,12 +716,9 @@ extension StoreState {
     // The index must be emptied before the rewrite and after encoding.
     self.dic.removeAll()
     self.dicCrypt.removeAll()
-    let didWriteBack: Bool
-    if prepared.totalSize + fixed32Size <= self.file.size {
-      didWriteBack = self.doFullWriteBack(prepared)
-    } else {
-      didWriteBack = self.expandAndWriteBack(0, prepared)
-    }
+    let didWriteBack =
+      prepared.totalSize + fixed32Size <= self.file.size
+      ? self.doFullWriteBack(prepared) : self.expandAndWriteBack(0, prepared)
     self.clearMemoryCache()
     return didWriteBack
   }
@@ -798,15 +786,15 @@ extension StoreState {
   }
 
   mutating func recalculateCRCDigestWithIV(_ iv: [UInt8]?) {
-    guard let memory = self.file.memory else { return }
-    self.crcDigest = CRC32.checksum(
-      0,
-      UnsafeRawBufferPointer(start: memory + fixed32Size, count: self.actualSize)
-    )
-    self.writeActualSize(self.actualSize, crcDigest: self.crcDigest, iv: iv, increaseSequence: true)
+    self.recalculateCRCDigest(iv: iv, increaseSequence: true)
   }
 
   mutating func recalculateCRCDigestOnly() {
+    self.recalculateCRCDigest(iv: nil, increaseSequence: false)
+  }
+
+  /// Computes the checksum of the whole data, then records it with the size.
+  private mutating func recalculateCRCDigest(iv: [UInt8]?, increaseSequence: Bool) {
     guard let memory = self.file.memory else { return }
     self.crcDigest = CRC32.checksum(
       0,
@@ -815,8 +803,8 @@ extension StoreState {
     self.writeActualSize(
       self.actualSize,
       crcDigest: self.crcDigest,
-      iv: nil,
-      increaseSequence: false
+      iv: iv,
+      increaseSequence: increaseSequence
     )
   }
 
@@ -835,17 +823,11 @@ extension StoreState {
   /// Compacts the file and shrinks it by halves while it is more than twice its data, but not below
   /// the expected capacity (`trim`).
   mutating func trim() {
-    if self.isReadOnly {
-      Log.warning("[\(self.id)] file readonly")
-      return
-    }
+    guard self.checkWritable() else { return }
     self.lockProcess(.exclusive)
     defer { self.unlockProcess(.exclusive) }
     self.checkLoadData()
-    guard self.isFileValid else {
-      Log.warning("[\(self.id)] file not valid")
-      return
-    }
+    guard self.checkFileValid() else { return }
     if self.actualSize == 0 {
       self.clearAll()
       return
@@ -869,17 +851,11 @@ extension StoreState {
   /// Removes every key, shrinking the file back to the expected capacity unless `keepSpace`
   /// (`clearAll`).
   mutating func clearAll(keepSpace: Bool = false) {
-    if self.isReadOnly {
-      Log.warning("[\(self.id)] file readonly")
-      return
-    }
+    guard self.checkWritable() else { return }
     self.lockProcess(.exclusive)
     defer { self.unlockProcess(.exclusive) }
     self.checkLoadData()
-    guard self.isFileValid else {
-      Log.warning("[\(self.id)] file not valid")
-      return
-    }
+    guard self.checkFileValid() else { return }
     if self.file.size == self.expectedCapacity && self.actualSize == 0 {
       return
     }
@@ -888,9 +864,7 @@ extension StoreState {
     if !keepSpace {
       self.file.truncate(to: self.expectedCapacity)
     }
-    if self.crypter != nil {
-      self.crypter!.resetIV(newIV)
-    }
+    self.crypter?.resetIV(newIV)
     self.writeActualSize(0, crcDigest: 0, iv: newIV, increaseSequence: true)
     self.metaFile.msync(synchronously: true)
     self.clearMemoryCache(keepSpace: keepSpace)

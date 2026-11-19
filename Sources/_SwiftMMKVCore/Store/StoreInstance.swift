@@ -86,7 +86,6 @@ struct StoreState: ~Copyable {
   var hasFullWriteback = false
   var isSecondLoad = false
 
-  let fileLock: FileLock
   var sharedProcessLock: InterProcessLock
   var exclusiveProcessLock: InterProcessLock
   #if os(Android)
@@ -176,7 +175,6 @@ struct StoreState: ~Copyable {
       )
     #endif
     self.metaFile = metaFile
-    self.fileLock = fileLock
     self.sharedProcessLock = InterProcessLock(fileLock: fileLock, type: .shared)
     self.exclusiveProcessLock = InterProcessLock(fileLock: fileLock, type: .exclusive)
     self.sharedProcessLock.isEnabled = configuration.isMultiProcess
@@ -219,6 +217,27 @@ struct StoreState: ~Copyable {
   /// The start of the data in the mapped file, which locations are measured from.
   var dataBase: UnsafeRawPointer? {
     self.file.memory.map { UnsafeRawPointer($0 + fixed32Size) }
+  }
+
+  /// Whether the store can be written, warning that it cannot when it is read-only, as MMKV's
+  /// writing operations check first.
+  @inline(__always)
+  func checkWritable(function: StaticString = #function) -> Bool {
+    if self.isReadOnly {
+      Log.warning("[\(self.id)] file readonly", function: function)
+      return false
+    }
+    return true
+  }
+
+  /// Whether the data file is mapped, warning that it is not when it is not.
+  @inline(__always)
+  func checkFileValid(function: StaticString = #function) -> Bool {
+    guard self.isFileValid else {
+      Log.warning("[\(self.id)] file not valid", function: function)
+      return false
+    }
+    return true
   }
 
   /// Takes the file lock of `type`. A single-process store's is turned off.
@@ -514,11 +533,7 @@ extension StoreInstance {
 extension StoreState {
   @discardableResult
   mutating func removeValue(forKey key: UnsafeRawBufferPointer) -> Bool {
-    guard !key.isEmpty else { return false }
-    if self.isReadOnly {
-      Log.warning("[\(self.id)] file readonly")
-      return false
-    }
+    guard !key.isEmpty, self.checkWritable() else { return false }
     self.lockProcess(.exclusive)
     defer { self.unlockProcess(.exclusive) }
     self.checkLoadData()
@@ -536,9 +551,7 @@ extension StoreState {
           ? self.dic.remove(key, base: self.dataBase) != nil
           : self.dicCrypt.remove(key)
       }
-      if removed {
-        deleteCount += 1
-      }
+      deleteCount += removed ? 1 : 0
     }
     guard deleteCount > 0 else { return true }
     self.hasFullWriteback = false
@@ -555,11 +568,11 @@ extension StoreState {
     if self.crypter != nil {
       guard self.dicCrypt.contains(key) else { return false }
       self.hasFullWriteback = false
-      let result = self.appendDataWithKey(empty, key: key, isDataHolder: false)
-      if result != nil {
-        self.dicCrypt.remove(key)
+      guard self.appendDataWithKey(empty, key: key, isDataHolder: false) != nil else {
+        return false
       }
-      return result != nil
+      self.dicCrypt.remove(key)
+      return true
     }
     guard let slot = self.dic.slot(of: key, base: self.dataBase) else { return false }
     let version = self.dic.version
@@ -568,15 +581,14 @@ extension StoreState {
       self.enableKeyExpire
       ? self.appendDataWithKey(empty, key: key, isDataHolder: false)
       : self.appendDataWithKey(empty, holderOf: key, isDataHolder: false)
-    if result != nil {
-      // Making space can remove expired keys, which moves others between slots.
-      if self.dic.version == version {
-        self.dic.remove(at: slot)
-      } else {
-        self.dic.remove(key, base: self.dataBase)
-      }
+    guard result != nil else { return false }
+    // Making space can remove expired keys, which moves others between slots.
+    if self.dic.version == version {
+      self.dic.remove(at: slot)
+    } else {
+      self.dic.remove(key, base: self.dataBase)
     }
-    return result != nil
+    return true
   }
 }
 
@@ -672,36 +684,23 @@ extension StoreInstance {
     let (first, second) = sourceFirst ? (source, self) : (self, source)
     return first.withState { first in
       second.withState { second in
-        sourceFirst
-          ? StoreState.importAll(into: &second, from: &first, sourceFirst: true)
-          : StoreState.importAll(into: &first, from: &second, sourceFirst: false)
+        first.lockProcess(.exclusive)
+        second.lockProcess(.exclusive)
+        defer {
+          second.unlockProcess(.exclusive)
+          first.unlockProcess(.exclusive)
+        }
+        return sourceFirst
+          ? StoreState.importAll(into: &second, from: &first)
+          : StoreState.importAll(into: &first, from: &second)
       }
     }
   }
 }
 
 extension StoreState {
-  static func importAll(
-    into target: inout StoreState,
-    from source: inout StoreState,
-    sourceFirst: Bool
-  ) -> Int {
-    if sourceFirst {
-      source.lockProcess(.exclusive)
-      target.lockProcess(.exclusive)
-    } else {
-      target.lockProcess(.exclusive)
-      source.lockProcess(.exclusive)
-    }
-    defer {
-      if sourceFirst {
-        target.unlockProcess(.exclusive)
-        source.unlockProcess(.exclusive)
-      } else {
-        source.unlockProcess(.exclusive)
-        target.unlockProcess(.exclusive)
-      }
-    }
+  /// `importFrom`, with both stores' exclusive file locks held.
+  static func importAll(into target: inout StoreState, from source: inout StoreState) -> Int {
     target.checkLoadData()
     source.checkLoadData()
     guard target.isFileValid, source.isFileValid else {

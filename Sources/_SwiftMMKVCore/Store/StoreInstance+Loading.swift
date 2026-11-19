@@ -4,16 +4,14 @@ extension StoreState {
   /// Reads the metadata, validates the data, and builds the index (`loadFromFile`).
   mutating func loadFromFile() {
     self.loadMetaInfoAndCheck()
-    if self.crypter != nil && self.metaInfo.version >= MetaInfo.Version.randomIV {
-      self.crypter!.resetIV(self.metaInfo.vector)
+    if self.metaInfo.version >= MetaInfo.Version.randomIV {
+      self.crypter?.resetIV(self.metaInfo.vector)
     }
-    if !self.file.isFileValid {
+    // Another process may have resized the file since this instance mapped it.
+    if !self.file.isFileValid
+      || (self.isMultiProcess && self.file.actualFileSize != self.file.size)
+    {
       self.file.reloadFromFile(expectedCapacity: self.expectedCapacity)
-    } else if self.isMultiProcess {
-      // Another process may have resized the file since this instance mapped it.
-      if self.file.actualFileSize != self.file.size {
-        self.file.reloadFromFile(expectedCapacity: self.expectedCapacity)
-      }
     }
     if !self.file.isFileValid {
       Log.error("file [\(self.path)] not valid")
@@ -22,16 +20,16 @@ extension StoreState {
       var needFullWriteback = false
       self.checkDataValid(&loadFromFile, &needFullWriteback)
       let fileSize = self.file.size
-      let memory = self.file.memory!
       if loadFromFile && self.actualSize > 0 {
         if self.crypter != nil {
           self.dicCrypt.removeAll()
           self.decodeCrypt(from: 0, size: self.actualSize, greedy: needFullWriteback)
         } else {
-          let input = UnsafeRawBufferPointer(start: memory + fixed32Size, count: self.actualSize)
+          let input = UnsafeRawBufferPointer(
+            start: self.file.memory! + fixed32Size,
+            count: self.actualSize
+          )
           self.dic.removeAll()
-          // Holds `self.dic` for the whole decode, which is static and never reaches the store
-          // (rule 2 in `StoreInstance`'s documentation).
           RecordDecoding.decode(input, into: &self.dic, greedy: needFullWriteback)
         }
         self.output = OutputState(position: self.actualSize, size: fileSize - fixed32Size)
@@ -42,7 +40,7 @@ extension StoreState {
           needFullWriteback = true
         }
         if needFullWriteback && !self.isReadOnly {
-          _ = self.fullWriteback()
+          self.fullWriteback()
         }
       } else {
         // The file is empty or unreadable: discard everything.
@@ -50,13 +48,12 @@ extension StoreState {
         defer { self.exclusiveProcessLock.unlock() }
         let dataOffset = min(fileSize, fixed32Size)
         self.output = OutputState(position: 0, size: fileSize - dataOffset)
-        if self.isReadOnly {
-          // Nothing to do.
-        } else if self.actualSize > 0 {
-          _ = self.writeActualSize(0, crcDigest: 0, iv: nil, increaseSequence: true)
-          self.sync()
-        } else {
-          _ = self.writeActualSize(0, crcDigest: 0, iv: nil, increaseSequence: false)
+        if !self.isReadOnly {
+          let hadData = self.actualSize > 0
+          self.writeActualSize(0, crcDigest: 0, iv: nil, increaseSequence: hadData)
+          if hadData {
+            self.sync()
+          }
         }
       }
     }
@@ -86,8 +83,6 @@ extension StoreState {
           self.decodeCrypt(from: position, size: self.actualSize, greedy: true)
         } else {
           let input = UnsafeRawBufferPointer(start: base, count: self.actualSize)
-          // Holds `self.dic` for the whole decode, which is static and never reaches the store
-          // (rule 2 in `StoreInstance`'s documentation).
           RecordDecoding.decode(input, from: position, into: &self.dic, greedy: true)
         }
         self.output?.position += addedSize
@@ -107,12 +102,10 @@ extension StoreState {
   /// changed them since (`checkLoadData`).
   mutating func checkLoadData() {
     if self.needLoadFromFile {
-      do {
-        self.sharedProcessLock.lock()
-        defer { self.sharedProcessLock.unlock() }
-        self.needLoadFromFile = false
-        self.loadFromFile()
-      }
+      self.sharedProcessLock.lock()
+      defer { self.sharedProcessLock.unlock() }
+      self.needLoadFromFile = false
+      self.loadFromFile()
       return
     }
     guard self.isMultiProcess, self.metaFile.isFileValid else { return }
@@ -141,14 +134,9 @@ extension StoreState {
     self.hasFullWriteback = false
     self.dic.removeAll()
     self.dicCrypt.removeAll()
-    if self.crypter != nil {
-      // A read-only store cannot be sure it has a random IV.
-      if self.metaInfo.version >= MetaInfo.Version.randomIV {
-        self.crypter!.resetIV(self.metaInfo.vector)
-      } else {
-        self.crypter!.resetIV()
-      }
-    }
+    // A read-only store cannot be sure it has a random IV.
+    let hasRandomIV = self.metaInfo.version >= MetaInfo.Version.randomIV
+    self.crypter?.resetIV(hasRandomIV ? self.metaInfo.vector : nil)
     self.output = nil
     if !keepSpace {
       self.file.clearMemoryCache()
@@ -168,7 +156,7 @@ extension StoreState {
       Log.error("file [\(self.crcPath)] not valid")
       return
     }
-    _ = self.checkFileHasDiskError()
+    self.checkFileHasDiskError()
     guard self.metaFile.isFileValid else {
       Log.error("file [\(self.crcPath)] not valid")
       return
@@ -203,6 +191,7 @@ extension StoreState {
   /// Only done the first time the instance loads.
   ///
   /// - Returns: Whether reading either file failed.
+  @discardableResult
   mutating func checkFileHasDiskError() -> Bool {
     if self.isSecondLoad {
       return false
@@ -276,6 +265,16 @@ extension StoreState {
       self.actualSize = 0
       return
     }
+    /// Loads the first `size` bytes of data if they have the checksum `crcDigest`, recording them
+    /// as the current size and checksum.
+    func loadIfValid(_ size: Int, _ crcDigest: UInt32) -> Bool {
+      guard self.checkFileCRCValid(size, crcDigest) else { return false }
+      loadFromFile = true
+      self.actualSize = size
+      self.writeActualSize(size, crcDigest: crcDigest, iv: nil, increaseSequence: false)
+      return true
+    }
+
     func checkLastConfirmedInfo() {
       guard self.metaInfo.version >= MetaInfo.Version.actualSize else { return }
       // A downgrade to an older MMKV and back writes the size only into the data file.
@@ -287,15 +286,7 @@ extension StoreState {
           "oldStyleActualSize \(oldStyleActualSize) not equal to meta actual size \(self.actualSize)"
         )
         if oldStyleActualSize < fileSize && oldStyleActualSize + fixed32Size <= fileSize {
-          if self.checkFileCRCValid(oldStyleActualSize, self.metaInfo.crcDigest) {
-            loadFromFile = true
-            self.actualSize = oldStyleActualSize
-            _ = self.writeActualSize(
-              oldStyleActualSize,
-              crcDigest: self.metaInfo.crcDigest,
-              iv: nil,
-              increaseSequence: false
-            )
+          if loadIfValid(oldStyleActualSize, self.metaInfo.crcDigest) {
             return
           }
         } else {
@@ -305,16 +296,7 @@ extension StoreState {
       let lastActualSize = Int(self.metaInfo.lastActualSize)
       if lastActualSize < fileSize && lastActualSize + fixed32Size <= fileSize {
         let lastCRCDigest = self.metaInfo.lastCRCDigest
-        if self.checkFileCRCValid(lastActualSize, lastCRCDigest) {
-          loadFromFile = true
-          self.actualSize = lastActualSize
-          _ = self.writeActualSize(
-            lastActualSize,
-            crcDigest: lastCRCDigest,
-            iv: nil,
-            increaseSequence: false
-          )
-        } else {
+        if !loadIfValid(lastActualSize, lastCRCDigest) {
           Log.error(
             "check [\(self.id)] error: lastActualSize \(lastActualSize), lastActualCRC \(lastCRCDigest)"
           )

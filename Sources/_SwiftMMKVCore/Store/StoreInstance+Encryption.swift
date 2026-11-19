@@ -16,20 +16,12 @@ struct CryptRecord: Equatable {
   /// The stream's state where the record starts.
   var state: CipherState
 
-  init(
-    offset: UInt32,
-    keySize: UInt16,
-    valueSize: UInt32,
-    pbKeyValueSize: UInt8,
-    state: CipherState
-  ) {
-    self.offset = offset
-    self.keySize = keySize
-    self.valueSize = valueSize
-    self.pbKeyValueSize = pbKeyValueSize
-    self.state = state
+  var size: Int {
+    Int(self.pbKeyValueSize) + Int(self.keySize) + Int(self.valueSize)
   }
+}
 
+extension CryptRecord {
   init(keySize: Int, valueSize: Int, offset: Int, state: CipherState) {
     self.keySize = UInt16(truncatingIfNeeded: keySize)
     self.valueSize = UInt32(truncatingIfNeeded: valueSize)
@@ -39,10 +31,6 @@ struct CryptRecord: Equatable {
         + pbRawVarint32Size(UInt32(self.keySize))
     )
     self.state = state
-  }
-
-  var size: Int {
-    Int(self.pbKeyValueSize) + Int(self.keySize) + Int(self.valueSize)
   }
 }
 
@@ -153,8 +141,6 @@ extension StoreState {
     var reader = DecryptingReader(ciphertext: ciphertext, position: position, decrypter: crypter)
     let succeeded: Bool
     if greedy {
-      // Holds `self.dicCrypt` for the whole decode, which is static and never reaches the store
-      // (rule 2 in `StoreInstance`'s documentation).
       succeeded = Self.decodeCryptRecords(&reader, into: &self.dicCrypt)
     } else {
       var decoded = CryptIndex()
@@ -338,21 +324,16 @@ extension StoreState {
     }
 
     var sizeHolderSize = itemSizeHolderSize
-    var sizeHolder = Self.randomItemSizeHolder(size: sizeHolderSize)
-    if let smallestOffset = records.first.map({ Int($0.record.offset) }),
-      smallestOffset != itemSizeHolderSize && smallestOffset <= 5
-    {
+    if let smallestOffset = records.first.map({ Int($0.record.offset) }), smallestOffset <= 5 {
       sizeHolderSize = smallestOffset
-      sizeHolder = Self.randomItemSizeHolder(size: sizeHolderSize)
     }
+    let sizeHolder = Self.randomItemSizeHolder(size: sizeHolderSize)
     try? self.withOutput { (output) throws(CodingError) in
       try output.writeRawVarint32(sizeHolder)
     }
     var writePosition = self.output!.position
-    if encrypter != nil {
-      let start = base + writePosition - sizeHolderSize
-      encrypter!.encrypt(start, start, count: sizeHolderSize)
-    }
+    let sizeHolderStart = base + writePosition - sizeHolderSize
+    encrypter?.encrypt(sizeHolderStart, sizeHolderStart, count: sizeHolderSize)
     if !records.isEmpty {
       // Merge neighbouring records so they move together.
       var sections = [(offset: Int, size: Int, state: CipherState)]()
@@ -407,30 +388,20 @@ extension StoreState {
 
   /// Re-encrypts the store with `key`, or decrypts it when `key` is `nil` (`reKey`).
   mutating func rekey(key: [UInt8]?, isAES256: Bool) -> Bool {
-    if self.isReadOnly {
-      Log.warning("[\(self.id)] file readonly")
-      return false
-    }
+    guard self.checkWritable() else { return false }
     self.lockProcess(.exclusive)
     defer { self.unlockProcess(.exclusive) }
     self.checkLoadData()
-    guard self.isFileValid else {
-      Log.warning("[\(self.id)] file not valid")
-      return false
-    }
-    let didRekey: Bool
+    guard self.checkFileValid() else { return false }
+    // The store's cryptor once re-encrypted, or `nil` for plain text.
+    let newCrypter: AESCryptor?
     if let crypter = self.crypter {
       if let key, !key.isEmpty {
         if key == crypter.keyUpToFirstZero && crypter.isAES256 == isAES256 {
           return true
         }
         // A new key.
-        let newCrypter = AESCryptor(key: key, isAES256: isAES256)
-        self.hasFullWriteback = false
-        didRekey = self.fullWriteback(encryption: .new(newCrypter))
-        if didRekey {
-          self.crypter = newCrypter
-        }
+        newCrypter = AESCryptor(key: key, isAES256: isAES256)
       } else {
         // Decrypting to plain text, which needs every pair to fit the plain index.
         var fitsPlainIndex = true
@@ -450,27 +421,21 @@ extension StoreState {
           Log.error("[\(self.id)] reject decryption: key/value cannot fit a plain holder")
           return false
         }
-        self.hasFullWriteback = false
-        didRekey = self.fullWriteback(encryption: .plain)
-        if didRekey {
-          self.crypter = nil
-        }
+        newCrypter = nil
       }
     } else {
       guard let key, !key.isEmpty else { return true }
       // Encrypting plain text.
-      self.hasFullWriteback = false
-      let newCrypter = AESCryptor(key: key, isAES256: isAES256)
-      didRekey = self.fullWriteback(encryption: .new(newCrypter))
-      if didRekey {
-        self.crypter = newCrypter
-      }
+      newCrypter = AESCryptor(key: key, isAES256: isAES256)
     }
+    self.hasFullWriteback = false
+    guard self.fullWriteback(encryption: newCrypter.map(WriteBackEncryption.new) ?? .plain) else {
+      return false
+    }
+    self.crypter = newCrypter
     // The index is not valid after re-encrypting.
-    if didRekey {
-      self.clearMemoryCache()
-    }
-    return didRekey
+    self.clearMemoryCache()
+    return true
   }
 }
 

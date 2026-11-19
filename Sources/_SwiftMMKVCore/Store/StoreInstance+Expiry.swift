@@ -12,6 +12,13 @@ extension StoreState {
     return time > UInt64(UInt32.max) ? UInt32.max : UInt32(time)
   }
 
+  /// The expiry time at the end of an expiring key's value: seconds since 1970, or 0 for never.
+  static func expirationTime(of value: UnsafeRawBufferPointer) -> UInt32 {
+    UInt32(
+      littleEndian: value.loadUnaligned(fromByteOffset: value.count - fixed32Size, as: UInt32.self)
+    )
+  }
+
   /// Turns on expiry for the whole store, adding an expiry time to every value already in it
   /// (`enableAutoKeyExpire`).
   ///
@@ -23,10 +30,7 @@ extension StoreState {
   ///   or 0 for never.
   @discardableResult
   mutating func enableAutoKeyExpire(_ expiredInSeconds: UInt32) -> Bool {
-    if self.isReadOnly {
-      Log.warning("[\(self.id)] file readonly")
-      return false
-    }
+    guard self.checkWritable() else { return false }
     self.lockProcess(.exclusive)
     defer { self.unlockProcess(.exclusive) }
     self.checkLoadData()
@@ -106,9 +110,7 @@ extension StoreState {
     }
     let newLength = raw.count - fixed32Size
     if self.enableKeyExpire {
-      let time = raw.withBytes {
-        UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: newLength, as: UInt32.self))
-      }
+      let time = raw.withBytes { Self.expirationTime(of: $0) }
       if time != 0 && time <= Self.currentTimeInSeconds() {
         self.removeValue(forKey: key)
         return .empty
@@ -125,40 +127,31 @@ extension StoreState {
     guard self.enableKeyExpire, self.indexCount != 0, let memory = self.file.memory else {
       return 0
     }
+    self.sharedProcessLock.lock()
+    defer { self.sharedProcessLock.unlock() }
+    let now = Self.currentTimeInSeconds()
     if let crypter = self.crypter {
-      self.sharedProcessLock.lock()
-      defer { self.sharedProcessLock.unlock() }
-      let now = Self.currentTimeInSeconds()
       return self.dicCrypt.removeAll { entry in
         guard entry.realValueSize >= fixed32Size else {
           Log.warning("key has invalid value size \(entry.realValueSize)")
           return false
         }
         let time = Self.value(of: entry, memory: memory, crypter: crypter)
-          .withBytes {
-            UInt32(
-              littleEndian: $0.loadUnaligned(
-                fromByteOffset: $0.count - fixed32Size,
-                as: UInt32.self
-              )
-            )
-          }
+          .withBytes { Self.expirationTime(of: $0) }
         return time != 0 && time <= now
       }
     }
-    self.sharedProcessLock.lock()
-    defer { self.sharedProcessLock.unlock() }
-    let now = Self.currentTimeInSeconds()
     let base = UnsafeRawPointer(memory + fixed32Size)
     return self.dic.removeAll { location in
       guard location.valueSize >= UInt32(fixed32Size) else {
         Log.warning("key has invalid value size \(location.valueSize)")
         return false
       }
-      let timeOffset = location.valueOffset + Int(location.valueSize) - fixed32Size
-      let time = UInt32(
-        littleEndian: base.loadUnaligned(fromByteOffset: timeOffset, as: UInt32.self)
+      let value = UnsafeRawBufferPointer(
+        start: base + location.valueOffset,
+        count: Int(location.valueSize)
       )
+      let time = Self.expirationTime(of: value)
       return time != 0 && time <= now
     }
   }
