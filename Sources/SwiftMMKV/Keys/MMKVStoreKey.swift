@@ -176,4 +176,41 @@ extension MMKVStore {
       (repeat store.value(forKey: (each keys).0, as: (each keys).1))
     }
   }
+
+  /// Stores several values, each under its key, replacing any existing values, all at once.
+  ///
+  /// ```swift
+  /// store.set((.username, "blob"), (.volume, 0.8))
+  /// store.set(("username", "blob"), ("volume", 0.8))
+  /// ```
+  ///
+  /// The store is locked once for the whole write, so nothing else reads or writes it part of
+  /// the way through, and for a multi-process store the file lock is taken once rather than
+  /// once for each key. Listeners are told about each key after every value has been written.
+  /// To write keys of different kinds together, use ``withExclusiveLock(_:)``.
+  ///
+  /// The write is not atomic if the process is killed during it: the values written by then
+  /// are kept.
+  ///
+  /// - Parameters:
+  ///   - values: Each key with the value to store under it.
+  ///   - expiringIn: How long to keep the values. See ``set(_:forKey:expiringIn:)``.
+  /// - Returns: Whether every value was stored. A value that cannot be stored does not stop
+  ///   the others from being stored.
+  @discardableResult
+  public func set<each V>(
+    _ values: repeat (Key<each V>, each V),
+    expiringIn: Duration? = nil
+  ) -> Bool {
+    self.withExclusiveLock { store in
+      var didStoreAll = true
+      func write<T>(_ value: T, for key: Key<T>) {
+        if !store.set(value, for: key, expiringIn: expiringIn) {
+          didStoreAll = false
+        }
+      }
+      repeat write((each values).1, for: (each values).0)
+      return didStoreAll
+    }
+  }
 }

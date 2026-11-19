@@ -143,4 +143,30 @@ extension MMKVStore {
       (repeat try store.value(for: each keys))
     }
   }
+
+  /// Encodes several values and stores each under its key, replacing any existing values, all
+  /// at once.
+  ///
+  /// ```swift
+  /// try store.set((.settings, settings), (.feed, feed))
+  /// ```
+  ///
+  /// Every value is encoded before anything is stored, so nothing is stored when one of them
+  /// does not encode. The store is then locked once for the whole write, and listeners are
+  /// told about each key after every value has been written. A value is stored even when it
+  /// equals its key's default.
+  ///
+  /// - Parameters:
+  ///   - values: Each key with the value to store under it.
+  ///   - expiringIn: How long to keep the values. See ``set(_:forKey:expiringIn:)``.
+  /// - Returns: Whether every encoded value was stored.
+  /// - Throws: Whatever an encoder throws, in which case nothing is stored, or
+  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  @discardableResult
+  public func set<each V>(
+    _ values: repeat (DefaultedCodedKey<each V>, each V),
+    expiringIn: Duration? = nil
+  ) throws -> Bool {
+    try self.set(repeat ((each values).0.key, (each values).1), expiringIn: expiringIn)
+  }
 }

@@ -127,4 +127,27 @@ extension MMKVStore {
       (repeat store.value(for: each keys))
     }
   }
+
+  /// Stores several values, each under its key, replacing any existing values, all at once.
+  ///
+  /// ```swift
+  /// store.set((.volume, 0.8), (.theme, "dark"))
+  /// ```
+  ///
+  /// The store is locked once for the whole write, and listeners are told about each key
+  /// after every value has been written. A value is stored even when it equals its key's
+  /// default.
+  ///
+  /// - Parameters:
+  ///   - values: Each key with the value to store under it.
+  ///   - expiringIn: How long to keep the values. See ``set(_:forKey:expiringIn:)``.
+  /// - Returns: Whether every value was stored. A value that cannot be stored does not stop
+  ///   the others from being stored.
+  @discardableResult
+  public func set<each V>(
+    _ values: repeat (DefaultedKey<each V>, each V),
+    expiringIn: Duration? = nil
+  ) -> Bool {
+    self.set(repeat ((each values).0.key, (each values).1), expiringIn: expiringIn)
+  }
 }

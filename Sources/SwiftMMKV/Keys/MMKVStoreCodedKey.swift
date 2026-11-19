@@ -39,7 +39,10 @@ extension MMKVStore {
     private let encoder: ObjectIdentifier
     private let decoder: ObjectIdentifier
     fileprivate let read: @Sendable (MMKVStore) throws -> Value?
-    fileprivate let write: @Sendable (Value, MMKVStore, Duration?) throws -> Bool
+    fileprivate let encode: @Sendable (Value) throws -> EncodedWrite
+
+    /// Stores a value that has already been encoded, and returns whether it was stored.
+    fileprivate typealias EncodedWrite = (MMKVStore, Duration?) -> Bool
 
     /// Creates a key.
     ///
@@ -63,8 +66,9 @@ extension MMKVStore {
       self.read = { store in
         try store.decode(Value.self, forKey: name, with: decoder)
       }
-      self.write = { value, store, expiringIn in
-        try store.encode(value, forKey: name, expiringIn: expiringIn, with: encoder)
+      self.encode = { value in
+        let output = try encoder.encode(value)
+        return { store, expiringIn in store.set(output, forKey: name, expiringIn: expiringIn) }
       }
     }
   }
@@ -116,7 +120,11 @@ extension MMKVStore {
     for key: CodedKey<V>,
     expiringIn: Duration? = nil
   ) throws -> Bool {
-    try key.write(value, self, expiringIn)
+    let didStore = try key.encode(value)(self, expiringIn)
+    if !didStore && self.isSuspended {
+      throw MMKVError.storeIsSuspended(id: self.id)
+    }
+    return didStore
   }
 
   /// Whether `key` has a value. The value is not decoded.
@@ -184,5 +192,44 @@ extension MMKVStore {
     try self.withExclusiveLock { store in
       (repeat try store.value(for: each keys))
     }
+  }
+
+  /// Encodes several values and stores each under its key, replacing any existing values, all
+  /// at once.
+  ///
+  /// ```swift
+  /// try store.set((.settings, settings), (.feed, feed))
+  /// ```
+  ///
+  /// Every value is encoded before anything is stored, so nothing is stored when one of them
+  /// does not encode. The store is then locked once for the whole write, and listeners are
+  /// told about each key after every value has been written.
+  ///
+  /// The write is not atomic if the process is killed during it: the values written by then
+  /// are kept.
+  ///
+  /// - Parameters:
+  ///   - values: Each key with the value to store under it.
+  ///   - expiringIn: How long to keep the values. See ``set(_:forKey:expiringIn:)``.
+  /// - Returns: Whether every encoded value was stored. One that cannot be stored does not
+  ///   stop the others from being stored.
+  /// - Throws: Whatever an encoder throws, in which case nothing is stored, or
+  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  @discardableResult
+  public func set<each V>(
+    _ values: repeat (CodedKey<each V>, each V),
+    expiringIn: Duration? = nil
+  ) throws -> Bool {
+    var writes = [(MMKVStore, Duration?) -> Bool]()
+    repeat writes.append(try (each values).0.encode((each values).1))
+    let didStoreAll = self.withExclusiveLock { store in
+      writes.reduce(into: true) { didStoreAll, write in
+        didStoreAll = write(store, expiringIn) && didStoreAll
+      }
+    }
+    if !didStoreAll && self.isSuspended {
+      throw MMKVError.storeIsSuspended(id: self.id)
+    }
+    return didStoreAll
   }
 }

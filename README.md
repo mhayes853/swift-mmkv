@@ -208,6 +208,28 @@ store.set(["score.1": 10.0, "score.2": 12.5])
 let scores = store.values(forKeys: ["score.1", "score.2"], as: Double.self)  // [String: Double]
 ```
 
+Keys of different types go in as pairs. With string keys, a read pairs each key with its type and
+a write pairs it with its value:
+
+```swift
+store.set(("username", "blob"), ("volume", 0.8))
+let (username, volume) = store.values(forKeys: ("username", String.self), ("volume", Double.self))
+```
+
+[Typed keys](#typed-keys) carry their types already:
+
+```swift
+store.set((.username, "blob"), (.draft(42), "Hello"))
+let (username, draft) = store.values(forKeys: .username, .draft(42))  // (String?, String?)
+let (volume, theme) = store.values(forKeys: .volume, .theme)          // defaulted: (Double, String)
+try store.set((.settings, settings), (.feed, feed))                   // coded keys
+```
+
+A batch of coded keys encodes every value before it stores anything, so nothing is stored when
+one of them does not encode. Each of these takes keys of one kind. For a batch that mixes kinds,
+or mixes writes with removals, use `withExclusiveLock`: it locks once however much its body does,
+and listeners are told about the keys it changed once it returns.
+
 A batch is not atomic if the process is killed during it: the values written by then are kept.
 
 A store's file grows as values are written and does not shrink by itself. `byteSize` is the size
