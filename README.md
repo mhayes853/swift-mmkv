@@ -444,6 +444,33 @@ Things to know:
   background. Suspend the stores when that work is done.
 - On macOS there is nothing to observe, so only the manual forms are available.
 
+## Logging and integrity failures
+
+MMKV logs when something goes wrong with a store's files. Warnings and errors are printed to
+standard error, or to logcat on Android. `MMKVLog` changes the level and the destination for
+every store in the process:
+
+```swift
+MMKVLog.minimumLevel = .info  // or nil to log nothing
+MMKVLog.setHandler { message in
+  crashReporter.addBreadcrumb("\(message.level): \(message.text)")
+}
+```
+
+A store's file can fail its integrity check after the process is killed in the middle of a
+write. The store's `recovery` setting decides what becomes of the contents; to be told when it
+happens, subscribe before using the stores:
+
+```swift
+let subscription = MMKVStore.subscribeToIntegrityFailures { failure in
+  analytics.record("mmkv_corruption", store: failure.id.rawValue, kind: "\(failure.kind)")
+}
+```
+
+Both the log handler and this listener run while MMKV holds the store's lock, so they must not
+read or write a store. A failure carries the store's identifier alone, so stores with the same
+identifier in different directories cannot be told apart.
+
 ## The `Foundation` trait
 
 The library itself does not use Foundation. The `Foundation` trait, on by default, adds:
@@ -506,6 +533,34 @@ is only seen when the store is next read or written, or when the app calls
 
 swift-sharing and its dependencies use Foundation, whether or not the `Foundation` trait is on.
 
+## The `Logging` trait
+
+The `Logging` trait, off by default, sends MMKV's log messages to
+[swift-log](https://github.com/apple/swift-log) instead of standard error or logcat:
+
+```swift
+.package(
+  url: "https://github.com/mhayes853/swift-mmkv",
+  branch: "main",
+  traits: ["Foundation", "Logging"]
+)
+```
+
+Messages go to `Logger(label: "swift-mmkv")`, which is made when the first one is logged, so
+bootstrap your logging system before using a store. Or assign a logger of your own:
+
+```swift
+MMKVLog.logger = Logger(label: "com.example.storage")
+MMKVLog.logger.logLevel = .info
+```
+
+Setting the logger, or its level, also sets `MMKVLog.minimumLevel` to match, so the second line
+is all it takes to see MMKV's info messages. A handler set with `MMKVLog.setHandler` still takes
+over from the logger.
+
+On Android, swift-log's own handler writes to the console rather than to logcat. Bootstrap a
+handler that writes to logcat to keep MMKV's messages there.
+
 ## Platforms
 
 | Platform | Status |
@@ -520,8 +575,8 @@ swift-sharing and its dependencies use Foundation, whether or not the `Foundatio
 - On iOS the store's files keep the default file protection. Upstream's Objective-C++ build
   relaxes it to "until first user authentication" so a store can be read while the device is
   locked; this package builds the core's POSIX variant, which does not.
-- Backup and restore, log and recovery handlers, and encoding an `Encodable` value into store
-  keys are not implemented yet.
+- Backup and restore, and encoding an `Encodable` value into store keys, are not implemented
+  yet.
 
 ## The vendored core
 

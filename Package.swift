@@ -74,12 +74,14 @@ let libraryTarget: Target = .target(
       name: "Dependencies",
       package: "swift-dependencies",
       condition: .when(traits: ["Sharing"])
-    )
+    ),
+    .product(name: "Logging", package: "swift-log", condition: .when(traits: ["Logging"]))
   ],
   swiftSettings: [
     .enableExperimentalFeature("Lifetimes"),
     .define("Foundation", .when(traits: ["Foundation"])),
-    .define("Sharing", .when(traits: ["Sharing"]))
+    .define("Sharing", .when(traits: ["Sharing"])),
+    .define("Logging", .when(traits: ["Logging"]))
   ]
 )
 
@@ -97,12 +99,14 @@ let testTarget: Target = .testTarget(
       name: "Dependencies",
       package: "swift-dependencies",
       condition: .when(traits: ["Sharing"])
-    )
+    ),
+    .product(name: "Logging", package: "swift-log", condition: .when(traits: ["Logging"]))
   ],
   swiftSettings: [
     .enableExperimentalFeature("Lifetimes"),
     .define("Foundation", .when(traits: ["Foundation"])),
-    .define("Sharing", .when(traits: ["Sharing"]))
+    .define("Sharing", .when(traits: ["Sharing"])),
+    .define("Logging", .when(traits: ["Logging"]))
   ]
 )
 
@@ -131,11 +135,17 @@ let package = Package(
       description:
         "Adds `MMKVStorageKey`, a swift-sharing key that keeps `@Shared` state in a store. "
         + "swift-sharing uses Foundation."
+    ),
+    .trait(
+      name: "Logging",
+      description:
+        "Sends MMKV's log messages to swift-log, and adds `MMKVLog.logger` to choose the logger."
     )
   ],
   dependencies: [
     .package(url: "https://github.com/pointfreeco/swift-sharing", from: "2.0.0"),
-    .package(url: "https://github.com/pointfreeco/swift-dependencies", from: "1.5.1")
+    .package(url: "https://github.com/pointfreeco/swift-dependencies", from: "1.5.1"),
+    .package(url: "https://github.com/apple/swift-log", from: "1.11.0")
   ],
   targets: [coreTarget, foundationTarget, libraryTarget, testTarget],
   swiftLanguageModes: [.v6],

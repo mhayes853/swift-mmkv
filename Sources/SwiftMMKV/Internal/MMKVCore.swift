@@ -14,6 +14,7 @@ struct MMKVCore: Sendable {
     if let encryption = configuration.encryption, !encryption.isValid {
       throw .invalidEncryptionKey
     }
+    LogSink.prepare()
     let handle = MMKVStorage(path: configuration.directory.path)
       .opening(id: configuration.id) {
         configuration.withCConfiguration { mmkv_open(&$0) }

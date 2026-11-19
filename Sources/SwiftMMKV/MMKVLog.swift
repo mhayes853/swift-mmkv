@@ -5,7 +5,8 @@
 /// is one minimum level and one destination.
 ///
 /// By default, warnings and errors are printed to standard error, or to the system log on
-/// Android. To send them elsewhere, install a handler:
+/// Android. With the `Logging` trait they go to swift-log instead, through `MMKVLog.logger`. To
+/// send them elsewhere, install a handler:
 ///
 /// ```swift
 /// MMKVLog.setHandler { message in
