@@ -19,10 +19,6 @@ package struct CodedInput {
     self.position == self.size
   }
 
-  package var remaining: Int {
-    self.size - self.position
-  }
-
   package mutating func seek(_ addedSize: Int) throws(CodingError) {
     guard self.position + addedSize <= self.size else { throw .truncated }
     self.position += addedSize

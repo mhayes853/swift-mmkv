@@ -5,14 +5,6 @@
 // record is, together with a hash of its key, and compares a key against the record's bytes in the
 // mapped file. Each key takes one 16-byte slot of a ``SlotTable``.
 
-#if canImport(Darwin)
-  import Darwin
-#elseif canImport(Glibc)
-  import Glibc
-#elseif canImport(Android)
-  import Android
-#endif
-
 /// Where each key's latest record is in a block of records, as a hash table whose keys are read
 /// from the records themselves.
 ///

@@ -25,10 +25,6 @@ package struct CodedOutput {
     self.size <= self.position ? 0 : self.size - self.position
   }
 
-  package var currentPointer: UnsafeMutableRawPointer {
-    self.base + self.position
-  }
-
   private func requireSpace(_ length: Int) throws(CodingError) {
     if self.position > self.size || length > self.size - self.position {
       throw .outOfSpace
@@ -55,6 +51,10 @@ package struct CodedOutput {
 
   package mutating func writeRawData(_ bytes: UnsafeRawBufferPointer) throws(CodingError) {
     try self.requireSpace(bytes.count)
+    self.writeRawDataUnchecked(bytes)
+  }
+
+  private mutating func writeRawDataUnchecked(_ bytes: UnsafeRawBufferPointer) {
     if let source = bytes.baseAddress, bytes.count > 0 {
       (self.base + self.position).copyMemory(from: source, byteCount: bytes.count)
     }
@@ -140,15 +140,8 @@ package struct CodedOutput {
   /// Writes `bytes` preceded by their length, as `writeData` and `writeString` do.
   package mutating func writeData(_ bytes: UnsafeRawBufferPointer) throws(CodingError) {
     guard bytes.count <= Int(UInt32.max) else { throw .outOfSpace }
-    let prefixSize = pbRawVarint32Size(UInt32(bytes.count))
-    let available = self.spaceLeft
-    if prefixSize > available || bytes.count > available - prefixSize {
-      throw .outOfSpace
-    }
+    try self.requireSpace(pbRawVarint32Size(UInt32(bytes.count)) + bytes.count)
     self.writeVarintUnchecked(UInt64(bytes.count))
-    if let source = bytes.baseAddress, bytes.count > 0 {
-      (self.base + self.position).copyMemory(from: source, byteCount: bytes.count)
-    }
-    self.position += bytes.count
+    self.writeRawDataUnchecked(bytes)
   }
 }

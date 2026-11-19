@@ -52,19 +52,16 @@ package enum EncodedValue {
 
   /// Encodes the value, followed by `expiry` when the store has expiring keys.
   package func encode(expiry: UInt32?) throws(CodingError) -> [UInt8] {
-    let size = self.size + (expiry == nil ? 0 : fixed32Size)
-    var result = [UInt8](repeating: 0, count: size)
-    var failure: CodingError?
-    result.withUnsafeMutableBytes { buffer in
+    var result = [UInt8](repeating: 0, count: self.size(expiry: expiry))
+    // `withUnsafeMutableBytes` would turn a thrown error into `any Error`, so it is returned.
+    let failure = result.withUnsafeMutableBytes { buffer -> CodingError? in
       var output = CodedOutput(buffer)
       do throws(CodingError) {
-        try self.write(to: &output)
-        if let expiry {
-          try output.writeRawLittleEndian32(expiry)
-        }
+        try self.write(to: &output, expiry: expiry)
       } catch {
-        failure = error
+        return error
       }
+      return nil
     }
     if let failure { throw failure }
     return result
@@ -75,14 +72,11 @@ package enum EncodedValue {
   ///
   /// - Returns: What `body` returns, or `nil` if the value cannot be encoded.
   package func withEncoded<R>(expiry: UInt32?, _ body: (UnsafeRawBufferPointer) -> R) -> R? {
-    let size = self.size + (expiry == nil ? 0 : fixed32Size)
-    return withUnsafeTemporaryAllocation(byteCount: size, alignment: 1) { buffer -> R? in
+    withUnsafeTemporaryAllocation(byteCount: self.size(expiry: expiry), alignment: 1) {
+      buffer -> R? in
       var output = CodedOutput(buffer)
       do throws(CodingError) {
-        try self.write(to: &output)
-        if let expiry {
-          try output.writeRawLittleEndian32(expiry)
-        }
+        try self.write(to: &output, expiry: expiry)
       } catch {
         return nil
       }
@@ -90,7 +84,11 @@ package enum EncodedValue {
     }
   }
 
-  private func write(to output: inout CodedOutput) throws(CodingError) {
+  private func size(expiry: UInt32?) -> Int {
+    self.size + (expiry == nil ? 0 : fixed32Size)
+  }
+
+  private func write(to output: inout CodedOutput, expiry: UInt32?) throws(CodingError) {
     switch self {
     case .bool(let value): try output.writeBool(value)
     case .int32(let value): try output.writeInt32(value)
@@ -103,16 +101,13 @@ package enum EncodedValue {
     case .strings(let strings):
       try output.writeUInt32(UInt32(truncatingIfNeeded: Self.containerSize(strings)))
       for var string in strings {
-        var failure: CodingError?
-        string.withUTF8 { utf8 in
-          do throws(CodingError) {
-            try output.writeData(UnsafeRawBufferPointer(utf8))
-          } catch {
-            failure = error
-          }
+        try string.withUTF8 { (utf8) throws(CodingError) in
+          try output.writeData(UnsafeRawBufferPointer(utf8))
         }
-        if let failure { throw failure }
       }
+    }
+    if let expiry {
+      try output.writeRawLittleEndian32(expiry)
     }
   }
 }

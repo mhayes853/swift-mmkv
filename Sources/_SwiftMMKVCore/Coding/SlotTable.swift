@@ -20,7 +20,7 @@ package enum HashProbe {
 
 /// An open-addressing hash table of slots, with linear probing and no markers for removed keys.
 struct SlotTable<Slot: HashTableSlot>: ~Copyable {
-  private(set) var slots: UnsafeMutablePointer<Slot>
+  private var slots: UnsafeMutablePointer<Slot>
   /// A power of two, so that a hash's low bits pick a slot.
   private(set) var capacity: Int
   private(set) var count = 0
@@ -29,7 +29,7 @@ struct SlotTable<Slot: HashTableSlot>: ~Copyable {
   private(set) var version = 0
   private let seed: UInt64
 
-  static var minimumCapacity: Int { 16 }
+  private static var minimumCapacity: Int { 16 }
 
   init() {
     self.capacity = Self.minimumCapacity
@@ -45,11 +45,6 @@ struct SlotTable<Slot: HashTableSlot>: ~Copyable {
     let slots = UnsafeMutablePointer<Slot>.allocate(capacity: capacity)
     slots.initialize(repeating: .empty, count: capacity)
     return slots
-  }
-
-  /// The memory the slots take.
-  var byteCount: Int {
-    self.capacity * MemoryLayout<Slot>.stride
   }
 
   // MARK: Hashing

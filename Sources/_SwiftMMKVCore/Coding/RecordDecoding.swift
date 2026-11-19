@@ -109,16 +109,25 @@ package enum RecordDecoding {
     return decoded
   }
 
+  /// An input at the first record: at `position`, or after the size placeholder when it is zero.
+  private static func input(
+    _ data: UnsafeRawBufferPointer,
+    from position: Int
+  ) throws(CodingError) -> CodedInput {
+    var input = CodedInput(data)
+    if position != 0 {
+      try input.seek(position)
+    } else {
+      _ = try input.readInt32()
+    }
+    return input
+  }
+
   /// How many records hold a value, up to the first that cannot be read.
   private static func countValues(_ data: UnsafeRawBufferPointer, from position: Int) -> Int {
-    var input = CodedInput(data)
     var count = 0
     do throws(CodingError) {
-      if position != 0 {
-        try input.seek(position)
-      } else {
-        _ = try input.readInt32()
-      }
+      var input = try Self.input(data, from: position)
       while !input.isAtEnd {
         guard !(try input.readLengthDelimited()).isEmpty else { continue }
         if !(try input.readLengthDelimited()).isEmpty {
@@ -134,13 +143,8 @@ package enum RecordDecoding {
     from position: Int,
     into index: inout RecordIndex
   ) -> Bool {
-    var input = CodedInput(data)
     do throws(CodingError) {
-      if position != 0 {
-        try input.seek(position)
-      } else {
-        _ = try input.readInt32()
-      }
+      var input = try Self.input(data, from: position)
       while !input.isAtEnd {
         let offset = input.position
         let keyRange = try input.readLengthDelimited()
