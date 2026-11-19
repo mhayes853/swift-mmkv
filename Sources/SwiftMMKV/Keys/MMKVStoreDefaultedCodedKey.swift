@@ -104,4 +104,20 @@ extension MMKVStore {
   public func removeValue<V>(for key: DefaultedCodedKey<V>) -> Bool {
     self.removeValue(for: key.key)
   }
+
+  /// Calls `onChange` with the decoded value of `key`, once before this function returns and
+  /// then whenever the value may have changed, until the returned subscription is cancelled or
+  /// released.
+  ///
+  /// The result is a success of the key's default whenever the store has no value for the
+  /// key. A stored value that does not decode is still a failure. In other respects this
+  /// behaves like the subscription of a ``CodedKey``.
+  public func subscribe<V>(
+    for key: DefaultedCodedKey<V>,
+    _ onChange: @escaping @Sendable (Result<V, any Error>) -> Void
+  ) -> MMKVSubscription {
+    self.subscribe(for: key.key) { result in
+      onChange(result.map { $0 ?? key.defaultValue })
+    }
+  }
 }

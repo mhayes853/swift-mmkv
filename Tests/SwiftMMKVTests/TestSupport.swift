@@ -109,6 +109,13 @@ final class ValueRecorder<Value: Sendable>: Sendable {
   }
 }
 
+extension Result {
+  /// The success, or `nil` for a failure, to compare what a subscription delivered.
+  var success: Success? {
+    try? self.get()
+  }
+}
+
 /// Encodes a value as its description and decodes it back, to stand in for a coder that is a
 /// class, as coded keys need, and that this package knows nothing about.
 final class TextCoder: MMKVTopLevelEncoder, MMKVTopLevelDecoder, Sendable {

@@ -64,6 +64,26 @@ import Testing
     #expect(recorder.all == [nil, nil, "blob"])
     subscription.cancel()
   }
+
+  @Test func `Delivers Decoded Values With A Custom Decoder`() throws {
+    let store = try makeStore()
+    store.set("1", forKey: "count")
+    let recorder = ValueRecorder<Result<Int?, any Error>>()
+
+    let subscription = store.subscribe(
+      forKey: "count",
+      as: Int.self,
+      with: IntegerTextDecoder(),
+      recorder.record
+    )
+    store.set("two", forKey: "count")
+    store.set("3", forKey: "count")
+    store.removeValue(forKey: "count")
+
+    #expect(recorder.all.map(\.success) == [.some(1), nil, .some(3), .some(nil)])
+    #expect(throws: IntegerTextDecoder.NotAnInteger.self) { try recorder.all[1].get() }
+    subscription.cancel()
+  }
 }
 
 @Suite struct MMKVValuesTests {

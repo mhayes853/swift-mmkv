@@ -125,6 +125,57 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
     try store.set(3, for: .count)
     #expect(try await iterator.next() == nil)
   }
+
+  @Test func `Delivers The Decoded Value And Each Change`() throws {
+    let store = try makeStore()
+    let recorder = ValueRecorder<Result<Int?, any Error>>()
+
+    let subscription = store.subscribe(for: .count, recorder.record)
+    try store.set(1, for: .count)
+    try store.set(2, for: .score(1))
+    store.removeValue(for: .count)
+
+    #expect(recorder.all.map(\.success) == [.some(nil), .some(1), .some(nil)])
+    subscription.cancel()
+  }
+
+  @Test func `Delivers A Failure For A Value That Does Not Decode And Carries On`() throws {
+    let store = try makeStore()
+    store.set("not a number", forKey: "count")
+    let recorder = ValueRecorder<Result<Int?, any Error>>()
+
+    let subscription = store.subscribe(for: .count, recorder.record)
+    try store.set(3, for: .count)
+
+    #expect(recorder.all.map(\.success) == [nil, .some(3)])
+    #expect(throws: TextCoder.Failure.self) { try recorder.all[0].get() }
+    subscription.cancel()
+  }
+
+  @Test func `Delivers A Failure While The Store Is Suspended`() throws {
+    let store = try makeStore(mode: .multiProcess)
+    try store.set(1, for: .count)
+    let recorder = ValueRecorder<Result<Int?, any Error>>()
+    store.suspend()
+
+    let subscription = store.subscribe(for: .count, recorder.record)
+    store.resume()
+
+    #expect(recorder.all.map(\.success) == [nil, .some(1)])
+    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) { try recorder.all[0].get() }
+    subscription.cancel()
+  }
+
+  @Test func `Stops Delivering Once Cancelled`() throws {
+    let store = try makeStore()
+    let recorder = ValueRecorder<Result<Int?, any Error>>()
+
+    let subscription = store.subscribe(for: .count, recorder.record)
+    subscription.cancel()
+    try store.set(1, for: .count)
+
+    #expect(recorder.all.count == 1)
+  }
 }
 
 @Suite struct MMKVStoreDefaultedCodedKeyTests {
@@ -176,5 +227,28 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
     store.set("not a number", forKey: "lives")
 
     #expect(throws: TextCoder.Failure.self) { try store.value(for: .lives) }
+  }
+
+  @Test func `Delivers The Default In Place Of A Missing Value`() throws {
+    let store = try makeStore()
+    let recorder = ValueRecorder<Result<Int, any Error>>()
+
+    let subscription = store.subscribe(for: .lives, recorder.record)
+    try store.set(2, for: .lives)
+    store.removeValue(for: .lives)
+
+    #expect(recorder.all.map(\.success) == [3, 2, 3])
+    subscription.cancel()
+  }
+
+  @Test func `Delivers A Failure Rather Than The Default For An Undecodable Value`() throws {
+    let store = try makeStore()
+    store.set("not a number", forKey: "lives")
+    let recorder = ValueRecorder<Result<Int, any Error>>()
+
+    let subscription = store.subscribe(for: .lives, recorder.record)
+
+    #expect(recorder.all.map(\.success) == [nil])
+    subscription.cancel()
   }
 }

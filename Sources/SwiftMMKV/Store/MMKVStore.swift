@@ -440,6 +440,45 @@ extension MMKVStore {
     return subscription
   }
 
+  /// Calls `onChange` with the `Decodable` value of `key`, read with `decoder`, once before this
+  /// function returns and then whenever the value may have changed, until the returned
+  /// subscription is cancelled or released.
+  ///
+  /// ```swift
+  /// let subscription = store.subscribe(forKey: "settings", as: Settings.self, with: decoder) {
+  ///   switch $0 {
+  ///   case .success(let settings): apply(settings ?? Settings())
+  ///   case .failure(let error): report(error)
+  ///   }
+  /// }
+  /// ```
+  ///
+  /// The result is a success of `nil` when the store has no value for `key`. It is a failure
+  /// with whatever `decoder` throws when the stored value does not decode, and with
+  /// ``MMKVError/storeIsSuspended(id:)`` while the store is suspended. The subscription
+  /// carries on after a failure, so a later write that decodes is delivered as a success.
+  ///
+  /// In other respects this behaves like ``subscribe(forKey:as:_:)``, including running with a
+  /// value it was already given.
+  ///
+  /// - Parameters:
+  ///   - key: The key to observe.
+  ///   - type: The type to decode.
+  ///   - decoder: The decoder that reads the value.
+  ///   - onChange: Runs with the current value, and again after each change.
+  public func subscribe<T: Decodable & SendableMetatype, Decoder: MMKVTopLevelDecoder & Sendable>(
+    forKey key: String,
+    as type: T.Type = T.self,
+    with decoder: Decoder,
+    _ onChange: @escaping @Sendable (Result<T?, any Error>) -> Void
+  ) -> MMKVSubscription where Decoder.Input: MMKVValue {
+    let subscription = self.subscribe(forKey: key) {
+      onChange(Result { try self.decode(T.self, forKey: key, with: decoder) })
+    }
+    onChange(Result { try self.decode(T.self, forKey: key, with: decoder) })
+    return subscription
+  }
+
   /// Checks whether another process, or another copy of MMKV, changed the store, reloading it
   /// and notifying listeners with ``Change/external`` if so.
   ///

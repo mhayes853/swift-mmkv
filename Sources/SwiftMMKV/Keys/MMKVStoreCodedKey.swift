@@ -15,7 +15,7 @@ extension MMKVStore {
   /// ``MMKVStore/decode(_:forKey:with:)`` do with the same name and coders.
   ///
   /// Reading and writing throw what the coders throw, which is why a coded key has no
-  /// subscript.
+  /// subscript, and why its subscription delivers a `Result`.
   ///
   /// ## Equality
   ///
@@ -130,5 +130,36 @@ extension MMKVStore {
   @discardableResult
   public func removeValue<V>(for key: CodedKey<V>) -> Bool {
     self.removeValue(forKey: key.name)
+  }
+
+  /// Calls `onChange` with the decoded value of `key`, once before this function returns and
+  /// then whenever the value may have changed, until the returned subscription is cancelled or
+  /// released.
+  ///
+  /// ```swift
+  /// let subscription = store.subscribe(for: .settings) {
+  ///   switch $0 {
+  ///   case .success(let settings): apply(settings ?? Settings())
+  ///   case .failure(let error): report(error)
+  ///   }
+  /// }
+  /// ```
+  ///
+  /// The result is a success of `nil` when the store has no value for `key`. It is a failure
+  /// with whatever the key's decoder throws when the stored value does not decode, and with
+  /// ``MMKVError/storeIsSuspended(id:)`` while the store is suspended. The subscription
+  /// carries on after a failure, so a later write that decodes is delivered as a success.
+  ///
+  /// In other respects this behaves like ``subscribe(forKey:as:_:)``, including running with a
+  /// value it was already given.
+  public func subscribe<V>(
+    for key: CodedKey<V>,
+    _ onChange: @escaping @Sendable (Result<V?, any Error>) -> Void
+  ) -> MMKVSubscription {
+    let subscription = self.subscribe(forKey: key.name) {
+      onChange(Result { try key.read(self) })
+    }
+    onChange(Result { try key.read(self) })
+    return subscription
   }
 }
