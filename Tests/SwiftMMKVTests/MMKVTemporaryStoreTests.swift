@@ -51,4 +51,18 @@ import Testing
     #expect(store.set("small", forKey: "key"))
     #expect(!store.set(String(repeating: "x", count: 64), forKey: "large"))
   }
+
+  @Test func `A Temporary Store Is Opened From A Temporary Configuration`() throws {
+    let first = try MMKVStore.temporary()
+    let second = try MMKVStore.temporary(id: "settings")
+
+    first.set("blob", forKey: "username")
+
+    #expect(first.id == .default)
+    #expect(first.configuration.mode == .singleProcess)
+    #expect(first.configuration.directory.path.hasPrefix(NSTemporaryDirectory()))
+    #expect(second.id == "settings")
+    #expect(second.configuration.directory != first.configuration.directory)
+    #expect(second.keys.isEmpty)
+  }
 }

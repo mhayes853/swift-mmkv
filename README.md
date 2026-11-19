@@ -261,8 +261,10 @@ For a store that does not need to last, such as one for a test or a preview, use
 directory. Every call makes a new one, so the store starts empty:
 
 ```swift
-let store = try MMKVStore(.temporary())
-let directory = MMKVDirectory.temporary()  // to open several stores side by side
+let store = try MMKVStore.temporary()
+
+var configuration = MMKVConfiguration.temporary()  // to change anything else about the store
+let directory = MMKVDirectory.temporary()          // to open several stores side by side
 ```
 
 It is a store like any other, in a new directory inside the system's temporary directory, and

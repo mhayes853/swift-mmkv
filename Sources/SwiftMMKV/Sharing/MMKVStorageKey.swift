@@ -364,17 +364,17 @@
         as early as possible in the app's lifetime, or pass a store to the 'mmkv' shared key.
         """
       )
-      return .temporary()
+      return .temporaryDefault()
     }
 
-    static var testValue: MMKVStore { .temporary() }
+    static var testValue: MMKVStore { .temporaryDefault() }
   }
 
   extension MMKVStore {
-    /// An empty store in a temporary directory.
-    fileprivate static func temporary() -> MMKVStore {
+    /// An empty store in a temporary directory, for a default that has no way to fail.
+    fileprivate static func temporaryDefault() -> MMKVStore {
       do {
-        return try MMKVStore(.temporary())
+        return try .temporary()
       } catch {
         fatalError("A temporary MMKV store could not be opened: \(error)")
       }

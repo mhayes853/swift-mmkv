@@ -41,6 +41,25 @@ public final class MMKVStore: Sendable {
     self.currentConfiguration = Lock(configuration)
   }
 
+  /// Opens a new, empty single-process store in a temporary directory, for a store that does
+  /// not need to last, such as one for a test or a preview.
+  ///
+  /// ```swift
+  /// let store = try MMKVStore.temporary()
+  /// ```
+  ///
+  /// This opens ``MMKVConfiguration/temporary(id:)``. Start from that configuration to change
+  /// anything else about the store. It is a store like any other, and lasts until the system
+  /// clears its temporary directory.
+  ///
+  /// - Parameter id: The store's identifier.
+  /// - Throws: ``MMKVError/openFailed(id:directory:)`` if the store cannot be opened, which is
+  ///   the case where the system's temporary directory cannot be written to. See
+  ///   ``MMKVDirectory/temporary()``.
+  public static func temporary(id: MMKVStore.ID = .default) throws(MMKVError) -> MMKVStore {
+    try MMKVStore(.temporary(id: id))
+  }
+
   /// The store's identifier.
   public var id: MMKVStore.ID {
     self.core.state.id
