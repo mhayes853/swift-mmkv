@@ -206,6 +206,70 @@ extension MMKVStore {
   }
 }
 
+// MARK: - Batches
+
+extension MMKVStore {
+  /// Reads the values stored under `keys` as `V`s, all at once.
+  ///
+  /// ```swift
+  /// let scores = store.values(forKeys: ["score.1", "score.2"], as: Double.self)
+  /// ```
+  ///
+  /// The store is locked once for the whole read, so the values are those the keys held at
+  /// one moment, and for a multi-process store the file lock is taken once rather than once
+  /// for each key.
+  ///
+  /// - Parameters:
+  ///   - keys: The keys to read.
+  ///   - type: The type to read each value as. See ``value(forKey:as:)``.
+  /// - Returns: The values by key. A key is left out when it has no value or its value is not
+  ///   a valid `V`.
+  public func values<V: MMKVValue>(
+    forKeys keys: some Sequence<String>,
+    as type: V.Type = V.self
+  ) -> [String: V] {
+    self.core.locked {
+      var values = [String: V]()
+      for key in keys {
+        values[key] = self.core.value(forKey: key, as: type)
+      }
+      return values
+    }
+  }
+
+  /// Stores each value of `values` under its key, replacing any existing values, all at once.
+  ///
+  /// ```swift
+  /// store.set(["score.1": 10.0, "score.2": 12.5])
+  /// ```
+  ///
+  /// The store is locked once for the whole write, so nothing else reads or writes it part of
+  /// the way through, and for a multi-process store the file lock is taken once rather than
+  /// once for each key. Listeners are told about each key after every value has been written.
+  ///
+  /// The write is not atomic if the process is killed during it: the values written by then
+  /// are kept.
+  ///
+  /// - Parameters:
+  ///   - values: The values to store, by key.
+  ///   - expiringIn: How long to keep the values. See ``set(_:forKey:expiringIn:)``.
+  /// - Returns: Whether every value was stored. A value that cannot be stored does not stop
+  ///   the others from being stored. See ``set(_:forKey:expiringIn:)`` for why a write fails.
+  @discardableResult
+  public func set<V: MMKVValue>(_ values: [String: V], expiringIn: Duration? = nil) -> Bool {
+    let expiresInSeconds = expiringIn.mmkvExpirySeconds
+    let stored = self.core.locked {
+      values.keys.filter { key in
+        self.core.set(values[key]!, forKey: key, expiresInSeconds: expiresInSeconds)
+      }
+    }
+    for key in stored {
+      self.core.state.notify(.key(key))
+    }
+    return stored.count == values.count
+  }
+}
+
 // MARK: - Keys
 
 extension MMKVStore {

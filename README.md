@@ -199,6 +199,17 @@ store.withExclusiveLock { store in
 }
 ```
 
+To read or write several keys of one type at once, pass them together. The store is locked once
+for the whole batch, which for a multi-process store means taking the file lock once instead of
+once for each key, and listeners are told after every value is written:
+
+```swift
+store.set(["score.1": 10.0, "score.2": 12.5])
+let scores = store.values(forKeys: ["score.1", "score.2"], as: Double.self)  // [String: Double]
+```
+
+A batch is not atomic if the process is killed during it: the values written by then are kept.
+
 A store's file grows as values are written and does not shrink by itself. `byteSize` is the size
 of the file, `usedByteSize` is how much of it holds data, and `trim()` rewrites the file without
 the space that removed and overwritten values left behind:
