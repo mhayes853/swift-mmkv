@@ -200,8 +200,10 @@ time with package-benchmark and memory with `MemoryReport` (see its README).
    another process's changes reads only the metadata fields it compares.
 3. **Faster full write-backs.** When the file fills up, the store rewrites it with only each
    key's latest record, which needs the records in file order. `SlotTable` now orders the slots
-   with a radix sort, a byte of the record offset at a time, instead of a comparison sort, and
-   an encrypted store sorts once per rewrite rather than twice. CRC-32 is computed in C
+   with a radix sort instead of a comparison sort. It sorts only the offset bits that differ
+   between records, in digits of up to 11 bits, so a file under 4 MB takes two passes: 26 µs
+   for 10,000 keys, where byte digits took 42 µs and the comparison sort 650 µs. An encrypted
+   store sorts once per rewrite rather than twice. CRC-32 is computed in C
    (`CSwiftMMKVCrypto/crc32.c`), with the ARMv8 CRC32 instructions on 64-bit ARM, Apple
    platforms included, and zlib elsewhere, instead of with a table in Swift.
 

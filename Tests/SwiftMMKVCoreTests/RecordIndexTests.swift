@@ -92,14 +92,24 @@ import Testing
     }
   }
 
-  @Test(arguments: [0, 1, 2, 128, 129, 1_000, 30_000], [UInt64(1) << 16, 1 << 24, 1 << 32, 7])
+  @Test(
+    arguments: [0, 1, 2, 128, 129, 1_000, 30_000],
+    [UInt64(1) << 16, 1 << 22, 1 << 24, 1 << 29, 1 << 32, 7, 1]
+  )
   func `The Radix Sort Orders As A Comparison Sort Does`(count: Int, orderLimit: UInt64) {
-    // Order values below each limit leave the top bytes the same in every value, so that passes
-    // are skipped, or none, or have many values that tie and must keep their indices in order.
+    // Order values below each limit leave the top bits the same in every value, so that there are
+    // one, two or three passes, or none, or many values that tie and must keep their indices in
+    // order. For two of the limits, the values are spaced 8 apart, leaving the bottom bits the
+    // same too.
+    let spaced = orderLimit == 1 << 22 || orderLimit == 1 << 29
     var generator = SeededGenerator(seed: UInt64(count) ^ orderLimit)
     var values = [UInt64]()
     for index in 0..<count {
-      values.append(UInt64.random(in: 0..<orderLimit, using: &generator) << 32 | UInt64(index * 3))
+      var order = UInt64.random(in: 0..<orderLimit, using: &generator)
+      if spaced {
+        order = order * 8 + 5
+      }
+      values.append(order << 32 | UInt64(index * 3))
     }
     var sorted = values
     sorted.withUnsafeMutableBufferPointer { sortByHighWord($0) }

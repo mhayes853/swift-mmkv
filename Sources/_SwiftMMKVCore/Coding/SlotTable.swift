@@ -254,12 +254,15 @@ struct SlotTable<Slot: HashTableSlot>: ~Copyable {
 /// Sorts `values`, whose low 32 bits are in ascending order, into ascending order.
 ///
 /// Only the high 32 bits need sorting, as long as values whose high bits are equal stay in the
-/// order they were in. This is a least-significant-digit radix sort that does so a byte at a time:
-/// each pass moves the values into 256 buckets by one byte, keeping their order within a bucket,
-/// so after the pass for the top byte they are in order. One read of the values counts all four
-/// bytes, and a pass is skipped when every value has the same byte there, as the top byte of a
-/// file's offsets usually is. It does a fixed amount of work for each value, where a comparison
-/// sort's grows with the count.
+/// order they were in. This is a least-significant-digit radix sort that does so a digit at a
+/// time: each pass counts how many values have each digit, then moves the values into a bucket
+/// for each digit, keeping their order within a bucket, so after the pass for the top digit they
+/// are in order. It does a fixed amount of work for each value, where a comparison sort's grows
+/// with the count.
+///
+/// Only the bits that differ between values are sorted, which one read of the values finds. The
+/// top bits of a file's offsets are the same in every value, so a file under 4 MB has at most 22
+/// bits to sort, and two passes of 11-bit digits do it, where byte digits would take three.
 func sortByHighWord(_ values: UnsafeMutableBufferPointer<UInt64>) {
   let count = values.count
   // Below this, the setup costs more than comparing does.
@@ -268,34 +271,41 @@ func sortByHighWord(_ values: UnsafeMutableBufferPointer<UInt64>) {
     values.sort()
     return
   }
-  withUnsafeTemporaryAllocation(of: Int.self, capacity: 4 * 256) { counts in
-    counts.initialize(repeating: 0)
-    for value in values {
-      let high = Int(truncatingIfNeeded: value >> 32)
-      counts[high & 0xff] += 1
-      counts[256 + ((high >> 8) & 0xff)] += 1
-      counts[512 + ((high >> 16) & 0xff)] += 1
-      counts[768 + ((high >> 24) & 0xff)] += 1
-    }
+  // The compiler vectorizes this loop.
+  var anySet: UInt64 = 0
+  var allSet: UInt64 = ~0
+  for value in values {
+    anySet |= value
+    allSet &= value
+  }
+  let differing = UInt32(truncatingIfNeeded: (anySet ^ allSet) >> 32)
+  guard differing != 0 else { return }
+  let lowestBit = differing.trailingZeroBitCount
+  let bits = UInt32.bitWidth - differing.leadingZeroBitCount - lowestBit
+  // Digits of up to 11 bits keep the counts in 16 KB, which stays in the L1 cache.
+  let passes = (bits + 10) / 11
+  let width = (bits + passes - 1) / passes
+  let bucketCount = 1 << width
+  let mask = UInt64(bucketCount - 1)
+  withUnsafeTemporaryAllocation(of: Int.self, capacity: bucketCount) { counts in
     withUnsafeTemporaryAllocation(of: UInt64.self, capacity: count) { scratch in
       var source = values
       var destination = scratch
-      for digit in 0..<4 {
-        let shift = UInt64(32 + digit * 8)
-        let base = digit * 256
-        // Every value is in one bucket, so this pass would leave them where they are.
-        if counts[base + Int(truncatingIfNeeded: (source[0] >> shift) & 0xff)] == count {
-          continue
+      for pass in 0..<passes {
+        let shift = UInt64(32 + lowestBit + pass * width)
+        counts.initialize(repeating: 0)
+        for value in source {
+          counts[Int(truncatingIfNeeded: (value >> shift) & mask)] += 1
         }
         // Each bucket's count becomes where its first value goes.
         var start = 0
-        for bucket in base..<(base + 256) {
-          let bucketCount = counts[bucket]
+        for bucket in 0..<bucketCount {
+          let bucketValues = counts[bucket]
           counts[bucket] = start
-          start += bucketCount
+          start += bucketValues
         }
         for value in source {
-          let bucket = base + Int(truncatingIfNeeded: (value >> shift) & 0xff)
+          let bucket = Int(truncatingIfNeeded: (value >> shift) & mask)
           destination[counts[bucket]] = value
           counts[bucket] += 1
         }
