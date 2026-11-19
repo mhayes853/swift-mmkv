@@ -28,7 +28,7 @@ import Testing
   @Test(arguments: [1, 2, 3])
   func `Removals Keep Every Other Key Findable`(seed: UInt64) {
     let records = Records(count: 2_000)
-    var generator = SeededGenerator(seed: seed)
+    var generator = SplitMix64(seed: seed)
     records.data.withUnsafeBytes { data in
       let base = data.baseAddress
       var index = RecordIndex()
@@ -102,7 +102,7 @@ import Testing
     // order. For two of the limits, the values are spaced 8 apart, leaving the bottom bits the
     // same too.
     let spaced = orderLimit == 1 << 22 || orderLimit == 1 << 29
-    var generator = SeededGenerator(seed: UInt64(count) ^ orderLimit)
+    var generator = SplitMix64(seed: UInt64(count) ^ orderLimit)
     var values = [UInt64]()
     for index in 0..<count {
       var order = UInt64.random(in: 0..<orderLimit, using: &generator)
@@ -175,21 +175,4 @@ private func varint(_ value: Int) -> [UInt8] {
   }
   bytes.append(UInt8(remaining))
   return bytes
-}
-
-/// SplitMix64, so that a failing seed reproduces.
-private struct SeededGenerator: RandomNumberGenerator {
-  var state: UInt64
-
-  init(seed: UInt64) {
-    self.state = seed
-  }
-
-  mutating func next() -> UInt64 {
-    self.state &+= 0x9E37_79B9_7F4A_7C15
-    var value = self.state
-    value = (value ^ (value >> 30)) &* 0xBF58_476D_1CE4_E5B9
-    value = (value ^ (value >> 27)) &* 0x94D0_49BB_1331_11EB
-    return value ^ (value >> 31)
-  }
 }

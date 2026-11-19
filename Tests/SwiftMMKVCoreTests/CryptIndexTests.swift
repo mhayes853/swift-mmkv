@@ -18,7 +18,7 @@ import Testing
 
   @Test(arguments: [1, 2, 3, 4])
   func `Keeps Every Entry Through Replacements, Removals And Compaction`(seed: UInt64) {
-    var generator = SeededGenerator(seed: seed)
+    var generator = SplitMix64(seed: seed)
     var index = CryptIndex()
     var expected = [[UInt8]: Expected]()
     let keys = (0..<400).map { Array("key-\($0)-\(String(repeating: "k", count: $0 % 9))".utf8) }
@@ -134,22 +134,5 @@ import Testing
     var listed = Set<[UInt8]>()
     index.forEachEntry { slot, _ in listed.insert(Array(index.key(at: slot))) }
     #expect(listed == Set(expected.keys))
-  }
-}
-
-/// SplitMix64, so that a failing seed reproduces.
-private struct SeededGenerator: RandomNumberGenerator {
-  var state: UInt64
-
-  init(seed: UInt64) {
-    self.state = seed
-  }
-
-  mutating func next() -> UInt64 {
-    self.state &+= 0x9E37_79B9_7F4A_7C15
-    var value = self.state
-    value = (value ^ (value >> 30)) &* 0xBF58_476D_1CE4_E5B9
-    value = (value ^ (value >> 27)) &* 0x94D0_49BB_1331_11EB
-    return value ^ (value >> 31)
   }
 }

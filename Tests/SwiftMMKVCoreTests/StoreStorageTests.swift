@@ -42,9 +42,9 @@ import Testing
     let otherLock = FileLock(descriptor: descriptor)
     otherLock.lock(.shared)
     let done = DispatchSemaphore(value: 0)
-    let removed = RemovalResult()
+    let removed = LockedValue(false)
     Thread {
-      removed.value = StoreStorage.remove(id: "locked", rootDirectory: root)
+      removed.set(StoreStorage.remove(id: "locked", rootDirectory: root))
       done.signal()
     }
     .start()
@@ -52,14 +52,12 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: metaPath))
     otherLock.unlock(.shared)
     done.wait()
-    #expect(removed.value)
+    #expect(removed.get())
     #expect(!FileManager.default.fileExists(atPath: metaPath))
   }
 
   private func makeFiles(_ files: Files, id: String) throws -> String {
-    let root = FileManager.default.temporaryDirectory
-      .appendingPathComponent("swift-mmkv-core-tests")
-      .appendingPathComponent(UUID().uuidString).path
+    let root = temporaryDirectory()
     let dataPath = StorePaths.dataPath(id: id, root: root)
     try FileManager.default.createDirectory(
       atPath: (dataPath as NSString).deletingLastPathComponent,
@@ -86,8 +84,4 @@ import Testing
     var string = string
     return string.withUTF8 { body(mmkv_bytes(bytes: $0.baseAddress, count: $0.count)) }
   }
-}
-
-private final class RemovalResult: @unchecked Sendable {
-  var value = false
 }

@@ -1,6 +1,6 @@
 import CSwiftMMKVCrypto
 import Foundation
-@_spi(Engines) import SwiftMMKV
+import SwiftMMKV
 import Testing
 
 @testable import _SwiftMMKVCore
@@ -304,18 +304,12 @@ import Testing
   /// Writes a store with the C++ core and reads its files back.
   private static func cxxStoreFile(_ write: (MMKVStore) -> Void) throws -> StoreFile {
     let root = temporaryDirectory()
-    var configuration = MMKVConfiguration(
-      id: "store",
-      directory: MMKVDirectory(path: root),
-      mode: .singleProcess
-    )
-    configuration.engine = .cxx
-    let store = try MMKVStore(configuration)
+    let store = try makeCxxStore(id: "store", rootDirectory: root)
     write(store)
     store.sync()
     return StoreFile(
-      bytes: Array(try Data(contentsOf: URL(fileURLWithPath: "\(root)/store"))),
-      metaBytes: Array(try Data(contentsOf: URL(fileURLWithPath: "\(root)/store.crc")))
+      bytes: try readFile(atPath: "\(root)/store"),
+      metaBytes: try readFile(atPath: "\(root)/store.crc")
     )
   }
 }
@@ -335,13 +329,7 @@ import Testing
   @Test func `The C++ Core Writes Its Files Where The Paths Say`() throws {
     let root = temporaryDirectory()
     for id in ["plain", "with/slash"] {
-      var configuration = MMKVConfiguration(
-        id: id,
-        directory: MMKVDirectory(path: root),
-        mode: .singleProcess
-      )
-      configuration.engine = .cxx
-      try MMKVStore(configuration).set(true, forKey: "key")
+      try makeCxxStore(id: id, rootDirectory: root).set(true, forKey: "key")
       let dataPath = StorePaths.dataPath(id: id, root: StorePaths.normalizedRoot(root))
       #expect(FileManager.default.fileExists(atPath: dataPath), "\(id)")
       #expect(FileManager.default.fileExists(atPath: StorePaths.metaPath(dataPath: dataPath)))
@@ -486,12 +474,4 @@ extension String {
   fileprivate func withEncodedBytes<R>(_ body: (EncodedValue) throws -> R) rethrows -> R {
     try Array(self.utf8).withUnsafeBytes { try body(.bytes($0)) }
   }
-}
-
-private func temporaryDirectory() -> String {
-  let directory = FileManager.default.temporaryDirectory
-    .appendingPathComponent("swift-mmkv-core-tests")
-    .appendingPathComponent(UUID().uuidString)
-  try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-  return directory.path
 }

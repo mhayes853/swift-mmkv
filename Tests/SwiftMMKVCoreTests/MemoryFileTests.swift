@@ -1,5 +1,5 @@
 import Foundation
-@_spi(Engines) import SwiftMMKV
+import SwiftMMKV
 import Testing
 
 @testable import _SwiftMMKVCore
@@ -10,8 +10,8 @@ import Testing
     let file = MemoryFile(path: path, isReadOnly: false, isMayflyFD: true)
     #expect(file.isFileValid == true)
     #expect(file.size == pageSize)
-    #expect(try contents(path).count == pageSize)
-    #expect(try contents(path).allSatisfy { $0 == 0 })
+    #expect(try readFile(atPath: path).count == pageSize)
+    #expect(try readFile(atPath: path).allSatisfy { $0 == 0 })
   }
 
   @Test func `The Expected Capacity Rounds Up To Whole Pages`() throws {
@@ -31,7 +31,7 @@ import Testing
     try Data([1, 2, 3]).write(to: URL(fileURLWithPath: path))
     let file = MemoryFile(path: path, isReadOnly: false, isMayflyFD: true)
     #expect(file.size == pageSize)
-    let bytes = try contents(path)
+    let bytes = try readFile(atPath: path)
     #expect(bytes.prefix(3) == [1, 2, 3])
     #expect(bytes.dropFirst(3).allSatisfy { $0 == 0 })
 
@@ -52,7 +52,7 @@ import Testing
     #expect(readOnly.isFileValid == true)
     #expect(readOnly.size == 3)
     #expect(readOnly.truncate(to: pageSize) == false)
-    #expect(try contents(odd) == [1, 2, 3])
+    #expect(try readFile(atPath: odd) == [1, 2, 3])
   }
 
   @Test func `Truncating Grows With Zeros And Shrinks To Whole Pages`() throws {
@@ -79,7 +79,7 @@ import Testing
       file.memory!.storeBytes(of: byte, toByteOffset: index, as: UInt8.self)
     }
     #expect(file.msync(synchronously: true) == true)
-    #expect(try contents(path).prefix(3) == [4, 5, 6])
+    #expect(try readFile(atPath: path).prefix(3) == [4, 5, 6])
   }
 
   @Test func `A Mayfly File Closes Its Descriptor Once Mapped`() throws {
@@ -191,13 +191,7 @@ import Testing
   // with react-native-mmkv would not be protected.
   @Test func `Excludes The C++ Core's Lock On The Metadata File`() throws {
     let root = temporaryDirectory()
-    var configuration = MMKVConfiguration(
-      id: "shared",
-      directory: MMKVDirectory(path: root),
-      mode: .multiProcess
-    )
-    configuration.engine = .cxx
-    let store = try MMKVStore(configuration)
+    let store = try makeCxxStore(id: "shared", rootDirectory: root, mode: .multiProcess)
     store.set(true, forKey: "key")
 
     let descriptor = try openFile("\(root)/shared.crc")
@@ -307,53 +301,11 @@ private final class FileSystemSpy: @unchecked Sendable {
   }
 }
 
-private func temporaryDirectory() -> String {
-  let directory = FileManager.default.temporaryDirectory
-    .appendingPathComponent("swift-mmkv-core-tests")
-    .appendingPathComponent(UUID().uuidString)
-  try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-  return directory.path
-}
-
 private func temporaryFile() -> String {
   temporaryDirectory() + "/file"
 }
 
-private func contents(_ path: String) throws -> [UInt8] {
-  Array(try Data(contentsOf: URL(fileURLWithPath: path)))
-}
-
 private struct OpenError: Error {}
-
-/// Runs `body` on a new thread and waits for its result.
-private func onAnotherThread<T: Sendable>(_ body: @escaping @Sendable () -> T) -> T {
-  let result = LockedValue<T?>(nil)
-  let done = DispatchSemaphore(value: 0)
-  Thread {
-    result.set(body())
-    done.signal()
-  }
-  .start()
-  done.wait()
-  return result.get()!
-}
-
-private final class LockedValue<Value>: @unchecked Sendable {
-  private let lock = NSLock()
-  private var value: Value
-
-  init(_ value: Value) {
-    self.value = value
-  }
-
-  func get() -> Value {
-    self.lock.withLock { self.value }
-  }
-
-  func set(_ value: Value) {
-    self.lock.withLock { self.value = value }
-  }
-}
 
 private func openFile(_ path: String) throws -> Int32 {
   let descriptor = open(path, O_RDWR | O_CREAT, S_IRWXU)
