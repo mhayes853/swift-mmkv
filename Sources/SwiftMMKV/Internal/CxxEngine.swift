@@ -27,11 +27,9 @@ struct CxxEngine: MMKVEngine {
   // only costs a spurious `.external`.
   private static let installContentChangedCallback: Void = {
     mmkv_set_content_changed_callback { id in
-      let id = String(
-        decoding: UnsafeRawBufferPointer(start: id.bytes, count: id.count),
-        as: UTF8.self
+      MMKVStoreState.markExternalChange(
+        id: String(decoding: UnsafeRawBufferPointer(id), as: UTF8.self)
       )
-      MMKVStoreState.markExternalChange(id: id)
     }
   }()
 }
@@ -40,38 +38,41 @@ struct CxxEngine: MMKVEngine {
 
 extension CxxEngine {
   func bool(forKey key: String) -> Bool? {
-    var value = false
-    return key.withMMKVBytes { mmkv_get_bool(self.handle, $0, &value) } ? value : nil
+    self.scalar(false, forKey: key, mmkv_get_bool)
   }
 
   func int32(forKey key: String) -> Int32? {
-    var value: Int32 = 0
-    return key.withMMKVBytes { mmkv_get_int32(self.handle, $0, &value) } ? value : nil
+    self.scalar(0, forKey: key, mmkv_get_int32)
   }
 
   func uint32(forKey key: String) -> UInt32? {
-    var value: UInt32 = 0
-    return key.withMMKVBytes { mmkv_get_uint32(self.handle, $0, &value) } ? value : nil
+    self.scalar(0, forKey: key, mmkv_get_uint32)
   }
 
   func int64(forKey key: String) -> Int64? {
-    var value: Int64 = 0
-    return key.withMMKVBytes { mmkv_get_int64(self.handle, $0, &value) } ? value : nil
+    self.scalar(0, forKey: key, mmkv_get_int64)
   }
 
   func uint64(forKey key: String) -> UInt64? {
-    var value: UInt64 = 0
-    return key.withMMKVBytes { mmkv_get_uint64(self.handle, $0, &value) } ? value : nil
+    self.scalar(0, forKey: key, mmkv_get_uint64)
   }
 
   func float(forKey key: String) -> Float? {
-    var value: Float = 0
-    return key.withMMKVBytes { mmkv_get_float(self.handle, $0, &value) } ? value : nil
+    self.scalar(0, forKey: key, mmkv_get_float)
   }
 
   func double(forKey key: String) -> Double? {
-    var value: Double = 0
-    return key.withMMKVBytes { mmkv_get_double(self.handle, $0, &value) } ? value : nil
+    self.scalar(0, forKey: key, mmkv_get_double)
+  }
+
+  /// Reads a fixed-size value with `get`, which writes it over `initial` when the key has one.
+  private func scalar<T>(
+    _ initial: T,
+    forKey key: String,
+    _ get: (OpaquePointer, mmkv_bytes, UnsafeMutablePointer<T>) -> Bool
+  ) -> T? {
+    var value = initial
+    return key.withMMKVBytes { get(self.handle, $0, &value) } ? value : nil
   }
 
   func string(forKey key: String) -> String? {
@@ -200,7 +201,6 @@ extension CxxEngine {
   }
 
   func remove(_ keys: [String]) {
-    guard !keys.isEmpty else { return }
     keys.withMMKVBytes { keys in
       _ = mmkv_remove_many(self.handle, keys.baseAddress, keys.count)
     }

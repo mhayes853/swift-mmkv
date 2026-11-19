@@ -83,21 +83,7 @@ extension MMKVStorage {
   private static let openStores = Lock([String: String]())
 
   /// Runs `open`, and records the store as open if it returns an instance.
-  func opening(id: String, _ open: () -> OpaquePointer?) -> OpaquePointer? {
-    let handle = Self.openStores.withLock { openStores in
-      let handle = open()
-      if handle != nil {
-        for path in self.dataPaths(forID: id) {
-          openStores[path] = id
-        }
-      }
-      return UInt(bitPattern: handle)
-    }
-    return OpaquePointer(bitPattern: handle)
-  }
-
-  /// ``opening(id:_:)`` for an engine whose handle is a Swift object.
-  func opening<Handle: Sendable>(id: String, _ open: () -> Handle?) -> Handle? {
+  func opening<Handle>(id: String, _ open: () -> sending Handle?) -> Handle? {
     Self.openStores.withLock { openStores in
       let handle = open()
       if handle != nil {

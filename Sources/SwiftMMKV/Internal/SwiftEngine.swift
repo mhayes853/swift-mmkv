@@ -3,7 +3,7 @@ import _SwiftMMKVCore
 /// The Swift core that is replacing the C++ one (`Sources/_SwiftMMKVCore`). See
 /// `Docs/swift-core-migration.md`.
 struct SwiftEngine: MMKVEngine {
-  let store: StoreInstance
+  private let store: StoreInstance
 
   init(_ configuration: MMKVConfiguration) throws(MMKVError) {
     let store = MMKVStorage(path: configuration.directory.path)
