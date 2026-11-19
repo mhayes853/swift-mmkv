@@ -45,7 +45,7 @@ struct MMKVCore: Sendable {
   /// Tells listeners about anything the core noticed while it held its locks. Called once an
   /// operation has returned.
   func operationDidFinish() {
-    self.state.deliverPendingExternalChange()
+    self.state.deliverPendingChanges()
   }
 }
 
@@ -301,9 +301,10 @@ extension MMKVCore {
 extension MMKVCore {
   /// Runs `body` with the instance's recursive lock held.
   ///
-  /// Listeners are not told about an external change while the lock is held, because a listener
-  /// that waits on another thread would deadlock against it. They are told once the outermost
-  /// call releases the lock.
+  /// Listeners are not told about a change while the lock is held: about an external one because
+  /// a listener that waits on another thread would deadlock against it, and about a key so that
+  /// they never see part of what `body` writes. They are told once the outermost call releases
+  /// the lock.
   ///
   /// While the store is suspended `body` runs without the lock, and every operation in it is
   /// turned away.
@@ -311,12 +312,12 @@ extension MMKVCore {
     let gate = self.state.suspensionGate
     guard gate?.enter() ?? true else { return try body() }
     mmkv_lock(self.handle)
-    self.state.beginDeferringExternalChanges()
+    self.state.beginDeferringChanges()
     defer {
-      self.state.endDeferringExternalChanges()
+      self.state.endDeferringChanges()
       mmkv_unlock(self.handle)
       gate?.leave()
-      self.state.deliverPendingExternalChange()
+      self.state.deliverPendingChanges()
     }
     return try body()
   }

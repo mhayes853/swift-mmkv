@@ -126,4 +126,63 @@ import Testing
     store.resume()
     #expect(store.keys == ["a"])
   }
+
+  @Test func `Listeners Are Told About The Keys An Exclusive Lock Changed Once It Returns`()
+    throws
+  {
+    let store = try makeStore()
+    store.set("old", forKey: "legacy")
+    let changes = ChangeRecorder()
+    let states = ValueRecorder<Set<String>>()
+    let subscription = store.subscribe { change in
+      changes.record(change)
+      states.record(store.keys)
+    }
+
+    store.withExclusiveLock { store in
+      store.set("blob", forKey: "username")
+      store.set(0.8, forKey: "volume")
+      store.removeValue(forKey: "legacy")
+      #expect(changes.all.isEmpty)
+    }
+
+    #expect(changes.all == [.key("username"), .key("volume"), .key("legacy")])
+    #expect(states.all == Array(repeating: ["username", "volume"], count: 3))
+    subscription.cancel()
+  }
+
+  @Test func `A Key Changed More Than Once In An Exclusive Lock Is Reported Once`() throws {
+    let store = try makeStore()
+    let recorder = ValueRecorder<Double?>()
+    let subscription = store.subscribe(forKey: "count", as: Double.self, recorder.record)
+
+    store.withExclusiveLock { store in
+      store.set(1.0, forKey: "count")
+      store.withExclusiveLock { store in
+        store.set(2.0, forKey: "count")
+      }
+      store.set(3.0, forKey: "count")
+    }
+
+    #expect(recorder.all == [nil, 3])
+    subscription.cancel()
+  }
+
+  @Test func `Listeners Are Told About Changes Made Before An Exclusive Lock Throws`() throws {
+    struct Failure: Error {}
+    let store = try makeStore()
+    let recorder = ChangeRecorder()
+    let subscription = store.subscribe(recorder.record)
+
+    #expect(throws: Failure.self) {
+      try store.withExclusiveLock { store in
+        store.set(1.0, forKey: "count")
+        throw Failure()
+      }
+    }
+
+    #expect(recorder.all == [.key("count")])
+    #expect(store.value(forKey: "count", as: Double.self) == 1)
+    subscription.cancel()
+  }
 }

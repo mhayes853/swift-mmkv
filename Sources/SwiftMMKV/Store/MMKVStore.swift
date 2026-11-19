@@ -426,6 +426,24 @@ extension MMKVStore {
   /// }
   /// ```
   ///
+  /// ## Batches
+  ///
+  /// The lock is taken once however much `body` does, which for a multi-process store means
+  /// taking the file lock once rather than once for each read and write. Listeners are told
+  /// about the keys `body` changed once it returns, each key once, so they never see part of
+  /// what it writes. That makes this the way to read or write a batch that mixes kinds of key:
+  ///
+  /// ```swift
+  /// try store.withExclusiveLock { store in
+  ///   store[.username] = "blob"
+  ///   try store.set(settings, for: .settings)
+  ///   store.removeValue(forKey: "legacy")
+  /// }
+  /// ```
+  ///
+  /// The writes are not atomic if the process is killed during `body`: those made by then are
+  /// kept.
+  ///
   /// - Returns: The result of `body`.
   public func withExclusiveLock<R, E: Error>(
     _ body: (MMKVStore) throws(E) -> R

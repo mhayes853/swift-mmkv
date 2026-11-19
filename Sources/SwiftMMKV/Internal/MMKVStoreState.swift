@@ -11,6 +11,7 @@ final class MMKVStoreState: Sendable {
     var nextIdentifier: UInt64 = 0
     var listeners = [UInt64: Listener]()
     var hasPendingExternalChange = false
+    var pendingKeys = [String]()
     var deferralDepth = 0
   }
 
@@ -40,41 +41,62 @@ final class MMKVStoreState: Sendable {
     }
   }
 
+  /// Tells listeners about a change made through this package, or holds it back while changes
+  /// are being deferred. A key that is changed more than once in that time is reported once.
   func notify(_ change: MMKVStore.Change) {
-    let listeners = self.registrations.withLock { Array($0.listeners.values) }
+    let listeners: [Listener]? = self.registrations.withLock { registrations in
+      guard registrations.deferralDepth > 0 else { return Array(registrations.listeners.values) }
+      switch change {
+      case .key(let key):
+        if !registrations.pendingKeys.contains(key) {
+          registrations.pendingKeys.append(key)
+        }
+      case .external:
+        registrations.hasPendingExternalChange = true
+      }
+      return nil
+    }
+    guard let listeners else { return }
     for listener in listeners {
       listener(change)
     }
   }
 
   /// Records that the core saw the store's file change underneath it. Called with the core's
-  /// locks held, so listeners are told later, by ``deliverPendingExternalChange()``.
+  /// locks held, so listeners are told later, by ``deliverPendingChanges()``.
   private func markExternalChange() {
     self.registrations.withLock { $0.hasPendingExternalChange = true }
   }
 
-  /// Holds external changes back until a matching ``endDeferringExternalChanges()``.
-  func beginDeferringExternalChanges() {
+  /// Holds changes back until a matching ``endDeferringChanges()``.
+  func beginDeferringChanges() {
     self.registrations.withLock { $0.deferralDepth += 1 }
   }
 
-  func endDeferringExternalChanges() {
+  func endDeferringChanges() {
     self.registrations.withLock { $0.deferralDepth -= 1 }
   }
 
-  /// Tells listeners about an external change the core noticed during an earlier operation,
-  /// unless changes are being deferred.
-  func deliverPendingExternalChange() {
-    let listeners: [Listener]? = self.registrations.withLock { registrations in
-      guard registrations.hasPendingExternalChange, registrations.deferralDepth == 0 else {
-        return nil
+  /// Tells listeners about the changes that were held back, and about an external change the
+  /// core noticed during an earlier operation, unless changes are being deferred.
+  func deliverPendingChanges() {
+    let pending: (changes: [MMKVStore.Change], listeners: [Listener])? =
+      self.registrations.withLock { registrations in
+        guard registrations.deferralDepth == 0 else { return nil }
+        var changes = registrations.pendingKeys.map(MMKVStore.Change.key)
+        if registrations.hasPendingExternalChange {
+          changes.append(.external)
+        }
+        guard !changes.isEmpty else { return nil }
+        registrations.pendingKeys = []
+        registrations.hasPendingExternalChange = false
+        return (changes, Array(registrations.listeners.values))
       }
-      registrations.hasPendingExternalChange = false
-      return Array(registrations.listeners.values)
-    }
-    guard let listeners else { return }
-    for listener in listeners {
-      listener(.external)
+    guard let pending else { return }
+    for change in pending.changes {
+      for listener in pending.listeners {
+        listener(change)
+      }
     }
   }
 }
