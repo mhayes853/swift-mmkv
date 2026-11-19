@@ -16,15 +16,7 @@ package enum Log {
   }
 
   private static func emit(_ level: String, _ message: String, function: StaticString) {
-    writeToStandardError("[SwiftMMKV] <\(function)> \(level): \(message)\n")
-  }
-
-}
-
-private func writeToStandardError(_ line: String) {
-  var line = line
-  line.withUTF8 { utf8 in
-    guard let base = utf8.baseAddress else { return }
-    _ = write(2, base, utf8.count)
+    var line = "[SwiftMMKV] <\(function)> \(level): \(message)\n"
+    line.withUTF8 { _ = write(2, $0.baseAddress, $0.count) }
   }
 }

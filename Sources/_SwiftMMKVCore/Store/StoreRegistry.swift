@@ -28,7 +28,9 @@ package enum StoreRegistry {
       #if os(Android)
         // An older MMKV on Android named a store's files after a hash of their path. They are
         // renamed when possible, and used under the old name when not.
-        if Self.migrationStatus(id: configuration.id, root: root) == .oldToNewMigrateFail {
+        if StoreStorage.tryMigrateLegacyFiles(id: configuration.id, root: root)
+          == .oldToNewMigrateFail
+        {
           configuration.id = StoreStorage.legacyID(id: configuration.id, root: root)
         }
       #endif
@@ -44,12 +46,6 @@ extension StoreRegistry {
   package static func withLock<R>(_ body: () -> R) -> R {
     Self.lock.withLock(body)
   }
-
-  #if os(Android)
-    private static func migrationStatus(id: String, root: String) -> StoreStorage.MigrateStatus {
-      StoreStorage.tryMigrateLegacyFiles(id: id, root: root)
-    }
-  #endif
 }
 
 /// Creates a directory and any missing parents, as MMKV's `mkPath` does.

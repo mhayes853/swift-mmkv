@@ -30,13 +30,6 @@ enum CryptEntry {
     }
   }
 
-  var order: UInt32 {
-    switch self {
-    case .memory(_, let order): order
-    case .offset(let record): record.offset
-    }
-  }
-
   /// Whether a value of `size` bytes stays in the file (`isValueStoredAsOffset`).
   static func isValueStoredAsOffset(_ size: Int) -> Bool {
     size > 256
