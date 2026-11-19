@@ -80,43 +80,54 @@ final class MMKVStoreState: Sendable {
   /// While changes are being deferred, the write is held back with the rest.
   ///
   /// When nothing was held back, which is what nearly every write finds, the registrations are
-  /// locked only once.
+  /// locked only once and nothing is allocated.
   func deliverChanges(afterWritingTo key: String? = nil) {
-    let delivery: (changes: [MMKVStore.Change], listeners: [Listener], includesKey: Bool)? =
-      self.registrations.withLock { registrations in
-        guard registrations.deferralDepth == 0 else {
-          if let key, !registrations.pendingKeys.contains(key) {
-            registrations.pendingKeys.append(key)
-          }
-          return nil
+    let delivery: Delivery = self.registrations.withLock { registrations in
+      guard registrations.deferralDepth == 0 else {
+        if let key, !registrations.pendingKeys.contains(key) {
+          registrations.pendingKeys.append(key)
         }
-        var changes = registrations.pendingKeys.map(MMKVStore.Change.key)
-        if registrations.hasPendingExternalChange {
-          changes.append(.external)
-        }
-        registrations.pendingKeys = []
-        registrations.hasPendingExternalChange = false
-        let includesKey = changes.isEmpty && key != nil
-        if includesKey, let key {
-          changes.append(.key(key))
-        }
-        guard !changes.isEmpty else { return nil }
-        return (changes, Array(registrations.listeners.values), includesKey)
+        return .nothing
       }
-    if let delivery {
-      for change in delivery.changes {
-        for listener in delivery.listeners {
+      guard !registrations.pendingKeys.isEmpty || registrations.hasPendingExternalChange else {
+        guard let key, !registrations.listeners.isEmpty else { return .nothing }
+        return .write(key, Array(registrations.listeners.values))
+      }
+      var changes = registrations.pendingKeys.map(MMKVStore.Change.key)
+      if registrations.hasPendingExternalChange {
+        changes.append(.external)
+      }
+      registrations.pendingKeys = []
+      registrations.hasPendingExternalChange = false
+      return .heldBack(changes, Array(registrations.listeners.values))
+    }
+    switch delivery {
+    case .nothing:
+      return
+    case .write(let key, let listeners):
+      for listener in listeners {
+        listener(.key(key))
+      }
+    case .heldBack(let changes, let listeners):
+      for change in changes {
+        for listener in listeners {
           listener(change)
         }
       }
-      if delivery.includesKey {
-        return
+      // The listeners may have changed while they were told about what was held back.
+      if let key {
+        self.notify(.key(key))
       }
     }
-    // The listeners may have changed while they were told about what was held back.
-    if let key {
-      self.notify(.key(key))
-    }
+  }
+
+  /// What ``deliverChanges(afterWritingTo:)`` found to tell listeners.
+  private enum Delivery {
+    case nothing
+    /// Only the write to a key, as nothing was held back.
+    case write(String, [Listener])
+    /// The changes that were held back, which are told before the write.
+    case heldBack([MMKVStore.Change], [Listener])
   }
 }
 
