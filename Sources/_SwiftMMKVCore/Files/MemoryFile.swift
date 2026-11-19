@@ -160,7 +160,7 @@ package struct MemoryFile: ~Copyable {
     guard let memory = self.fileSystem.mmap(self.memory, self.size, protection, self.descriptor)
     else {
       self.memory = nil
-      self.cleanMemoryCache()
+      self.clearMemoryCache()
       return false
     }
     self.memory = memory
@@ -178,7 +178,7 @@ package struct MemoryFile: ~Copyable {
   /// exclusive to grow it, so two copies of MMKV opening the same file do not both resize it.
   package mutating func reloadFromFile(expectedCapacity: Int = 0) {
     if self.isFileValid {
-      self.cleanMemoryCache()
+      self.clearMemoryCache()
     }
     guard self.openIfNeeded() else { return }
     let fileLock = FileLock(descriptor: self.descriptor, fileSystem: self.fileSystem)
@@ -196,12 +196,8 @@ package struct MemoryFile: ~Copyable {
     fileLock.unlock(.shared)
   }
 
-  /// Unmaps the file and closes its descriptor (`clearMemoryCache`).
+  /// Unmaps the file and closes its descriptor (`clearMemoryCache` and `doCleanMemoryCache`).
   package mutating func clearMemoryCache() {
-    self.cleanMemoryCache()
-  }
-
-  private mutating func cleanMemoryCache() {
     if let memory = self.memory {
       _ = self.fileSystem.munmap(memory, self.size)
     }

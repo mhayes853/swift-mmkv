@@ -60,12 +60,9 @@ package enum StorePaths {
     if path.hasPrefix("/") {
       return path
     }
-    var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
-    guard getcwd(&buffer, buffer.count) != nil else { return path }
-    let cwd = String(
-      decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
-      as: UTF8.self
-    )
+    guard let buffer = getcwd(nil, 0) else { return path }
+    defer { free(buffer) }
+    let cwd = String(cString: buffer)
     return cwd.hasSuffix("/") ? cwd + path : cwd + "/" + path
   }
 

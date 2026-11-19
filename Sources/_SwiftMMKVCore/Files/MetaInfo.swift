@@ -42,9 +42,7 @@ package struct MetaInfo: Equatable, Sendable {
 
   /// Reads the struct from the start of `memory`, which must hold at least ``size`` bytes.
   package init(reading memory: UnsafeRawPointer) {
-    func word(_ offset: Int) -> UInt32 {
-      UInt32(littleEndian: memory.loadUnaligned(fromByteOffset: offset, as: UInt32.self))
-    }
+    func word(_ offset: Int) -> UInt32 { loadWord(memory, offset) }
     self.crcDigest = word(0)
     self.version = word(4)
     self.sequence = word(8)
@@ -64,12 +62,9 @@ package struct MetaInfo: Equatable, Sendable {
     package var actualSize: UInt32
 
     package init(reading memory: UnsafeRawPointer) {
-      func word(_ offset: Int) -> UInt32 {
-        UInt32(littleEndian: memory.loadUnaligned(fromByteOffset: offset, as: UInt32.self))
-      }
-      self.crcDigest = word(0)
-      self.sequence = word(8)
-      self.actualSize = word(28)
+      self.crcDigest = loadWord(memory, 0)
+      self.sequence = loadWord(memory, 8)
+      self.actualSize = loadWord(memory, 28)
     }
   }
 
@@ -100,4 +95,9 @@ package struct MetaInfo: Equatable, Sendable {
     memory.storeBytes(of: self.crcDigest.littleEndian, toByteOffset: 0, as: UInt32.self)
     memory.storeBytes(of: self.actualSize.littleEndian, toByteOffset: 28, as: UInt32.self)
   }
+}
+
+/// The little-endian 32-bit word at `offset` bytes into `memory`.
+private func loadWord(_ memory: UnsafeRawPointer, _ offset: Int) -> UInt32 {
+  UInt32(littleEndian: memory.loadUnaligned(fromByteOffset: offset, as: UInt32.self))
 }

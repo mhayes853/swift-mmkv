@@ -228,8 +228,8 @@ package final class FileLock {
 /// One kind of lock on a ``FileLock``, which a store can turn off when it has no other process to
 /// exclude (MMKV's `InterProcessLock`).
 package struct InterProcessLock {
-  package let fileLock: FileLock
-  package let type: LockType
+  private let fileLock: FileLock
+  private let type: LockType
   package var isEnabled = true
 
   package init(fileLock: FileLock, type: LockType) {
@@ -247,17 +247,6 @@ package struct InterProcessLock {
     if self.isEnabled {
       self.fileLock.unlock(self.type)
     }
-  }
-
-  @discardableResult
-  package func tryLock() -> (locked: Bool, tryAgain: Bool) {
-    self.isEnabled ? self.fileLock.tryLock(self.type) : (false, false)
-  }
-
-  package func withLock<R, E: Error>(_ body: () throws(E) -> R) throws(E) -> R {
-    self.lock()
-    defer { self.unlock() }
-    return try body()
   }
 }
 
