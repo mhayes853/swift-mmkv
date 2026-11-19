@@ -78,6 +78,24 @@ public struct MMKVConfiguration: Sendable, Hashable {
 }
 
 extension MMKVConfiguration {
+  /// A configuration for a single-process store in a new temporary directory, for stores that
+  /// do not need to last, such as those of tests and previews.
+  ///
+  /// ```swift
+  /// let store = try MMKVStore(.temporary())
+  /// ```
+  ///
+  /// Every call uses a different directory, so the store starts empty. It is a store like any
+  /// other, in ``MMKVDirectory/temporary()``, and lasts until the system clears its temporary
+  /// directory.
+  ///
+  /// - Parameter id: The store's identifier.
+  public static func temporary(id: MMKVStore.ID = .default) -> MMKVConfiguration {
+    MMKVConfiguration(id: id, directory: .temporary(), mode: .singleProcess)
+  }
+}
+
+extension MMKVConfiguration {
   /// Whether anything other than this copy of MMKV may have a store's files open.
   ///
   /// Every opener of a file must agree on the mode. An opener in single-process mode never locks

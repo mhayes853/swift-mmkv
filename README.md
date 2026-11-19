@@ -257,6 +257,19 @@ been created for it, so remove a store before opening it, or empty an open one w
 `removeAll()`. `removeAllStores()` removes every store that is not open and then throws
 `MMKVError.storesAreOpen`, naming the ones it left.
 
+For a store that does not need to last, such as one for a test or a preview, use a temporary
+directory. Every call makes a new one, so the store starts empty:
+
+```swift
+let store = try MMKVStore(.temporary())
+let directory = MMKVDirectory.temporary()  // to open several stores side by side
+```
+
+It is a store like any other, in a new directory inside the system's temporary directory, and
+it lasts until the system clears that. On Android this relies on `TMPDIR`, which recent versions
+set to the app's cache directory; on one that does not, set it at launch or use a directory in
+the cache directory.
+
 `importAll(from:)` copies one store's keys and values into another, replacing the keys the
 destination already has. The two stores may differ in mode and encryption:
 

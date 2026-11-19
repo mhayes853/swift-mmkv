@@ -33,6 +33,38 @@ extension MMKVDirectory {
   }
 }
 
+// MARK: - Temporary Directories
+
+extension MMKVDirectory {
+  /// A new directory inside the system's temporary directory, for stores that do not need to
+  /// last, such as those of tests and previews.
+  ///
+  /// ```swift
+  /// let directory = MMKVDirectory.temporary()
+  /// let store = try MMKVStore(MMKVConfiguration(directory: directory, mode: .singleProcess))
+  /// ```
+  ///
+  /// Every call returns a different directory, so the stores in it start empty. Like any
+  /// directory this is only a path, and nothing is created until a store is opened in it.
+  ///
+  /// Nothing removes the directory, and its stores are stores like any other. They last
+  /// until the system clears its temporary directory, which it may do whenever the process is
+  /// not running.
+  ///
+  /// The system's temporary directory is the `TMPDIR` environment variable. Where that is not
+  /// set it is `/tmp`, or `/data/local/tmp` on Android, which an app cannot write to. Recent
+  /// versions of Android set `TMPDIR` to the app's cache directory. On one that does not,
+  /// opening a store here throws ``MMKVError/openFailed(id:directory:)``, so either set
+  /// `TMPDIR` when the app launches or make a directory in the app's cache directory with
+  /// ``init(path:)``.
+  public static func temporary() -> MMKVDirectory {
+    MMKVDirectory(
+      path: temporaryDirectory() + "swift-mmkv-"
+        + String(UInt64.random(in: .min ... .max), radix: 16)
+    )
+  }
+}
+
 // MARK: - Stores
 
 extension MMKVDirectory {

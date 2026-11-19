@@ -371,14 +371,10 @@
   }
 
   extension MMKVStore {
-    /// An empty store in a directory of its own, which the system cleans up.
+    /// An empty store in a temporary directory.
     fileprivate static func temporary() -> MMKVStore {
-      let directory = MMKVDirectory(
-        path: temporaryDirectory() + "swift-mmkv-sharing-"
-          + String(UInt64.random(in: .min ... .max), radix: 16)
-      )
       do {
-        return try MMKVStore(MMKVConfiguration(directory: directory, mode: .singleProcess))
+        return try MMKVStore(.temporary())
       } catch {
         fatalError("A temporary MMKV store could not be opened: \(error)")
       }
