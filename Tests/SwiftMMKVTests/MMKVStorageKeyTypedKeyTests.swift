@@ -135,7 +135,7 @@
 
     @Test func `Uses The Default Store Dependency`() throws {
       let store = try makeStore()
-      try withDependencies {
+      withDependencies {
         $0.defaultMMKVStore = store
       } operation: {
         @Shared(.mmkv(.volume)) var volume

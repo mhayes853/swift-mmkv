@@ -159,7 +159,7 @@ import Testing
     store.withExclusiveLock { store in
       store.set(1.0, forKey: "count")
       store.withExclusiveLock { store in
-        store.set(2.0, forKey: "count")
+        _ = store.set(2.0, forKey: "count")
       }
       store.set(3.0, forKey: "count")
     }
