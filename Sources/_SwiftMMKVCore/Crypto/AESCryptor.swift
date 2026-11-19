@@ -35,17 +35,13 @@ package struct CipherState: Equatable, Sendable {
 /// AES in CFB-128 mode, encrypting and decrypting one continuous stream, as MMKV's `AESCrypt`
 /// does. The cryptography is the C in `CSwiftMMKVCrypto`.
 package struct AESCryptor: @unchecked Sendable {
-  package static let ivLength = 16
+  private static let ivLength = 16
 
   package let isAES256: Bool
   /// The key, cut to or padded with zeros to 16 or 32 bytes.
   package let key: [UInt8]
-  private let schedules: KeySchedules
+  private let schedule: KeySchedule
   package private(set) var state: CipherState
-  /// The IV the stream started from, at the start of the data.
-  package var streamIV: [UInt8] {
-    self.streamStart.vector
-  }
   /// The state at the start of the data.
   private var streamStart: CipherState
 
@@ -53,20 +49,21 @@ package struct AESCryptor: @unchecked Sendable {
   /// `nil` (`AESCrypt(key, keyLength, iv, ivLength, aes256)`).
   package init(key: [UInt8], isAES256: Bool, iv: [UInt8]? = nil) {
     self.isAES256 = isAES256
-    let maxKeyLength = isAES256 ? 32 : 16
-    var padded = Array(key.prefix(maxKeyLength))
-    padded += [UInt8](repeating: 0, count: maxKeyLength - padded.count)
-    self.key = padded
-    self.schedules = KeySchedules(key: padded)
-    let start = iv.map { Self.fit($0) } ?? Array(padded.prefix(Self.ivLength))
-    self.state = CipherState(vector: start, number: 0)
+    let key = Self.padded(key, to: isAES256 ? 32 : 16)
+    self.key = key
+    self.schedule = KeySchedule(key: key)
+    self.state = Self.startState(iv: iv, key: key)
     self.streamStart = self.state
   }
 
-  private static func fit(_ iv: [UInt8]) -> [UInt8] {
-    var fitted = Array(iv.prefix(Self.ivLength))
-    fitted += [UInt8](repeating: 0, count: Self.ivLength - fitted.count)
-    return fitted
+  /// `bytes` cut to or padded with zeros to `count` bytes.
+  private static func padded(_ bytes: [UInt8], to count: Int) -> [UInt8] {
+    Array(bytes.prefix(count)) + [UInt8](repeating: 0, count: max(0, count - bytes.count))
+  }
+
+  /// The state at the start of a stream from `iv`, or from the key's first 16 bytes.
+  private static func startState(iv: [UInt8]?, key: [UInt8]) -> CipherState {
+    CipherState(vector: Self.padded(iv ?? key, to: Self.ivLength), number: 0)
   }
 
   /// The key as MMKV's `cryptKey()` returns it: the padded key up to its first zero byte.
@@ -76,8 +73,7 @@ package struct AESCryptor: @unchecked Sendable {
 
   /// Starts a new stream from `iv`, or from the key's first 16 bytes (`resetIV`).
   package mutating func resetIV(_ iv: [UInt8]? = nil) {
-    let start = iv.map { Self.fit($0) } ?? Array(self.key.prefix(Self.ivLength))
-    self.state = CipherState(vector: start, number: 0)
+    self.state = Self.startState(iv: iv, key: self.key)
     self.streamStart = self.state
   }
 
@@ -93,19 +89,7 @@ package struct AESCryptor: @unchecked Sendable {
     _ output: UnsafeMutableRawPointer,
     count: Int
   ) {
-    guard count > 0 else { return }
-    var number = self.state.number
-    withUnsafeMutableBytes(of: &self.state.register) { register in
-      swiftmmkv_aes_cfb128_encrypt(
-        input.assumingMemoryBound(to: UInt8.self),
-        output.assumingMemoryBound(to: UInt8.self),
-        count,
-        self.schedules.encrypt,
-        register.baseAddress!.assumingMemoryBound(to: UInt8.self),
-        &number
-      )
-    }
-    self.state.number = number
+    self.crypt(input, output, count: count, encrypting: true)
   }
 
   package mutating func decrypt(
@@ -113,17 +97,30 @@ package struct AESCryptor: @unchecked Sendable {
     _ output: UnsafeMutableRawPointer,
     count: Int
   ) {
+    self.crypt(input, output, count: count, encrypting: false)
+  }
+
+  /// Continues the stream over `count` bytes. CFB runs the cipher forwards in both directions, so
+  /// both use the encryption schedule.
+  @inline(__always)
+  private mutating func crypt(
+    _ input: UnsafeRawPointer,
+    _ output: UnsafeMutableRawPointer,
+    count: Int,
+    encrypting: Bool
+  ) {
     guard count > 0 else { return }
+    let input = input.assumingMemoryBound(to: UInt8.self)
+    let output = output.assumingMemoryBound(to: UInt8.self)
+    let key = self.schedule.expanded
     var number = self.state.number
     withUnsafeMutableBytes(of: &self.state.register) { register in
-      swiftmmkv_aes_cfb128_decrypt(
-        input.assumingMemoryBound(to: UInt8.self),
-        output.assumingMemoryBound(to: UInt8.self),
-        count,
-        self.schedules.encrypt,
-        register.baseAddress!.assumingMemoryBound(to: UInt8.self),
-        &number
-      )
+      let register = register.baseAddress!.assumingMemoryBound(to: UInt8.self)
+      if encrypting {
+        swiftmmkv_aes_cfb128_encrypt(input, output, count, key, register, &number)
+      } else {
+        swiftmmkv_aes_cfb128_decrypt(input, output, count, key, register, &number)
+      }
     }
     self.state.number = number
   }
@@ -139,7 +136,7 @@ package struct AESCryptor: @unchecked Sendable {
   package func state(atOffset offset: Int, in ciphertext: UnsafeRawBufferPointer) -> CipherState {
     let remainder = offset % Self.ivLength
     let blockStart = offset - remainder
-    var previous =
+    let previous =
       blockStart == 0
       ? self.streamStart
       : CipherState(vector: ciphertext.baseAddress! + blockStart - Self.ivLength, number: 0)
@@ -151,11 +148,11 @@ package struct AESCryptor: @unchecked Sendable {
     withUnsafeMutableBytes(of: &state.register) { register in
       let output = register.baseAddress!.assumingMemoryBound(to: UInt8.self)
       // The block's keystream, of which the bytes already processed are replaced by ciphertext.
-      withUnsafeBytes(of: &previous.register) { input in
+      withUnsafeBytes(of: previous.register) { input in
         swiftmmkv_aes_encrypt(
           input.baseAddress!.assumingMemoryBound(to: UInt8.self),
           output,
-          self.schedules.encrypt
+          self.schedule.expanded
         )
       }
       register.baseAddress!
@@ -171,26 +168,20 @@ package struct AESCryptor: @unchecked Sendable {
   }
 }
 
-/// A key's expanded encryption and decryption schedules. They never change, so copies of a cryptor
-/// share them, and they are wiped when the last copy goes away, as MMKV wipes its keys.
-private final class KeySchedules: @unchecked Sendable {
-  let encrypt: UnsafeMutablePointer<swiftmmkv_aes_key>
-  let decrypt: UnsafeMutablePointer<swiftmmkv_aes_key>
+/// A key's expanded encryption schedule, the only one CFB uses. It never changes, so copies of a
+/// cryptor share it, and it is wiped when the last copy goes away, as MMKV wipes its keys.
+private final class KeySchedule: @unchecked Sendable {
+  let expanded: UnsafeMutablePointer<swiftmmkv_aes_key>
 
   init(key: [UInt8]) {
-    self.encrypt = .allocate(capacity: 1)
-    self.decrypt = .allocate(capacity: 1)
-    self.encrypt.initialize(to: swiftmmkv_aes_key())
-    self.decrypt.initialize(to: swiftmmkv_aes_key())
-    _ = swiftmmkv_aes_set_encrypt_key(key, Int32(key.count * 8), self.encrypt)
-    _ = swiftmmkv_aes_set_decrypt_key(key, Int32(key.count * 8), self.decrypt)
+    self.expanded = .allocate(capacity: 1)
+    self.expanded.initialize(to: swiftmmkv_aes_key())
+    _ = swiftmmkv_aes_set_encrypt_key(key, Int32(key.count * 8), self.expanded)
   }
 
   deinit {
-    for schedule in [self.encrypt, self.decrypt] {
-      swiftmmkv_secure_wipe(schedule, MemoryLayout<swiftmmkv_aes_key>.size)
-      schedule.deinitialize(count: 1)
-      schedule.deallocate()
-    }
+    swiftmmkv_secure_wipe(self.expanded, MemoryLayout<swiftmmkv_aes_key>.size)
+    self.expanded.deinitialize(count: 1)
+    self.expanded.deallocate()
   }
 }

@@ -23,7 +23,6 @@
 #define MD5_LONG unsigned int
 #define MD5_CBLOCK 64
 #define MD5_LBLOCK (MD5_CBLOCK / 4)
-#define MD5_DIGEST_LENGTH 16
 
 typedef struct MD5state_st {
     MD5_LONG A, B, C, D;
@@ -41,7 +40,6 @@ static void md5_block_data_order(MD5_CTX *c, const void *p, size_t num);
 #define HASH_CTX                MD5_CTX
 #define HASH_CBLOCK             MD5_CBLOCK
 #define HASH_UPDATE             MD5_Update
-//#define HASH_TRANSFORM          MD5_Transform
 #define HASH_FINAL              MD5_Final
 #define HASH_MAKE_STRING(c,s)   do {    \
         unsigned long ll;               \
@@ -70,9 +68,6 @@ static void md5_block_data_order(MD5_CTX *c, const void *p, size_t num);
 #ifndef HASH_UPDATE
 # error "HASH_UPDATE must be defined!"
 #endif
-//#ifndef HASH_TRANSFORM
-//# error "HASH_TRANSFORM must be defined!"
-//#endif
 #ifndef HASH_FINAL
 # error "HASH_FINAL must be defined!"
 #endif
@@ -170,11 +165,6 @@ static int HASH_UPDATE(HASH_CTX *c, const void *data_, size_t len)
     }
     return 1;
 }
-
-//void HASH_TRANSFORM(HASH_CTX *c, const unsigned char *data)
-//{
-//    HASH_BLOCK_DATA_ORDER(c, data, 1);
-//}
 
 static int HASH_FINAL(unsigned char *md, HASH_CTX *c)
 {

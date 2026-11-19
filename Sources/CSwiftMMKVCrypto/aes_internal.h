@@ -20,10 +20,7 @@
   }
 
 typedef uint32_t u32;
-typedef uint16_t u16;
 typedef uint8_t u8;
-
-#define AES_MAXNR 14
 
 // The ARMv8 assembly in aesv8-armx.S, which only exists on 64-bit ARM.
 #if defined(__aarch64__)
