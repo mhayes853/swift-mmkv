@@ -4,9 +4,7 @@
 /// returns `nil` when the key has no value. Because the file stores no type information, the
 /// numeric methods return a value for any key that exists, whatever it was written as.
 public struct MMKVValueReader: ~Copyable, ~Escapable {
-  // Unowned, because a reader cannot outlive the call it is handed to, and the store holds the
-  // core for that long. This saves a retain and a release on every read.
-  private unowned(unsafe) let core: MMKVCore
+  private let core: MMKVCore
   private let key: String
 
   @_lifetime(immortal)

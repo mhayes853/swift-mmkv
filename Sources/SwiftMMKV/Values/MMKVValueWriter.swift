@@ -4,9 +4,7 @@
 /// returns whether the value was stored. A write fails when the key is empty, the store is
 /// read-only, or the pair is larger than the store's item size limit.
 public struct MMKVValueWriter: ~Copyable, ~Escapable {
-  // Unowned, because a writer cannot outlive the call it is handed to, and the store holds the
-  // core for that long. This saves a retain and a release on every write.
-  private unowned(unsafe) let core: MMKVCore
+  private let core: MMKVCore
   private let key: String
   private let expiresInSeconds: UInt32
 
