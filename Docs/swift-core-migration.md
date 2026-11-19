@@ -206,6 +206,12 @@ time with package-benchmark and memory with `MemoryReport` (see its README).
    store sorts once per rewrite rather than twice. CRC-32 is computed in C
    (`CSwiftMMKVCrypto/crc32.c`), with the ARMv8 CRC32 instructions on 64-bit ARM, Apple
    platforms included, and zlib elsewhere, instead of with a table in Swift.
+4. **No exclusivity checks on the store's state.** Checking every access to `StoreInstance`'s and
+   `MemoryFile`'s mutable properties at run time took about a third of a write's time. They are
+   marked `@exclusivity(unchecked)`, which needs no compiler flags, unlike
+   `-enforce-exclusivity=unchecked`, which SwiftPM refuses in a dependency. The checks only caught
+   two accesses overlapping on one thread. The store's lock already orders accesses across
+   threads, and `StoreInstance`'s documentation states the rules that take the checks' place.
 
 None of these changes the file format: the differential tests still compare the cores byte for
 byte.
@@ -230,17 +236,18 @@ Time per operation, p50 on an M1 Pro:
 
 | Benchmark | C++ core | Swift core before | Swift core now |
 | --- | ---: | ---: | ---: |
-| `write.int32` | 143 ns | 657 ns | 219 ns |
-| `write.string` | 170 ns | 593 ns | 237 ns |
-| `write.double.overwrite` | 198 ns | 712 ns | 282 ns |
-| `write.string.encrypted` | 270 ns | – | 297 ns |
+| `write.int32` | 148 ns | 657 ns | 161 ns |
+| `write.string` | 177 ns | 593 ns | 183 ns |
+| `write.double.overwrite` | 199 ns | 712 ns | 221 ns |
+| `write.string.encrypted` | 288 ns | – | 258 ns |
 | `read.int32` | 84 ns | 201 ns | 96 ns |
 | `read.string` | 362 ns | 363 ns | 173 ns |
 | `open.plain` | 1.33 ms | 2.82 ms | 1.31 ms |
 | `open.encrypted` | 2.06 ms | 3.79 ms | 2.13 ms |
 | `reload.full` | 142 µs | 328 µs | 130 µs |
 
-The Swift core now allocates nothing per write, as the C++ core does.
+The Swift core now allocates nothing per write, as the C++ core does. The write rows were measured
+together, after item 4, so their C++ figures differ slightly from earlier runs.
 
 The p50 of a write misses most of the cost of the full write-backs that keep a store compact.
 A loop of 2,000,000 writes to the same 10,000 keys, which includes them, took on average (not
@@ -248,15 +255,15 @@ yet one of the benchmarks):
 
 | Writes | C++ core | Swift core before item 3 | Swift core now |
 | --- | ---: | ---: | ---: |
-| Strings | 259–299 ns | 434 ns | 294–306 ns |
-| `Int32` | 183 ns | 292 ns | 238–242 ns |
-| Strings, encrypted | 415–431 ns | 707 ns | 471–479 ns |
+| Strings | 264–297 ns | 434 ns | 227–244 ns |
+| `Int32` | 190–199 ns | 292 ns | 173–181 ns |
+| Strings, encrypted | 431–452 ns | 707 ns | 427–447 ns |
 
 ### Next
 
-Writes are still 1.1 to 1.5 times slower than the C++ core's, depending on the value. What
-remains is bookkeeping that was measured but not yet changed: the runtime's exclusivity checks
-on the store's state, which the store's lock already makes unnecessary
-(`@exclusivity(unchecked)`), retain and release around each write, and `MetaInfo` keeping its IV
-and reserved words in arrays, which a reload allocates. An encrypted append also spends longer
-in AES-CFB than the C++ core's does, which is not yet explained.
+Over many writes the Swift core is now faster than the C++ core, and level with it when
+encrypted, but a single unencrypted write's p50 is still 3 to 11% slower. What remains was
+measured but not yet changed: `set` takes the store's lock once to read `enableKeyExpire` and
+again to write, where the C++ core takes it once; the public layer copies `MMKVCore`, with its
+`any MMKVEngine`, on every write, which costs both engines; and `MetaInfo` keeps its IV and
+reserved words in arrays, which a reload allocates.

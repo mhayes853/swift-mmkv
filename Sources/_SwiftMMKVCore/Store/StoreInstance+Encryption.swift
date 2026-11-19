@@ -143,6 +143,8 @@ extension StoreInstance {
     var reader = DecryptingReader(ciphertext: ciphertext, position: position, decrypter: crypter)
     let succeeded: Bool
     if greedy {
+      // Holds `self.dicCrypt` for the whole decode, which is static and never reaches the store
+      // (rule 2 in `StoreInstance`'s documentation).
       succeeded = Self.decodeCryptRecords(&reader, into: &self.dicCrypt)
     } else {
       var decoded = CryptIndex()

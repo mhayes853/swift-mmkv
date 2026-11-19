@@ -225,7 +225,7 @@ footer code{color:var(--muted)}
       <tr><td>Heap per key (Android)</td><td>184 B</td><td class="now">112 B</td></tr>
     </tbody>
   </table></div></div>
-  <p class="lede" style="margin-top:14px">Neither core allocates on a write, but the Swift core's writes are still slower: <code>write.string</code> takes 237 ns against the C++ core's 170 ns, and <code>write.int32</code> 219 ns against 143 ns. Reads are close or faster: <code>read.int32</code> takes 96 ns against 84 ns, and <code>read.string</code> 173 ns against 362 ns.</p>
+  <p class="lede" style="margin-top:14px">Neither core allocates on a write, and the Swift core's writes are now close to the C++ core's: <code>write.string</code> takes 183 ns against 177 ns, and <code>write.int32</code> 161 ns against 148 ns. Over many writes, including the full write-backs, the Swift core is faster. Reads are close or faster: <code>read.int32</code> takes 96 ns against 84 ns, and <code>read.string</code> 173 ns against 362 ns.</p>
   <div class="policy tg" role="note" aria-label="What checks it">
     <div class="ph"><span class="pk">What checks it</span><span class="pn">The file format didn't change: both cores still write the same bytes.</span></div>
     <dl>

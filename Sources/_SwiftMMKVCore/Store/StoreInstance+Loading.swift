@@ -30,6 +30,8 @@ extension StoreInstance {
         } else {
           let input = UnsafeRawBufferPointer(start: memory + fixed32Size, count: self.actualSize)
           self.dic.removeAll()
+          // Holds `self.dic` for the whole decode, which is static and never reaches the store
+          // (rule 2 in `StoreInstance`'s documentation).
           RecordDecoding.decode(input, into: &self.dic, greedy: needFullWriteback)
         }
         self.output = OutputState(position: self.actualSize, size: fileSize - fixed32Size)
@@ -84,6 +86,8 @@ extension StoreInstance {
           self.decodeCrypt(from: position, size: self.actualSize, greedy: true)
         } else {
           let input = UnsafeRawBufferPointer(start: base, count: self.actualSize)
+          // Holds `self.dic` for the whole decode, which is static and never reaches the store
+          // (rule 2 in `StoreInstance`'s documentation).
           RecordDecoding.decode(input, from: position, into: &self.dic, greedy: true)
         }
         self.output?.position += addedSize

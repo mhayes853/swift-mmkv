@@ -3,13 +3,26 @@
 //
 // The port follows the C++ closely, function by function, so that both cores write the same
 // bytes for the same operations. Where the C++ names a function, the Swift one has the same name.
-// Encryption is not ported yet.
 
 /// One open store. Every open of the same files in a process shares one instance, which
 /// ``StoreRegistry`` hands out, and an instance lives for the rest of the process.
 ///
 /// Thread-safe: every operation takes ``lock``, a recursive mutex, and a multi-process store also
 /// takes a file lock that excludes other processes and other copies of MMKV.
+///
+/// The mutable properties are marked `@exclusivity(unchecked)`, because checking every access to
+/// them at run time made writes about a third slower. The checks only ever caught two accesses
+/// to a property overlapping on one thread, so the class keeps two rules in their place:
+///
+/// 1. The properties, and those of ``file`` and ``metaFile``, are read and written only with
+///    ``lock`` held.
+/// 2. While an access to one of them is open across a call, such as an `inout` argument or a
+///    method of the property that takes a closure, nothing the call reaches writes to that
+///    property, or reads it if the open access writes. Reads may overlap reads, as when a
+///    closure passed to `forEachEntry` looks up a key in the same index. Breaking this rule is
+///    undefined behaviour, not a trap.
+///
+/// The places that hold a writing access across a call say so where they do it.
 package final class StoreInstance: @unchecked Sendable {
   package let id: String
   let path: String
@@ -20,30 +33,30 @@ package final class StoreInstance: @unchecked Sendable {
   let fileSystem: FileSystem
 
   /// Where each key's latest record is in a plain-text store (`m_dic`).
-  var dic = RecordIndex()
+  @exclusivity(unchecked) var dic = RecordIndex()
   /// Each key's entry in an encrypted store (`m_dicCrypt`).
-  var dicCrypt = CryptIndex()
+  @exclusivity(unchecked) var dicCrypt = CryptIndex()
   /// The cryptor of an encrypted store, whose state is the end of the data (`m_crypter`).
-  var crypter: AESCryptor?
+  @exclusivity(unchecked) var crypter: AESCryptor?
   /// The stream's state where the last appended record started, if its value is left in the file
   /// (`t_status`).
-  var appendState: CipherState?
+  @exclusivity(unchecked) var appendState: CipherState?
   let file: MemoryFile
   let metaFile: MemoryFile
-  var metaInfo = MetaInfo()
+  @exclusivity(unchecked) var metaInfo = MetaInfo()
   /// Where the next record is written (`m_output`), relative to the start of the data.
-  var output: OutputState?
+  @exclusivity(unchecked) var output: OutputState?
   /// How many bytes of data follow the header (`m_actualSize`).
-  var actualSize = 0
-  var crcDigest: UInt32 = 0
-  var needLoadFromFile = true
-  var hasFullWriteback = false
-  var isSecondLoad = false
+  @exclusivity(unchecked) var actualSize = 0
+  @exclusivity(unchecked) var crcDigest: UInt32 = 0
+  @exclusivity(unchecked) var needLoadFromFile = true
+  @exclusivity(unchecked) var hasFullWriteback = false
+  @exclusivity(unchecked) var isSecondLoad = false
 
   let lock = ThreadLock()
   let fileLock: FileLock
-  var sharedProcessLock: InterProcessLock
-  var exclusiveProcessLock: InterProcessLock
+  @exclusivity(unchecked) var sharedProcessLock: InterProcessLock
+  @exclusivity(unchecked) var exclusiveProcessLock: InterProcessLock
   #if os(Android)
     /// Held shared for the instance's life, so that Android's MMKV knows the file is in use and
     /// does not migrate it to another name.
@@ -52,11 +65,11 @@ package final class StoreInstance: @unchecked Sendable {
 
   let recoverOnError: Bool
   let itemSizeLimit: UInt32
-  var enableKeyExpire = false
-  var expiredInSeconds: UInt32 = 0
-  var enableCompareBeforeSet = false
+  @exclusivity(unchecked) var enableKeyExpire = false
+  @exclusivity(unchecked) var expiredInSeconds: UInt32 = 0
+  @exclusivity(unchecked) var enableCompareBeforeSet = false
 
-  private var contentChangedHandler: (@Sendable () -> Void)?
+  @exclusivity(unchecked) private var contentChangedHandler: (@Sendable () -> Void)?
 
   /// The position and size of the output, as `CodedOutputData` keeps them. The size is fixed when
   /// the output is created, as the C++ one is.
@@ -146,7 +159,10 @@ package final class StoreInstance: @unchecked Sendable {
   }
 
   func notifyContentChanged() {
-    self.contentChangedHandler?()
+    // The handler runs with the lock held and can call back into the store, so it is called
+    // outside any access to a property (rule 2 in the class's documentation).
+    let handler = self.contentChangedHandler
+    handler?()
   }
 
   var isFileValid: Bool {

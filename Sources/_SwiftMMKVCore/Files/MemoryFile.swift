@@ -7,19 +7,20 @@
 /// store. A multi-process store keeps its metadata file open, because its file lock lives on that
 /// descriptor.
 ///
-/// Not thread-safe; the engine's lock protects it.
+/// Not thread-safe; the engine's lock protects it. Its mutable properties skip exclusivity checks at
+/// run time under the same rules as ``StoreInstance``'s.
 package final class MemoryFile {
   package let path: String
   package let isReadOnly: Bool
   package let isMayflyFD: Bool
   private let fileSystem: FileSystem
-  private var descriptor: Int32 = -1
+  @exclusivity(unchecked) private var descriptor: Int32 = -1
 
   /// The mapping, or `nil` if the file is not mapped.
-  package private(set) var memory: UnsafeMutableRawPointer?
+  @exclusivity(unchecked) package private(set) var memory: UnsafeMutableRawPointer?
 
   /// The size of the mapping, which is the file's size when it was last mapped.
-  package private(set) var size = 0
+  @exclusivity(unchecked) package private(set) var size = 0
 
   package init(
     path: String,

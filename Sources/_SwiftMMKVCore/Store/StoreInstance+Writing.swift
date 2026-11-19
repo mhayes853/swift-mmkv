@@ -433,6 +433,8 @@ extension StoreInstance {
   func withOutput<R>(_ body: (inout CodedOutput) throws(CodingError) -> R) throws(CodingError) -> R
   {
     guard let state = self.output, let memory = self.file.memory else { throw .outOfSpace }
+    // `body` writes to a copy, so no access to `self.output` is open while it runs (rule 2 in
+    // `StoreInstance`'s documentation).
     var output = CodedOutput(base: memory + fixed32Size, size: state.size, position: state.position)
     defer { self.output = OutputState(position: output.position, size: state.size) }
     return try body(&output)
