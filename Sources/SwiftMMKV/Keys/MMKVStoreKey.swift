@@ -128,7 +128,7 @@ extension MMKVStore {
   /// ```
   ///
   /// This behaves like ``values(forKey:as:)``.
-  public func values<V: Sendable>(for key: Key<V>) -> MMKVValues<V> {
+  public func values<V: Sendable>(for key: Key<V>) -> MMKVValues<V?> {
     self.values(forKey: key.name, as: V.self)
   }
 }
