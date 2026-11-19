@@ -22,6 +22,8 @@ scripts/build-android-swift.sh "$abi"
 
 adb uninstall "$package" > /dev/null 2>&1 || true
 adb install android/app/build/outputs/apk/release/app-release.apk > /dev/null
+# Results from an earlier run can outlive the app that wrote them.
+adb shell rm -f "$results"
 adb shell am start -n "$package/.MainActivity" > /dev/null
 
 for _ in $(seq 1 60); do

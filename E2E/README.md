@@ -35,6 +35,11 @@ and the Android NDK. Set `SWIFT` to use a toolchain other than the default one, 
 to the name of the Swift SDK to use when more than one for Android is installed. The app's minimum
 Android API level is 28, the level the Swift SDK targets.
 
+The Swift runtime loads `libc++_shared.so`, and can need a newer one than React Native ships: Swift
+6.4 needs the one from NDK 30 or later, while Swift 6.3 works with React Native's. The script
+packages the one from the newest NDK installed, so install NDK 30 or later to run the app with
+Swift 6.4.
+
 ## Layout
 
 - `checks.ts`: the checks, written against both APIs.

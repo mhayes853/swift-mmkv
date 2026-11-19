@@ -23,7 +23,10 @@ swift="${SWIFT:-swift}"
 package=modules/native-mmkv/android/swift
 output="modules/native-mmkv/android/src/main/jniLibs/$abi"
 
-if [ -n "${SWIFT_SDK:-}" ]; then
+# Toolchains before Swift 6.4 pick the wrong architecture when given both the name of a Swift SDK
+# and a triple, so they are only given the triple, and choose a Swift SDK that matches themselves.
+read -r major minor < <("$swift" --version 2>&1 | sed -n 's/.*Swift version \([0-9]*\)\.\([0-9]*\).*/\1 \2/p')
+if [ -n "${SWIFT_SDK:-}" ] && { [ "${major:-0}" -gt 6 ] || [ "${minor:-0}" -ge 4 ]; }; then
   build=("$swift" build --package-path "$package" -c release --swift-sdk "$SWIFT_SDK" --triple "$triple")
 else
   build=("$swift" build --package-path "$package" -c release --swift-sdk "$triple")
@@ -37,7 +40,9 @@ runtime=$(find "$HOME/Library/org.swift.swiftpm/swift-sdks" "$HOME/.swiftpm/swif
   2> /dev/null | head -1 || true)
 [ -n "$runtime" ] || { echo "Could not find the Swift SDK for Android's runtime." >&2; exit 1; }
 sdk="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
-readelf=$(find "$sdk/ndk" -name llvm-readelf 2> /dev/null | sort | tail -1 || true)
+# The newest NDK installed, comparing version numbers rather than text.
+ndk=$(ls "$sdk/ndk" 2> /dev/null | sort -t. -k1,1n -k2,2n -k3,3n | tail -1 || true)
+readelf=$(find "$sdk/ndk/$ndk" -name llvm-readelf 2> /dev/null | head -1 || true)
 [ -n "$readelf" ] || { echo "Could not find llvm-readelf in the Android NDK." >&2; exit 1; }
 
 rm -rf "$output"
@@ -58,3 +63,14 @@ while [ "${#pending[@]}" -gt 0 ]; do
   done
 done
 ls "$output"
+
+# The Swift runtime can need a newer libc++ than the one React Native ships, which is the one that
+# would otherwise be packaged (Swift 6.4 needs the one from NDK 30). Libraries in the app's own
+# directory win over those of its dependencies, so the newest installed NDK's goes there.
+libcxx=$(find "$sdk/ndk/$ndk" -path "*/sysroot/usr/lib/$arch-linux-android/libc++_shared.so" \
+  2> /dev/null | head -1 || true)
+if [ -n "$libcxx" ] && [ -d android/app ]; then
+  mkdir -p "android/app/src/main/jniLibs/$abi"
+  cp "$libcxx" "android/app/src/main/jniLibs/$abi/"
+  echo "Packaging libc++_shared.so from NDK $ndk"
+fi
