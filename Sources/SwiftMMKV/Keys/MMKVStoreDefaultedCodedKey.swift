@@ -121,3 +121,26 @@ extension MMKVStore {
     }
   }
 }
+
+// MARK: - Batches
+
+extension MMKVStore {
+  /// Reads and decodes the values of several keys at once, reading each key's default when the
+  /// store has no value for it.
+  ///
+  /// ```swift
+  /// let (settings, feed) = try store.values(forKeys: .settings, .feed)  // (Settings, Feed)
+  /// ```
+  ///
+  /// The store is locked once for the whole read.
+  ///
+  /// - Throws: Whatever a key's decoder throws when its stored value does not decode, or
+  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  public func values<each V>(
+    forKeys keys: repeat DefaultedCodedKey<each V>
+  ) throws -> (repeat each V) {
+    try self.withExclusiveLock { store in
+      (repeat try store.value(for: each keys))
+    }
+  }
+}

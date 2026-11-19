@@ -109,3 +109,22 @@ extension MMKVStore {
     self.subscribe(for: key.key) { onChange($0 ?? key.defaultValue) }
   }
 }
+
+// MARK: - Batches
+
+extension MMKVStore {
+  /// Reads the values of several keys at once, reading each key's default when the store has
+  /// no value for it.
+  ///
+  /// ```swift
+  /// let (volume, theme) = store.values(forKeys: .volume, .theme)  // (Double, String)
+  /// ```
+  ///
+  /// The store is locked once for the whole read, so the values are those the keys held at
+  /// one moment.
+  public func values<each V>(forKeys keys: repeat DefaultedKey<each V>) -> (repeat each V) {
+    self.withExclusiveLock { store in
+      (repeat store.value(for: each keys))
+    }
+  }
+}

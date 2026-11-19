@@ -132,3 +132,48 @@ extension MMKVStore {
     self.values(forKey: key.name, as: V.self)
   }
 }
+
+// MARK: - Batches
+
+extension MMKVStore {
+  /// Reads the values of several keys at once.
+  ///
+  /// ```swift
+  /// let (username, volume) = store.values(forKeys: .username, .volume)  // (String?, Double?)
+  /// ```
+  ///
+  /// The store is locked once for the whole read, so the values are those the keys held at
+  /// one moment, and for a multi-process store the file lock is taken once rather than once
+  /// for each key. To read keys of different kinds together, use ``withExclusiveLock(_:)``.
+  ///
+  /// - Returns: The value of each key, in order. See ``value(forKey:as:)`` for when one is
+  ///   `nil`.
+  public func values<each V>(forKeys keys: repeat Key<each V>) -> (repeat (each V)?) {
+    self.withExclusiveLock { store in
+      (repeat store.value(for: each keys))
+    }
+  }
+
+  /// Reads the values of several keys at once, each as its own type.
+  ///
+  /// ```swift
+  /// let (username, volume) = store.values(
+  ///   forKeys: ("username", String.self), ("volume", Double.self)
+  /// )
+  /// ```
+  ///
+  /// The store is locked once for the whole read, so the values are those the keys held at
+  /// one moment, and for a multi-process store the file lock is taken once rather than once
+  /// for each key.
+  ///
+  /// - Parameter keys: Each key with the type to read its value as.
+  /// - Returns: The value of each key, in order. See ``value(forKey:as:)`` for when one is
+  ///   `nil`.
+  public func values<each V: MMKVValue>(
+    forKeys keys: repeat (String, (each V).Type)
+  ) -> (repeat (each V)?) {
+    self.withExclusiveLock { store in
+      (repeat store.value(forKey: (each keys).0, as: (each keys).1))
+    }
+  }
+}
