@@ -8,8 +8,10 @@
 #include "MemoryFile.h"
 #include "aes/openssl/openssl_md5.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -22,16 +24,26 @@
 namespace {
 
 std::atomic<mmkv_content_changed_callback> g_contentChanged{nullptr};
+std::atomic<mmkv_log_callback> g_log{nullptr};
+std::atomic<mmkv_integrity_failure_callback> g_integrityFailure{nullptr};
+
+inline mmkv_bytes bytes(const char *string) { return mmkv_bytes{string, strlen(string)}; }
 
 // The core routes every log message through a registered handler instead of printing it, so this
-// one prints the warnings and errors itself.
+// one hands them to the installed callback, or prints them itself when there is none.
 class Handler : public mmkv::MMKVHandler {
 public:
   void mmkvLog(
     MMKVLogLevel level, const char *file, int line, const char *function,
     MMKVLog_t message) override {
+    if (auto callback = g_log.load(std::memory_order_acquire)) {
+      callback(level, bytes(file), line, bytes(function),
+               mmkv_bytes{message.data(), message.size()});
+      return;
+    }
 #ifdef __ANDROID__
-    auto priority = level >= MMKVLogError ? ANDROID_LOG_ERROR : ANDROID_LOG_WARN;
+    auto priority = level >= MMKVLogError ? ANDROID_LOG_ERROR
+                    : level >= MMKVLogWarning ? ANDROID_LOG_WARN : ANDROID_LOG_INFO;
     __android_log_print(priority, "SwiftMMKV", "<%s:%d::%s> %s", file, line, function,
                         message.c_str());
 #else
@@ -39,9 +51,28 @@ public:
 #endif
   }
 
+  // What these return is never used: every store is opened with its own recovery strategy,
+  // which the core prefers.
+  MMKVRecoverStrategic onMMKVCRCCheckFail(const std::string &mmapID) override {
+    reportIntegrityFailure(mmapID, MMKV_INTEGRITY_FAILURE_CHECKSUM);
+    return OnErrorDiscard;
+  }
+
+  MMKVRecoverStrategic onMMKVFileLengthError(const std::string &mmapID) override {
+    reportIntegrityFailure(mmapID, MMKV_INTEGRITY_FAILURE_FILE_LENGTH);
+    return OnErrorDiscard;
+  }
+
   void onContentChangedByOuterProcess(const std::string &mmapID) override {
     if (auto callback = g_contentChanged.load(std::memory_order_acquire)) {
       callback(mmkv_bytes{mmapID.data(), mmapID.size()});
+    }
+  }
+
+private:
+  void reportIntegrityFailure(const std::string &mmapID, int32_t kind) {
+    if (auto callback = g_integrityFailure.load(std::memory_order_acquire)) {
+      callback(mmkv_bytes{mmapID.data(), mmapID.size()}, kind);
     }
   }
 };
@@ -54,12 +85,17 @@ void installHandlerOnce() {
   });
 }
 
+// The core starts at the info level, and its own setter does nothing until it is initialized,
+// so the level is assigned directly.
+void lowerDefaultLogLevelOnce() {
+  static std::once_flag once;
+  std::call_once(once, [] { g_currentLogLevel = MMKVLogWarning; });
+}
+
 // Resolving a namespace performs the core's minimal initialization, so no global root directory
-// ever has to be chosen. Initializing logs at the info level, and the core's own setter does
-// nothing until it is initialized, so the level is assigned directly first.
+// ever has to be chosen. Initializing logs at the info level, so the level is lowered first.
 mmkv::NameSpace nameSpace(const std::string &rootDirectory) {
-  static std::once_flag logLevelOnce;
-  std::call_once(logLevelOnce, [] { g_currentLogLevel = MMKVLogWarning; });
+  lowerDefaultLogLevelOnce();
   auto nameSpace = MMKV::nameSpace(rootDirectory);
   installHandlerOnce();
   return nameSpace;
@@ -108,6 +144,25 @@ extern "C" {
 
 void mmkv_set_content_changed_callback(mmkv_content_changed_callback callback) {
   g_contentChanged.store(callback, std::memory_order_release);
+}
+
+void mmkv_set_log_callback(mmkv_log_callback callback) {
+  g_log.store(callback, std::memory_order_release);
+}
+
+int32_t mmkv_log_level(void) {
+  lowerDefaultLogLevelOnce();
+  return g_currentLogLevel;
+}
+
+void mmkv_set_log_level(int32_t level) {
+  lowerDefaultLogLevelOnce();
+  g_currentLogLevel = static_cast<MMKVLogLevel>(
+    std::clamp(level, int32_t(MMKV_LOG_INFO), int32_t(MMKV_LOG_NONE)));
+}
+
+void mmkv_set_integrity_failure_callback(mmkv_integrity_failure_callback callback) {
+  g_integrityFailure.store(callback, std::memory_order_release);
 }
 
 mmkv_store *mmkv_open(const mmkv_configuration *configuration) {
