@@ -2,9 +2,11 @@
 ///
 /// The public types hold one of these privately, so that none of them needs a member that is
 /// visible to the rest of the module. Every operation goes to ``engine``, the C++ core or the
-/// Swift core that is replacing it, through the store's suspension gate. Nothing here notifies
-/// listeners about writes; that is left to ``MMKVStore``.
-struct MMKVCore: Sendable {
+/// Swift core that is replacing it, through the store's suspension gate. Which writes listeners
+/// are told about is left to ``MMKVStore``, which names them to ``operationDidFinish(writingTo:)``.
+///
+/// It is a class so that a value reader or writer can refer to it without copying the engine.
+final class MMKVCore: Sendable {
   let engine: any MMKVEngine
   let state: MMKVStoreState
 
@@ -38,102 +40,25 @@ struct MMKVCore: Sendable {
     return try body(self.engine)
   }
 
-  /// Tells listeners about anything the engine noticed while it held its locks. Called once an
-  /// operation has returned.
-  func operationDidFinish() {
-    self.state.deliverPendingExternalChange()
-  }
-}
-
-// MARK: - Reads
-
-extension MMKVCore {
-  func bool(forKey key: String) -> Bool? {
-    self.perform { $0.bool(forKey: key) } ?? nil
+  /// Runs a read that takes the store's file lock.
+  ///
+  /// - Returns: The result of `body`, or `nil`, as for a key with no value, if the store is
+  ///   suspended.
+  func read<R, E: Error>(_ body: (any MMKVEngine) throws(E) -> R?) throws(E) -> R? {
+    try self.perform(body) ?? nil
   }
 
-  func int32(forKey key: String) -> Int32? {
-    self.perform { $0.int32(forKey: key) } ?? nil
+  /// Runs a write that takes the store's file lock.
+  ///
+  /// - Returns: The result of `body`, or `false` if the store is suspended.
+  func write(_ body: (any MMKVEngine) -> Bool) -> Bool {
+    self.perform(body) ?? false
   }
 
-  func uint32(forKey key: String) -> UInt32? {
-    self.perform { $0.uint32(forKey: key) } ?? nil
-  }
-
-  func int64(forKey key: String) -> Int64? {
-    self.perform { $0.int64(forKey: key) } ?? nil
-  }
-
-  func uint64(forKey key: String) -> UInt64? {
-    self.perform { $0.uint64(forKey: key) } ?? nil
-  }
-
-  func float(forKey key: String) -> Float? {
-    self.perform { $0.float(forKey: key) } ?? nil
-  }
-
-  func double(forKey key: String) -> Double? {
-    self.perform { $0.double(forKey: key) } ?? nil
-  }
-
-  func string(forKey key: String) -> String? {
-    self.perform { $0.string(forKey: key) } ?? nil
-  }
-
-  func strings(forKey key: String) -> [String]? {
-    self.perform { $0.strings(forKey: key) } ?? nil
-  }
-
-  func withBytes<R, E: Error>(
-    forKey key: String,
-    _ body: (RawSpan) throws(E) -> R
-  ) throws(E) -> R? {
-    try self.perform { (engine) throws(E) -> R? in try engine.withBytes(forKey: key, body) } ?? nil
-  }
-}
-
-// MARK: - Writes
-
-extension MMKVCore {
-  func set(_ value: Bool, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.perform { $0.set(value, forKey: key, expiresInSeconds: expiresInSeconds) } ?? false
-  }
-
-  func set(_ value: Int32, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.perform { $0.set(value, forKey: key, expiresInSeconds: expiresInSeconds) } ?? false
-  }
-
-  func set(_ value: UInt32, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.perform { $0.set(value, forKey: key, expiresInSeconds: expiresInSeconds) } ?? false
-  }
-
-  func set(_ value: Int64, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.perform { $0.set(value, forKey: key, expiresInSeconds: expiresInSeconds) } ?? false
-  }
-
-  func set(_ value: UInt64, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.perform { $0.set(value, forKey: key, expiresInSeconds: expiresInSeconds) } ?? false
-  }
-
-  func set(_ value: Float, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.perform { $0.set(value, forKey: key, expiresInSeconds: expiresInSeconds) } ?? false
-  }
-
-  func set(_ value: Double, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.perform { $0.set(value, forKey: key, expiresInSeconds: expiresInSeconds) } ?? false
-  }
-
-  func set(_ value: String, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.perform { $0.set(value, forKey: key, expiresInSeconds: expiresInSeconds) } ?? false
-  }
-
-  func set(_ value: [String], forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.perform { $0.set(value, forKey: key, expiresInSeconds: expiresInSeconds) } ?? false
-  }
-
-  func set(bytes: RawSpan, forKey key: String, expiresInSeconds: UInt32) -> Bool {
-    self.perform { $0.set(bytes: bytes, forKey: key, expiresInSeconds: expiresInSeconds) }
-      ?? false
+  /// Tells listeners about anything the engine noticed while it held its locks, and then about
+  /// the write to `key` if the operation made one. Called once an operation has returned.
+  func operationDidFinish(writingTo key: String? = nil) {
+    self.state.deliverChanges(afterWritingTo: key)
   }
 }
 
@@ -153,7 +78,7 @@ extension MMKVCore {
   }
 
   func remove(_ key: String) -> Bool {
-    self.perform { $0.remove(key) } ?? false
+    self.write { $0.remove(key) }
   }
 
   func remove(_ keys: [String]) {
@@ -209,7 +134,7 @@ extension MMKVCore {
       self.state.endDeferringExternalChanges()
       self.engine.unlock()
       gate?.leave()
-      self.state.deliverPendingExternalChange()
+      self.state.deliverChanges()
     }
     return try body()
   }

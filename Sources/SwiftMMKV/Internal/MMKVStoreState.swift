@@ -46,7 +46,7 @@ final class MMKVStoreState: Sendable {
   }
 
   /// Records that the engine saw the store's file change underneath it. Called with the engine's
-  /// locks held, so listeners are told later, by ``deliverPendingExternalChange()``.
+  /// locks held, so listeners are told later, by ``deliverChanges(afterWritingTo:)``.
   private func markExternalChange() {
     self.registrations.withLock { $0.hasPendingExternalChange = true }
   }
@@ -61,18 +61,35 @@ final class MMKVStoreState: Sendable {
   }
 
   /// Tells listeners about an external change the core noticed during an earlier operation,
-  /// unless changes are being deferred.
-  func deliverPendingExternalChange() {
-    let listeners: [Listener]? = self.registrations.withLock { registrations in
-      guard registrations.hasPendingExternalChange, registrations.deferralDepth == 0 else {
-        return nil
+  /// unless changes are being deferred, and then about a write to `key` if one was made.
+  ///
+  /// The registrations are only locked once when there is no external change to report, which
+  /// is what nearly every write finds.
+  func deliverChanges(afterWritingTo key: String? = nil) {
+    let (listeners, hasExternalChange) = self.registrations.withLock { registrations in
+      let hasExternalChange =
+        registrations.hasPendingExternalChange && registrations.deferralDepth == 0
+      if hasExternalChange {
+        registrations.hasPendingExternalChange = false
       }
-      registrations.hasPendingExternalChange = false
-      return Array(registrations.listeners.values)
+      let listeners =
+        hasExternalChange || key != nil ? Array(registrations.listeners.values) : []
+      return (listeners, hasExternalChange)
     }
-    guard let listeners else { return }
+    guard hasExternalChange else {
+      if let key {
+        for listener in listeners {
+          listener(.key(key))
+        }
+      }
+      return
+    }
     for listener in listeners {
       listener(.external)
+    }
+    // The listeners may have changed while they were told about the external change.
+    if let key {
+      self.notify(.key(key))
     }
   }
 }

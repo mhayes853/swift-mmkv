@@ -4,7 +4,9 @@
 /// returns whether the value was stored. A write fails when the key is empty, the store is
 /// read-only, or the pair is larger than the store's item size limit.
 public struct MMKVValueWriter: ~Copyable, ~Escapable {
-  private let core: MMKVCore
+  // Unowned, because a writer cannot outlive the call it is handed to, and the store holds the
+  // core for that long. This saves a retain and a release on every write.
+  private unowned(unsafe) let core: MMKVCore
   private let key: String
   private let expiresInSeconds: UInt32
 
@@ -17,55 +19,57 @@ public struct MMKVValueWriter: ~Copyable, ~Escapable {
 
   /// Stores a Boolean.
   public mutating func set(_ value: Bool) -> Bool {
-    self.core.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
+    self.core.write { $0.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds) }
   }
 
   /// Stores a signed 32-bit integer.
   public mutating func set(_ value: Int32) -> Bool {
-    self.core.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
+    self.core.write { $0.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds) }
   }
 
   /// Stores an unsigned 32-bit integer.
   public mutating func set(_ value: UInt32) -> Bool {
-    self.core.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
+    self.core.write { $0.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds) }
   }
 
   /// Stores a signed 64-bit integer.
   public mutating func set(_ value: Int64) -> Bool {
-    self.core.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
+    self.core.write { $0.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds) }
   }
 
   /// Stores an unsigned 64-bit integer.
   public mutating func set(_ value: UInt64) -> Bool {
-    self.core.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
+    self.core.write { $0.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds) }
   }
 
   /// Stores a single-precision floating-point number.
   public mutating func set(_ value: Float) -> Bool {
-    self.core.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
+    self.core.write { $0.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds) }
   }
 
   /// Stores a double-precision floating-point number, which is how JavaScript numbers are
   /// stored.
   public mutating func set(_ value: Double) -> Bool {
-    self.core.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
+    self.core.write { $0.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds) }
   }
 
   /// Stores a string as UTF-8.
   public mutating func set(_ value: String) -> Bool {
-    self.core.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
+    self.core.write { $0.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds) }
   }
 
   /// Stores a list of strings.
   public mutating func set(_ value: [String]) -> Bool {
-    self.core.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
+    self.core.write { $0.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds) }
   }
 
   /// Stores raw bytes, which MMKV copies into its file before this returns.
   ///
   /// Bytes that are valid UTF-8 read back as a string, because MMKV stores the two the same way.
   public mutating func set(bytes: RawSpan) -> Bool {
-    self.core.set(bytes: bytes, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
+    self.core.write {
+      $0.set(bytes: bytes, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
+    }
   }
 
   /// Stores the raw bytes in `unsafeBytes`, which MMKV copies into its file before this

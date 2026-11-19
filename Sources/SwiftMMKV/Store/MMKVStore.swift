@@ -121,7 +121,9 @@ extension MMKVStore {
   @discardableResult
   public func set(bytes: RawSpan, forKey key: String, expiringIn: Duration? = nil) -> Bool {
     self.write(forKey: key) {
-      self.core.set(bytes: bytes, forKey: key, expiresInSeconds: expiringIn.mmkvExpirySeconds)
+      self.core.write {
+        $0.set(bytes: bytes, forKey: key, expiresInSeconds: expiringIn.mmkvExpirySeconds)
+      }
     }
   }
 
@@ -137,7 +139,9 @@ extension MMKVStore {
     _ body: (RawSpan) throws(E) -> R
   ) throws(E) -> R? {
     defer { self.core.operationDidFinish() }
-    return try self.core.withBytes(forKey: key, body)
+    return try self.core.read { (engine) throws(E) -> R? in
+      try engine.withBytes(forKey: key, body)
+    }
   }
 
   /// Stores the raw bytes in `unsafeBytes` under `key`, replacing any existing value.
@@ -179,10 +183,7 @@ extension MMKVStore {
 
   private func write(forKey key: String, _ body: () -> Bool) -> Bool {
     let didWrite = body()
-    self.core.operationDidFinish()
-    if didWrite {
-      self.core.state.notify(.key(key))
-    }
+    self.core.operationDidFinish(writingTo: didWrite ? key : nil)
     return didWrite
   }
 }
