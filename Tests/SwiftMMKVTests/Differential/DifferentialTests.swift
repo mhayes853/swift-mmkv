@@ -214,6 +214,34 @@ import Testing
     }
   }
 
+  // The C++ core starts no new sequence when it trims records that are already written back, so
+  // another instance keeps mapping the old size and crashes once it appends past the new end.
+  @Test func `The C++ Core Sees The Swift Core Shrink A Written Back File`() throws {
+    let directory = temporaryRootDirectory()
+    let cxx = try makeStore(
+      id: "shrink",
+      rootDirectory: directory,
+      mode: .multiProcess,
+      engine: .cxx
+    )
+    let swift = try makeStore(
+      id: "shrink",
+      rootDirectory: directory,
+      mode: .multiProcess,
+      engine: .swift
+    )
+    swift.set(1, forKey: "kept")
+    swift.set(2, forKey: "removed")
+    swift.set([UInt8](repeating: 7, count: 200_000), forKey: "large")
+    // Removing several keys writes the records back, so the trim does not do it again.
+    swift.removeValues(forKeys: ["large", "removed"])
+    let grownSize = cxx.byteSize
+
+    swift.trim()
+    #expect(swift.byteSize < grownSize)
+    #expect(cxx.byteSize == swift.byteSize)
+  }
+
   @Test func `Each Core Reports The Other's Writes As External`() throws {
     let directory = temporaryRootDirectory()
     let cxx = try makeStore(

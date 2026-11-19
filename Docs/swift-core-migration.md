@@ -41,6 +41,14 @@ where that work stands.
   so the differential tests compare contents rather than bytes from that point on. Importing
   another store's keys (`importFrom`) walks the same hash table, and the Swift core imports in
   file order too.
+
+  A third difference is a fix. When `trim` shrinks a file whose records are already written
+  back, MMKV starts no new sequence, so another instance with the file open keeps mapping the
+  old size and crashes with `SIGBUS` once it appends past the new end. With 4 KB pages, on
+  Linux, the differential test of both cores sharing one file hit this. In multi-process mode
+  the Swift core starts a new sequence after every shrink, which tells the C++ core to reload.
+  A single-process store is still identical byte for byte. The C++ core still trims without a
+  new sequence, so a Swift instance that shares a file with it can crash the same way.
 - **Cryptography stays vendored C.** AES (with the ARMv8 instructions), CFB128, and MD5 come from
   the OpenSSL-derived sources MMKV already ships, moved into a C target of their own
   (`CSwiftMMKVCrypto`) with their symbols prefixed in source. The Swift core only holds the

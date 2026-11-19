@@ -846,6 +846,19 @@ extension StoreState {
     }
     guard self.file.truncate(to: fileSize) else { return }
     self.output = OutputState(position: self.actualSize, size: self.file.size - fixed32Size)
+    // Unlike the C++ core, a shared store starts a new sequence whenever it shrinks. The write-back
+    // above starts one only if it ran. When the records were already written back, another
+    // instance with the file open would keep its larger mapping and crash appending past the new
+    // end of the file.
+    if self.isMultiProcess {
+      self.writeActualSize(
+        self.actualSize,
+        crcDigest: self.crcDigest,
+        iv: nil,
+        increaseSequence: true
+      )
+      self.metaFile.msync(synchronously: true)
+    }
   }
 
   /// Removes every key, shrinking the file back to the expected capacity unless `keepSpace`
