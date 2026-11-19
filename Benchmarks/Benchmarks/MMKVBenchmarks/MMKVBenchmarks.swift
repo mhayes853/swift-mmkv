@@ -80,9 +80,7 @@ private func registerValueBenchmarks(_ engine: MMKVConfiguration.Engine) {
       blackHole(stringReads.value.value(forKey: keys[stringReads.next()], as: String.self))
     }
   } setup: {
-    stringReads.value = try openStore(engine: engine) { store, index in
-      store.set(strings[index], forKey: keys[index])
-    }
+    stringReads.value = try openStore(engine: engine, fill: setString)
   }
 
   // Every operation on a multi-process store takes the file lock and checks the metadata file.
@@ -93,9 +91,7 @@ private func registerValueBenchmarks(_ engine: MMKVConfiguration.Engine) {
       blackHole(multiProcessReads.value.value(forKey: keys[index], as: String.self))
     }
   } setup: {
-    multiProcessReads.value = try openStore(engine: engine, mode: .multiProcess) { store, index in
-      store.set(strings[index], forKey: keys[index])
-    }
+    multiProcessReads.value = try openStore(engine: engine, mode: .multiProcess, fill: setString)
   }
 
   // Overwriting a few keys over and over fills the file with stale values, so it is compacted
@@ -114,9 +110,7 @@ private func registerValueBenchmarks(_ engine: MMKVConfiguration.Engine) {
   Benchmark("keys/\(engine)") { benchmark in
     blackHole(enumeration.value.keys)
   } setup: {
-    enumeration.value = try openStore(engine: engine) { store, index in
-      store.set(strings[index], forKey: keys[index])
-    }
+    enumeration.value = try openStore(engine: engine, fill: setString)
   }
 }
 
@@ -146,11 +140,12 @@ private func registerOpenBenchmarks(_ engine: MMKVConfiguration.Engine) {
       benchmark.stopMeasurement()
     } setup: {
       let directory = temporaryDirectory()
-      let store = try openStore(engine: engine, rootDirectory: directory, encryption: encryption) {
-        store,
-        index in
-        store.set(strings[index], forKey: keys[index])
-      }
+      let store = try openStore(
+        engine: engine,
+        rootDirectory: directory,
+        encryption: encryption,
+        fill: setString
+      )
       store.sync()
       template.value = directory
     }
@@ -194,6 +189,11 @@ private func registerReloadBenchmarks(_ engine: MMKVConfiguration.Engine) {
 private let keyCount = 10_000
 private let keys = (0..<keyCount).map { "key-\($0)" }
 private let strings = (0..<keyCount).map { "a string value that is not very long, number \($0)" }
+
+/// Writes the string for one key, to fill a store with every key.
+private func setString(in store: MMKVStore, at index: Int) {
+  store.set(strings[index], forKey: keys[index])
+}
 
 /// Holds what a benchmark's setup prepares for its closure, and a counter that cycles through
 /// the keys.
