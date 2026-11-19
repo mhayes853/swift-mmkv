@@ -734,7 +734,7 @@ private enum FunctionalTest {
   /// The keys left once ``remove(from:)`` has run.
   static let remainingKeys: Set<String> = [
     "int32", "uint32", "int64", "uint64", "float", "double", "raw_string", "string", "string_view",
-    "string-set",
+    "string-set"
   ]
 
   /// The writes, returning whether each succeeded.
@@ -750,7 +750,7 @@ private enum FunctionalTest {
       store.set(self.rawString, forKey: "raw_string"),
       store.set(self.string, forKey: "string"),
       store.set(self.stringView, forKey: "string_view"),
-      store.set(self.stringSet, forKey: "string-set"),
+      store.set(self.stringSet, forKey: "string-set")
     ]
   }
 

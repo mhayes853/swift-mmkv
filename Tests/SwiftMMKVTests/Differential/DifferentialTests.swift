@@ -33,7 +33,10 @@ import Testing
       try expectContents(of: pair.swift, match: model, context + " (Swift)")
       let cxxFiles = try NormalizedStoreFiles(directory: pair.cxxDirectory)
       let swiftFiles = try NormalizedStoreFiles(directory: pair.swiftDirectory)
-      try #require(cxxFiles == swiftFiles, "files differ: \(context)\n\(cxxFiles.difference(from: swiftFiles))")
+      try #require(
+        cxxFiles == swiftFiles,
+        "files differ: \(context)\n\(cxxFiles.difference(from: swiftFiles))"
+      )
     }
   }
 
@@ -165,7 +168,7 @@ import Testing
     }
     let transitions: [MMKVConfiguration.Encryption?] = [
       .aes128(key: "first"), .aes256(key: "second key, longer"), .aes256(key: "third"), nil,
-      .aes128(key: "fourth"),
+      .aes128(key: "fourth")
     ]
     for (index, encryption) in transitions.enumerated() {
       try store.rekey(encryption)
@@ -186,7 +189,11 @@ import Testing
         encryption: encryption,
         engine: reader
       )
-      try expectContents(of: copy, match: model, "\(reader) after \(writer) rekeyed to \(String(describing: encryption))")
+      try expectContents(
+        of: copy,
+        match: model,
+        "\(reader) after \(writer) rekeyed to \(String(describing: encryption))"
+      )
     }
   }
 
@@ -224,7 +231,8 @@ import Testing
       let writer = Bool.random(using: &generator) ? cxx : swift
       let result = operation.apply(to: writer)
       operation.apply(to: &model, result: result, configuration: configuration)
-      let context = "seed \(seed), step \(step), \(operation) through \(writer === cxx ? "C++" : "Swift")"
+      let context =
+        "seed \(seed), step \(step), \(operation) through \(writer === cxx ? "C++" : "Swift")"
       try expectContents(of: cxx, match: model, context + ", read by C++")
       try expectContents(of: swift, match: model, context + ", read by Swift")
     }
@@ -232,12 +240,22 @@ import Testing
 
   @Test func `Each Core Reports The Other's Writes As External`() throws {
     let directory = temporaryRootDirectory()
-    let cxx = try makeStore(id: "shared", rootDirectory: directory, mode: .multiProcess, engine: .cxx)
-    let swift = try makeStore(id: "shared", rootDirectory: directory, mode: .multiProcess, engine: .swift)
+    let cxx = try makeStore(
+      id: "shared",
+      rootDirectory: directory,
+      mode: .multiProcess,
+      engine: .cxx
+    )
+    let swift = try makeStore(
+      id: "shared",
+      rootDirectory: directory,
+      mode: .multiProcess,
+      engine: .swift
+    )
     let cxxChanges = ChangeRecorder()
     let swiftChanges = ChangeRecorder()
     let subscriptions = [cxx.subscribe(cxxChanges.record), swift.subscribe(swiftChanges.record)]
-    defer { subscriptions.forEach { $0.cancel() } }
+    defer { for subscription in subscriptions { subscription.cancel() } }
     _ = cxx.count
     _ = swift.count
 
@@ -257,7 +275,12 @@ import Testing
   @Test func `Concurrent Writers Through Both Cores Lose Nothing`() async throws {
     let directory = temporaryRootDirectory()
     let cxx = try makeStore(id: "busy", rootDirectory: directory, mode: .multiProcess, engine: .cxx)
-    let swift = try makeStore(id: "busy", rootDirectory: directory, mode: .multiProcess, engine: .swift)
+    let swift = try makeStore(
+      id: "busy",
+      rootDirectory: directory,
+      mode: .multiProcess,
+      engine: .swift
+    )
     let perWriter = 400
     await withTaskGroup(of: Void.self) { group in
       for (name, store) in [("cxx", cxx), ("swift", swift)] {
@@ -265,7 +288,10 @@ import Testing
           group.addTask {
             for index in 0..<perWriter {
               // Long enough values that the file grows and is compacted along the way.
-              store.set(String(repeating: "\(index)", count: 20), forKey: "\(name)-\(writer)-\(index)")
+              store.set(
+                String(repeating: "\(index)", count: 20),
+                forKey: "\(name)-\(writer)-\(index)"
+              )
               if index % 7 == 0 {
                 store.removeValue(forKey: "\(name)-\(writer)-\(index)")
               }
@@ -300,7 +326,7 @@ import Testing
 }
 
 private let encryptions: [MMKVConfiguration.Encryption?] = [
-  .aes128(key: "a key"), .aes256(key: "an AES-256 key, 32 bytes long!!"),
+  .aes128(key: "a key"), .aes256(key: "an AES-256 key, 32 bytes long!!")
 ]
 
 // MARK: - Operations
@@ -461,7 +487,8 @@ private enum Operation: CustomStringConvertible {
     switch Int.random(in: 0..<100, using: &generator) {
     case 0..<70: return .set(key(), .random(using: &generator))
     case 70..<84: return .remove(key())
-    case 84..<92: return .removeMany((0..<Int.random(in: 0..<5, using: &generator)).map { _ in key() })
+    case 84..<92:
+      return .removeMany((0..<Int.random(in: 0..<5, using: &generator)).map { _ in key() })
     case 92..<95: return .removeAll(keepingCapacity: .random(using: &generator))
     default: return .trim
     }
@@ -473,11 +500,20 @@ private enum Operation: CustomStringConvertible {
     case .set(let key, let value): value.set(in: store, forKey: key)
     case .remove(let key): store.removeValue(forKey: key)
     case .removeMany(let keys):
-      { store.removeValues(forKeys: keys); return nil }()
+      {
+        store.removeValues(forKeys: keys)
+        return nil
+      }()
     case .removeAll(let keepingCapacity):
-      { store.removeAll(keepingCapacity: keepingCapacity); return nil }()
+      {
+        store.removeAll(keepingCapacity: keepingCapacity)
+        return nil
+      }()
     case .trim:
-      { store.trim(); return nil }()
+      {
+        store.trim()
+        return nil
+      }()
     }
   }
 
@@ -493,7 +529,7 @@ private enum Operation: CustomStringConvertible {
         model[key] = value
       }
     case .remove(let key): model[key] = nil
-    case .removeMany(let keys): keys.forEach { model[$0] = nil }
+    case .removeMany(let keys): for key in keys { model[key] = nil }
     case .removeAll: model.removeAll()
     case .trim: break
     }
@@ -545,10 +581,18 @@ private func expectContents(
   _ context: String,
   sourceLocation: SourceLocation = #_sourceLocation
 ) throws {
-  try #require(store.keys == Set(model.keys), "keys differ: \(context)", sourceLocation: sourceLocation)
+  try #require(
+    store.keys == Set(model.keys),
+    "keys differ: \(context)",
+    sourceLocation: sourceLocation
+  )
   #expect(store.count == model.count, "count differs: \(context)", sourceLocation: sourceLocation)
   for (key, value) in model {
-    #expect(value.read(from: store, forKey: key) == value, "\(key): \(context)", sourceLocation: sourceLocation)
+    #expect(
+      value.read(from: store, forKey: key) == value,
+      "\(key): \(context)",
+      sourceLocation: sourceLocation
+    )
   }
 }
 
@@ -577,11 +621,14 @@ private struct NormalizedStoreFiles: Equatable {
       }
       guard let first = left.indices.first(where: { left[$0] != right[$0] }) else { return "" }
       let window = first..<min(first + 16, left.count)
-      return "\(name): first difference at \(first): \(Array(left[window])) vs \(Array(right[window]))"
+      return
+        "\(name): first difference at \(first): \(Array(left[window])) vs \(Array(right[window]))"
     }
-    return [describe("data", self.data, other.data), describe("metadata", self.metadata, other.metadata)]
-      .filter { !$0.isEmpty }
-      .joined(separator: "\n")
+    return [
+      describe("data", self.data, other.data), describe("metadata", self.metadata, other.metadata)
+    ]
+    .filter { !$0.isEmpty }
+    .joined(separator: "\n")
   }
 }
 

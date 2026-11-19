@@ -76,22 +76,26 @@ import Testing
   }
 
   @Test func `Reads Past The End Are Truncated`() {
-    [UInt8]([0x80, 0x80]).withUnsafeBytes { buffer in
-      var input = CodedInput(buffer)
-      #expect(throws: CodingError.truncated) { try input.readRawVarint32() }
-    }
-    [UInt8]([1, 2, 3]).withUnsafeBytes { buffer in
-      var input = CodedInput(buffer)
-      #expect(throws: CodingError.truncated) { try input.readDouble() }
-    }
-    [UInt8]([5, 1, 2]).withUnsafeBytes { buffer in
-      var input = CodedInput(buffer)
-      #expect(throws: CodingError.invalidLength) { try input.readLengthDelimited() }
-    }
-    [UInt8]([1, 1, 2]).withUnsafeBytes { buffer in
-      var input = CodedInput(buffer)
-      #expect(throws: CodingError.invalidLength) { try input.readLengthDelimited(exactly: true) }
-    }
+    [UInt8]([0x80, 0x80])
+      .withUnsafeBytes { buffer in
+        var input = CodedInput(buffer)
+        #expect(throws: CodingError.truncated) { try input.readRawVarint32() }
+      }
+    [UInt8]([1, 2, 3])
+      .withUnsafeBytes { buffer in
+        var input = CodedInput(buffer)
+        #expect(throws: CodingError.truncated) { try input.readDouble() }
+      }
+    [UInt8]([5, 1, 2])
+      .withUnsafeBytes { buffer in
+        var input = CodedInput(buffer)
+        #expect(throws: CodingError.invalidLength) { try input.readLengthDelimited() }
+      }
+    [UInt8]([1, 1, 2])
+      .withUnsafeBytes { buffer in
+        var input = CodedInput(buffer)
+        #expect(throws: CodingError.invalidLength) { try input.readLengthDelimited(exactly: true) }
+      }
   }
 
   @Test func `Writes Past The End Throw Without Writing`() {
@@ -195,9 +199,10 @@ import Testing
     }
     for (key, value) in Self.values {
       let stored = try #require(file.records[StoreKey(key)])
-      try file.value(at: stored).withUnsafeBytes { bytes throws in
-        #expect(try value.matches(bytes), "\(key)")
-      }
+      try file.value(at: stored)
+        .withUnsafeBytes { bytes throws in
+          #expect(try value.matches(bytes), "\(key)")
+        }
     }
   }
 
@@ -261,7 +266,8 @@ import Testing
     let records = file.records
     #expect(Set(records.keys) == [StoreKey("a"), StoreKey("c")])
     #expect(
-      file.value(at: records[StoreKey("a")]!) == (try "third".withEncodedBytes { try $0.encode(expiry: nil) })
+      file.value(at: records[StoreKey("a")]!)
+        == (try "third".withEncodedBytes { try $0.encode(expiry: nil) })
     )
   }
 
@@ -282,14 +288,15 @@ import Testing
       #expect(Set(index.entries(in: damaged).keys) == [StoreKey("a")])
     }
     // Decoding that fails leaves the index as it was.
-    Array(file.data).withUnsafeBytes { data in
-      var index = RecordIndex()
-      #expect(RecordDecoding.decode(data, into: &index, greedy: false))
-      let original = index.entries(in: data)
-      let truncated = UnsafeRawBufferPointer(rebasing: data.dropLast(3))
-      #expect(!RecordDecoding.decode(truncated, into: &index, greedy: false))
-      #expect(index.entries(in: data) == original)
-    }
+    Array(file.data)
+      .withUnsafeBytes { data in
+        var index = RecordIndex()
+        #expect(RecordDecoding.decode(data, into: &index, greedy: false))
+        let original = index.entries(in: data)
+        let truncated = UnsafeRawBufferPointer(rebasing: data.dropLast(3))
+        #expect(!RecordDecoding.decode(truncated, into: &index, greedy: false))
+        #expect(index.entries(in: data) == original)
+      }
   }
 
   // MARK: Support
@@ -315,7 +322,8 @@ import Testing
 
 @Suite struct StorePathTests {
   @Test func `Identifiers With Special Characters Are Named By Their MD5`() throws {
-    for id in ["with/slash", "with:colon", "a*b", "q?", "\"", "<>", "pipe|", "back\\slash", "nul\0"] {
+    for id in ["with/slash", "with:colon", "a*b", "q?", "\"", "<>", "pipe|", "back\\slash", "nul\0"]
+    {
       let relative = StorePaths.relativeDataPath(id: id)
       #expect(relative.isSpecial, "\(id)")
       #expect(relative.path == "specialCharacter/\(StorePaths.md5Hex(id))")
@@ -340,7 +348,9 @@ import Testing
     }
     // The C++ core creates the special character directory for every writable root.
     var isDirectory: ObjCBool = false
-    #expect(FileManager.default.fileExists(atPath: "\(root)/specialCharacter", isDirectory: &isDirectory))
+    #expect(
+      FileManager.default.fileExists(atPath: "\(root)/specialCharacter", isDirectory: &isDirectory)
+    )
     #expect(isDirectory.boolValue)
   }
 
@@ -398,11 +408,12 @@ private struct StoreFile {
   }
 
   var records: [StoreKey: RecordLocation] {
-    Array(self.data).withUnsafeBytes { data in
-      var index = RecordIndex()
-      precondition(RecordDecoding.decode(data, into: &index, greedy: false))
-      return index.entries(in: data)
-    }
+    Array(self.data)
+      .withUnsafeBytes { data in
+        var index = RecordIndex()
+        precondition(RecordDecoding.decode(data, into: &index, greedy: false))
+        return index.entries(in: data)
+      }
   }
 
   func value(at location: RecordLocation) -> [UInt8] {
@@ -448,7 +459,8 @@ private enum TestValue {
     case .float(let value): try EncodedValue.float(value).encode(expiry: nil)
     case .double(let value): try EncodedValue.double(value).encode(expiry: nil)
     case .string(let value): try value.withEncodedBytes { try $0.encode(expiry: nil) }
-    case .bytes(let value): try value.withUnsafeBytes { try EncodedValue.bytes($0).encode(expiry: nil) }
+    case .bytes(let value):
+      try value.withUnsafeBytes { try EncodedValue.bytes($0).encode(expiry: nil) }
     case .strings(let value): try EncodedValue.strings(value).encode(expiry: nil)
     }
   }
@@ -462,7 +474,8 @@ private enum TestValue {
     case .uint64(let value): try ValueDecoding.uint64(bytes) == value
     case .float(let value): try ValueDecoding.float(bytes) == value
     case .double(let value): try ValueDecoding.double(bytes) == value
-    case .string(let value): String(decoding: try ValueDecoding.bytes(bytes), as: UTF8.self) == value
+    case .string(let value):
+      String(decoding: try ValueDecoding.bytes(bytes), as: UTF8.self) == value
     case .bytes(let value): Array(try ValueDecoding.bytes(bytes)) == value
     case .strings(let value): try ValueDecoding.strings(bytes) == value
     }

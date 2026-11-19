@@ -147,7 +147,8 @@ private func registerOpenBenchmarks(_ engine: MMKVConfiguration.Engine) {
     } setup: {
       let directory = temporaryDirectory()
       let store = try openStore(engine: engine, rootDirectory: directory, encryption: encryption) {
-        store, index in
+        store,
+        index in
         store.set(strings[index], forKey: keys[index])
       }
       store.sync()

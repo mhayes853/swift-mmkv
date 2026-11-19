@@ -22,9 +22,10 @@ import Testing
       first.set("changed", forKey: "key")
       // Two reader threads, as upstream starts. Each read takes the shared file lock.
       for _ in 0..<2 {
-        DispatchQueue.global().async(group: readers) {
-          results.record(second.value(forKey: "key", as: String.self))
-        }
+        DispatchQueue.global()
+          .async(group: readers) {
+            results.record(second.value(forKey: "key", as: String.self))
+          }
       }
       // Upstream waits a millisecond; waiting longer only makes a wrong result likelier to show.
       #expect(readers.wait(timeout: .now() + .milliseconds(100)) == .timedOut)

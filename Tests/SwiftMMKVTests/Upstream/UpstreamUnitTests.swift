@@ -126,7 +126,7 @@ import Testing
       store.set(Float.leastNormalMagnitude, forKey: "float_1"),
       store.set(Double.leastNormalMagnitude, forKey: "double_1"),
       store.set("hello", forKey: "string_1"),
-      store.set(vector, forKey: "vector_1"),
+      store.set(vector, forKey: "vector_1")
     ]
     #expect(didSet.allSatisfy { $0 })
 

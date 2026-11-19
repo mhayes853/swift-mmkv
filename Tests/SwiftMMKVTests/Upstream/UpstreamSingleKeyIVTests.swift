@@ -181,7 +181,7 @@ import Testing
       String(repeating: "A", count: 10), String(repeating: "B", count: 10),
       String(repeating: "C", count: 100), String(repeating: "D", count: 300),
       String(repeating: "E", count: 32768), String(repeating: "F", count: 3),
-      String(repeating: "G", count: 300),
+      String(repeating: "G", count: 300)
     ]
 
     for (index, value) in values.enumerated() {
@@ -215,9 +215,10 @@ import Testing
     #expect(first.ciphertext.count >= 20 && second.ciphertext.count >= 20)
     guard first.ciphertext.count >= 20 && second.ciphertext.count >= 20 else { return }
     let sameFraming = (8..<12).allSatisfy { first.ciphertext[$0] == second.ciphertext[$0] }
-    let recoveredValue = (12..<20).allSatisfy {
-      UInt8(ascii: "A") ^ first.ciphertext[$0] ^ second.ciphertext[$0] == UInt8(ascii: "B")
-    }
+    let recoveredValue = (12..<20)
+      .allSatisfy {
+        UInt8(ascii: "A") ^ first.ciphertext[$0] ^ second.ciphertext[$0] == UInt8(ascii: "B")
+      }
     #expect(!sameFraming, "The fixed framing encrypts identically across overwrites")
     #expect(!recoveredValue, "Known plaintext recovers all eight bytes of the replacement")
   }

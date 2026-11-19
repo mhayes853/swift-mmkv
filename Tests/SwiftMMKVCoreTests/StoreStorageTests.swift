@@ -21,7 +21,9 @@ import Testing
   private func `Removal Matches The C++ Core`(files: Files, id: String) throws {
     let swiftRoot = try makeFiles(files, id: id)
     let cxxRoot = try makeFiles(files, id: id)
-    #expect(StoreStorage.remove(id: id, rootDirectory: swiftRoot) == cxxRemove(id: id, root: cxxRoot))
+    #expect(
+      StoreStorage.remove(id: id, rootDirectory: swiftRoot) == cxxRemove(id: id, root: cxxRoot)
+    )
     for root in [swiftRoot, cxxRoot] {
       let dataPath = StorePaths.dataPath(id: id, root: StorePaths.normalizedRoot(root))
       #expect(!FileManager.default.fileExists(atPath: dataPath))

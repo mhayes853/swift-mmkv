@@ -103,9 +103,10 @@ func truncateFile(atPath path: String, toSize size: Int) throws {
 /// Whether `bytes` contains `needle` anywhere.
 func containsBytes(_ bytes: [UInt8], _ needle: [UInt8]) -> Bool {
   guard !needle.isEmpty, needle.count <= bytes.count else { return needle.isEmpty }
-  return (0...(bytes.count - needle.count)).contains { start in
-    bytes[start..<(start + needle.count)].elementsEqual(needle)
-  }
+  return (0...(bytes.count - needle.count))
+    .contains { start in
+      bytes[start..<(start + needle.count)].elementsEqual(needle)
+    }
 }
 
 // MARK: - Metadata
@@ -176,6 +177,7 @@ func crc32(_ bytes: some Sequence<UInt8>) -> UInt32 {
   return crc ^ 0xFFFF_FFFF
 }
 
-private let crc32Table: [UInt32] = (0..<256).map { index in
-  (0..<8).reduce(UInt32(index)) { crc, _ in crc & 1 == 1 ? 0xEDB8_8320 ^ (crc >> 1) : crc >> 1 }
-}
+private let crc32Table: [UInt32] = (0..<256)
+  .map { index in
+    (0..<8).reduce(UInt32(index)) { crc, _ in crc & 1 == 1 ? 0xEDB8_8320 ^ (crc >> 1) : crc >> 1 }
+  }

@@ -62,7 +62,9 @@ import Testing
     #expect(file.truncate(to: pageSize * 2 + 10) == true)
     #expect(file.size == pageSize * 3)
     #expect(file.memory!.load(as: UInt8.self) == 0xab)
-    #expect(UnsafeRawBufferPointer(start: file.memory! + 1, count: file.size - 1).allSatisfy { $0 == 0 })
+    #expect(
+      UnsafeRawBufferPointer(start: file.memory! + 1, count: file.size - 1).allSatisfy { $0 == 0 }
+    )
 
     #expect(file.truncate(to: pageSize) == true)
     #expect(file.size == pageSize)
@@ -107,7 +109,12 @@ import Testing
   @Test func `A Failed Resize Keeps The Old Size And Mapping`() throws {
     let spy = FileSystemSpy()
     let path = temporaryFile()
-    var file = MemoryFile(path: path, isReadOnly: false, isMayflyFD: true, fileSystem: spy.fileSystem)
+    var file = MemoryFile(
+      path: path,
+      isReadOnly: false,
+      isMayflyFD: true,
+      fileSystem: spy.fileSystem
+    )
     file.memory!.storeBytes(of: 0xcd, as: UInt8.self)
 
     spy.failFtruncate = true
