@@ -90,36 +90,25 @@ public struct MMKVValues<Value: MMKVValue & Sendable>: AsyncSequence, Sendable {
   }
 
   public struct AsyncIterator: AsyncIteratorProtocol {
-    private let store: MMKVStore
-    private let key: String
-    private var signals: KeyChangeSignals
+    private var values: KeyValueIterator
 
     fileprivate init(store: MMKVStore, key: String) {
-      self.store = store
-      self.key = key
-      self.signals = KeyChangeSignals(store: store, key: key)
+      self.values = KeyValueIterator(store: store, key: key)
     }
 
     public mutating func next() async -> Value?? {
-      while await self.signals.next() {
-        if let element = self.read() { return element }
-      }
-      return nil
+      await self.values.next(Self.read)
     }
 
     @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
     public mutating func next(isolation actor: isolated (any Actor)?) async -> Value?? {
-      while await self.signals.next(isolation: actor) {
-        if let element = self.read() { return element }
-      }
-      return nil
+      await self.values.next(isolation: actor, Self.read)
     }
 
     /// Reads the value, or returns `nil` if the store is suspended and turned the read away.
-    /// Resuming the store signals a change, which reads the value again.
-    private func read() -> Value?? {
-      let value = self.store.value(forKey: self.key, as: Value.self)
-      return value == nil && self.store.isSuspended ? nil : .some(value)
+    private static func read(from store: MMKVStore, key: String) -> Value?? {
+      let value = store.value(forKey: key, as: Value.self)
+      return value == nil && store.isSuspended ? nil : .some(value)
     }
   }
 }
@@ -149,45 +138,40 @@ public struct MMKVDecodedValues<
   }
 
   public struct AsyncIterator: AsyncIteratorProtocol {
-    private let store: MMKVStore
-    private let key: String
     private let decoder: Decoder
-    private var signals: KeyChangeSignals?
+    private var values: KeyValueIterator
 
     fileprivate init(store: MMKVStore, key: String, decoder: Decoder) {
-      self.store = store
-      self.key = key
       self.decoder = decoder
-      self.signals = KeyChangeSignals(store: store, key: key)
+      self.values = KeyValueIterator(store: store, key: key)
     }
 
     public mutating func next() async throws -> Value?? {
-      while await self.signals?.next() == true {
-        if let element = try self.decodeOrFinish() { return element }
+      let decoder = self.decoder
+      return try await self.values.next { store, key in
+        try Self.decode(from: store, key: key, with: decoder)
       }
-      return nil
     }
 
     @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
     public mutating func next(isolation actor: isolated (any Actor)?) async throws -> Value?? {
-      while await self.signals?.next(isolation: actor) == true {
-        if let element = try self.decodeOrFinish() { return element }
+      let decoder = self.decoder
+      return try await self.values.next(isolation: actor) { store, key in
+        try Self.decode(from: store, key: key, with: decoder)
       }
-      return nil
     }
 
-    /// Decodes the value, ending the sequence if it cannot be decoded.
-    ///
-    /// - Returns: `nil` if the store is suspended and turned the read away. Resuming the store
-    ///   signals a change, which reads the value again.
-    private mutating func decodeOrFinish() throws -> Value?? {
+    /// Decodes the value, or returns `nil` if the store is suspended and turned the read away.
+    /// A value that cannot be decoded is thrown, which ends the sequence.
+    private static func decode(
+      from store: MMKVStore,
+      key: String,
+      with decoder: Decoder
+    ) throws -> Value?? {
       do {
-        return .some(try self.store.decode(Value.self, forKey: self.key, with: self.decoder))
+        return .some(try store.decode(Value.self, forKey: key, with: decoder))
       } catch MMKVError.storeIsSuspended {
         return nil
-      } catch {
-        self.signals = nil
-        throw error
       }
     }
   }
