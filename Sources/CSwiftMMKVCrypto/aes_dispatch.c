@@ -41,15 +41,6 @@ int swiftmmkv_aes_set_encrypt_key(const uint8_t *user_key, int bits, swiftmmkv_a
   return swiftmmkv_aes_portable_set_encrypt_key(user_key, bits, key);
 }
 
-int swiftmmkv_aes_set_decrypt_key(const uint8_t *user_key, int bits, swiftmmkv_aes_key *key) {
-#if defined(SWIFTMMKV_HAS_ARMV8_AES)
-  if (hasHardware()) {
-    return swiftmmkv_aes_armv8_set_decrypt_key(user_key, bits, key);
-  }
-#endif
-  return swiftmmkv_aes_portable_set_decrypt_key(user_key, bits, key);
-}
-
 void swiftmmkv_aes_encrypt(const uint8_t *in, uint8_t *out, const swiftmmkv_aes_key *key) {
 #if defined(SWIFTMMKV_HAS_ARMV8_AES)
   if (hasHardware()) {
@@ -58,14 +49,4 @@ void swiftmmkv_aes_encrypt(const uint8_t *in, uint8_t *out, const swiftmmkv_aes_
   }
 #endif
   swiftmmkv_aes_portable_encrypt(in, out, key);
-}
-
-void swiftmmkv_aes_decrypt(const uint8_t *in, uint8_t *out, const swiftmmkv_aes_key *key) {
-#if defined(SWIFTMMKV_HAS_ARMV8_AES)
-  if (hasHardware()) {
-    swiftmmkv_aes_armv8_decrypt(in, out, key);
-    return;
-  }
-#endif
-  swiftmmkv_aes_portable_decrypt(in, out, key);
 }

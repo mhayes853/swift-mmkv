@@ -69,27 +69,6 @@ import Testing
     }
   }
 
-  @Test(arguments: 0..<2)
-  func `Rolling Back A Decryption Restores The Stream Before It`(vector: Int) {
-    let key = Self.vectors[vector].key
-    var generator = SplitMix64(seed: 2)
-    let message = (0..<120).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
-    var encrypter = CFBStream(key: key, iv: Self.iv)
-    let ciphertext = encrypter.encrypt(message)
-
-    for start in 0..<40 {
-      for length in 1...(ciphertext.count - start) {
-        var stream = CFBStream(key: key, iv: Self.iv)
-        _ = stream.decrypt(Array(ciphertext[..<start]))
-        let before = stream.state
-        let piece = Array(ciphertext[start..<(start + length)])
-        let decrypted = stream.decrypt(piece)
-        stream.rollBack(ciphertext: piece, plaintext: decrypted)
-        #expect(stream.state == before, "start \(start), length \(length)")
-      }
-    }
-  }
-
   @Test func `Rejects Unsupported Key Sizes`() {
     var key = swiftmmkv_aes_key()
     let userKey = [UInt8](repeating: 1, count: 32)
@@ -116,17 +95,6 @@ import Testing
       swiftmmkv_aes_encrypt(block, &encrypted, &key)
       swiftmmkv_aes_portable_encrypt(block, &portableEncrypted, &portableKey)
       #expect(encrypted == portableEncrypted)
-
-      var decryptKey = swiftmmkv_aes_key()
-      var portableDecryptKey = swiftmmkv_aes_key()
-      #expect(swiftmmkv_aes_set_decrypt_key(userKey, bits, &decryptKey) == 0)
-      #expect(swiftmmkv_aes_portable_set_decrypt_key(userKey, bits, &portableDecryptKey) == 0)
-      var decrypted = [UInt8](repeating: 0, count: 16)
-      var portableDecrypted = [UInt8](repeating: 0, count: 16)
-      swiftmmkv_aes_decrypt(encrypted, &decrypted, &decryptKey)
-      swiftmmkv_aes_portable_decrypt(encrypted, &portableDecrypted, &portableDecryptKey)
-      #expect(decrypted == block)
-      #expect(portableDecrypted == block)
     }
   }
 
@@ -176,14 +144,12 @@ import Testing
 /// A CFB-128 stream over the C functions, as MMKV's `AESCrypt` keeps one.
 private struct CFBStream {
   private var key = swiftmmkv_aes_key()
-  private var decryptKey = swiftmmkv_aes_key()
   private var vector: [UInt8]
   private var number: UInt32 = 0
 
   init(key userKey: [UInt8], iv: [UInt8]) {
     let bits = Int32(userKey.count * 8)
     precondition(swiftmmkv_aes_set_encrypt_key(userKey, bits, &self.key) == 0)
-    precondition(swiftmmkv_aes_set_decrypt_key(userKey, bits, &self.decryptKey) == 0)
     self.vector = iv
   }
 
@@ -201,21 +167,6 @@ private struct CFBStream {
     var output = [UInt8](repeating: 0, count: input.count)
     swiftmmkv_aes_cfb128_decrypt(input, &output, input.count, &self.key, &self.vector, &self.number)
     return output
-  }
-
-  mutating func rollBack(ciphertext: [UInt8], plaintext: [UInt8]) {
-    ciphertext.withUnsafeBufferPointer { ciphertext in
-      plaintext.withUnsafeBufferPointer { plaintext in
-        swiftmmkv_aes_cfb128_rollback(
-          ciphertext.baseAddress! + ciphertext.count,
-          plaintext.baseAddress! + plaintext.count,
-          ciphertext.count,
-          &self.decryptKey,
-          &self.vector,
-          &self.number
-        )
-      }
-    }
   }
 }
 

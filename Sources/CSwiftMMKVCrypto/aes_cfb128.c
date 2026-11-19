@@ -9,8 +9,8 @@
 
 /*
  * CFB-128 encryption and decryption, ported to C for swift-mmkv from MMKV v2.4.3
- * (Core/aes/openssl/openssl_cfb128.cpp), and the rollback of a decryption, from MMKV's
- * `Rollback_cfb_decrypt` in Core/aes/AESCrypt.cpp (Tencent, BSD 3-Clause). The word-at-a-time
+ * (Core/aes/openssl/openssl_cfb128.cpp), and MMKV's `secureWipe` from Core/aes/AESCrypt.cpp
+ * (Tencent, BSD 3-Clause). The word-at-a-time
  * loops, which read through unaligned `size_t` pointers, are byte loops here; the results are
  * identical. See README.md.
  */
@@ -88,44 +88,6 @@ void swiftmmkv_aes_cfb128_decrypt(
     }
   }
 
-  *num = n;
-}
-
-void swiftmmkv_aes_cfb128_rollback(
-  const uint8_t *input, const uint8_t *output, size_t len, const swiftmmkv_aes_key *key,
-  uint8_t *ivec, uint32_t *num) {
-  if (len == 0) {
-    return;
-  }
-  uint32_t original = *num;
-  uint32_t n = original;
-
-  while (n && len) {
-    uint8_t c = *(--output);
-    ivec[--n] = *(--input) ^ c;
-    len--;
-  }
-  if (n == 0 && original != 0) {
-    swiftmmkv_aes_decrypt(ivec, ivec, key);
-  }
-  while (len >= 16) {
-    len -= 16;
-    output -= 16;
-    input -= 16;
-    for (; n < 16; ++n) {
-      ivec[n] = input[n] ^ output[n];
-    }
-    n = 0;
-    swiftmmkv_aes_decrypt(ivec, ivec, key);
-  }
-  if (len) {
-    n = 16;
-    do {
-      uint8_t c = *(--output);
-      ivec[--n] = *(--input) ^ c;
-      len--;
-    } while (len);
-  }
   *num = n;
 }
 

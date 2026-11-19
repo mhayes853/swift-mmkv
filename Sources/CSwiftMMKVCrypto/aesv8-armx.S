@@ -196,52 +196,6 @@ Lenc_key_abort:
 	ret
 
 #ifndef __linux__
-.globl    _swiftmmkv_aes_armv8_set_decrypt_key
-
-.align    5
-_swiftmmkv_aes_armv8_set_decrypt_key:
-#else // __linux__
-.globl    swiftmmkv_aes_armv8_set_decrypt_key
-
-.align    5
-swiftmmkv_aes_armv8_set_decrypt_key:
-#endif // __linux__
-    stp    x29,x30,[sp,#-16]!
-    add    x29,sp,#0
-    bl    Lenc_key
-
-    cmp    x0,#0
-    b.ne    Ldec_key_abort
-
-    sub    x2,x2,#240        // restore original x2
-    mov    x4,#-16
-    add    x0,x2,x12,lsl#4    // end of key schedule
-
-    ld1    {v0.4s},[x2]
-    ld1    {v1.4s},[x0]
-    st1    {v0.4s},[x0],x4
-    st1    {v1.4s},[x2],#16
-
-Loop_imc:
-    ld1    {v0.4s},[x2]
-    ld1    {v1.4s},[x0]
-    aesimc    v0.16b,v0.16b
-    aesimc    v1.16b,v1.16b
-    st1    {v0.4s},[x0],x4
-    st1    {v1.4s},[x2],#16
-    cmp    x0,x2
-    b.hi    Loop_imc
-
-    ld1    {v0.4s},[x2]
-    aesimc    v0.16b,v0.16b
-    st1    {v0.4s},[x0]
-
-    eor    x0,x0,x0        // return value
-Ldec_key_abort:
-    ldp    x29,x30,[sp],#16
-    ret
-
-#ifndef __linux__
 .globl	_swiftmmkv_aes_armv8_encrypt
 
 .align	5
@@ -277,42 +231,5 @@ Loop_enc:
 
 	st1	{v2.16b},[x1]
 	ret
-
-#ifndef __linux__
-.globl    _swiftmmkv_aes_armv8_decrypt
-
-.align    5
-_swiftmmkv_aes_armv8_decrypt:
-#else  // __linux__
-.globl    swiftmmkv_aes_armv8_decrypt
-
-.align    5
-swiftmmkv_aes_armv8_decrypt:
-#endif  // __linux__
-
-    ldr    w3,[x2,#240]
-    ld1    {v0.4s},[x2],#16
-    ld1    {v2.16b},[x0]
-    sub    w3,w3,#2
-    ld1    {v1.4s},[x2],#16
-
-Loop_dec:
-    aesd    v2.16b,v0.16b
-    aesimc    v2.16b,v2.16b
-    ld1    {v0.4s},[x2],#16
-    subs    w3,w3,#2
-    aesd    v2.16b,v1.16b
-    aesimc    v2.16b,v2.16b
-    ld1    {v1.4s},[x2],#16
-    b.gt    Loop_dec
-
-    aesd    v2.16b,v0.16b
-    aesimc    v2.16b,v2.16b
-    ld1    {v0.4s},[x2]
-    aesd    v2.16b,v1.16b
-    eor    v2.16b,v2.16b,v0.16b
-
-    st1    {v2.16b},[x1]
-    ret
 
 #endif

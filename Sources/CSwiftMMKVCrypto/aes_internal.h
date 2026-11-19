@@ -26,9 +26,7 @@ typedef uint8_t u8;
 #if defined(__aarch64__)
 #  define SWIFTMMKV_HAS_ARMV8_AES 1
 int swiftmmkv_aes_armv8_set_encrypt_key(const uint8_t *user_key, int bits, void *key);
-int swiftmmkv_aes_armv8_set_decrypt_key(const uint8_t *user_key, int bits, void *key);
 void swiftmmkv_aes_armv8_encrypt(const uint8_t *in, uint8_t *out, const void *key);
-void swiftmmkv_aes_armv8_decrypt(const uint8_t *in, uint8_t *out, const void *key);
 #endif
 
 #endif

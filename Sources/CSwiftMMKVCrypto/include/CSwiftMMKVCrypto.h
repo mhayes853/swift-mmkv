@@ -29,16 +29,8 @@ typedef struct swiftmmkv_aes_key {
 int swiftmmkv_aes_set_encrypt_key(
   const uint8_t *_Nonnull user_key, int bits, swiftmmkv_aes_key *_Nonnull key);
 
-/// Expands `user_key` for decryption. Returns as ``swiftmmkv_aes_set_encrypt_key``.
-int swiftmmkv_aes_set_decrypt_key(
-  const uint8_t *_Nonnull user_key, int bits, swiftmmkv_aes_key *_Nonnull key);
-
 /// Encrypts one 16-byte block. `in` and `out` may be the same.
 void swiftmmkv_aes_encrypt(
-  const uint8_t *_Nonnull in, uint8_t *_Nonnull out, const swiftmmkv_aes_key *_Nonnull key);
-
-/// Decrypts one 16-byte block with a key from ``swiftmmkv_aes_set_decrypt_key``.
-void swiftmmkv_aes_decrypt(
   const uint8_t *_Nonnull in, uint8_t *_Nonnull out, const swiftmmkv_aes_key *_Nonnull key);
 
 /// Whether the functions above use the ARMv8 AES instructions rather than the portable C
@@ -49,11 +41,7 @@ bool swiftmmkv_aes_uses_hardware(void);
 
 int swiftmmkv_aes_portable_set_encrypt_key(
   const uint8_t *_Nonnull user_key, int bits, swiftmmkv_aes_key *_Nonnull key);
-int swiftmmkv_aes_portable_set_decrypt_key(
-  const uint8_t *_Nonnull user_key, int bits, swiftmmkv_aes_key *_Nonnull key);
 void swiftmmkv_aes_portable_encrypt(
-  const uint8_t *_Nonnull in, uint8_t *_Nonnull out, const swiftmmkv_aes_key *_Nonnull key);
-void swiftmmkv_aes_portable_decrypt(
   const uint8_t *_Nonnull in, uint8_t *_Nonnull out, const swiftmmkv_aes_key *_Nonnull key);
 
 /// Encrypts `length` bytes in CFB-128 mode, continuing the stream described by `ivec` and `num`.
@@ -69,17 +57,6 @@ void swiftmmkv_aes_cfb128_encrypt(
 void swiftmmkv_aes_cfb128_decrypt(
   const uint8_t *_Nullable in, uint8_t *_Nullable out, size_t length,
   const swiftmmkv_aes_key *_Nonnull key, uint8_t *_Nonnull ivec, uint32_t *_Nonnull num);
-
-/// Rewinds a CFB-128 decryption stream by the `length` bytes it last decrypted, so that `ivec`
-/// and `num` describe the stream as it was before them.
-///
-/// `ciphertext_end` and `plaintext_end` point just past the bytes that were decrypted, and
-/// `decrypt_key` comes from ``swiftmmkv_aes_set_decrypt_key``. This is MMKV's
-/// `Rollback_cfb_decrypt` (in `AESCrypt.cpp`), which it uses to remember where a value's
-/// ciphertext starts so the value can be decrypted again later.
-void swiftmmkv_aes_cfb128_rollback(
-  const uint8_t *_Nonnull ciphertext_end, const uint8_t *_Nonnull plaintext_end, size_t length,
-  const swiftmmkv_aes_key *_Nonnull decrypt_key, uint8_t *_Nonnull ivec, uint32_t *_Nonnull num);
 
 /// Overwrites `length` bytes at `pointer` with zeros in a way the compiler cannot remove, for
 /// wiping keys. This is MMKV's `secureWipe` (in `AESCrypt.cpp`).
