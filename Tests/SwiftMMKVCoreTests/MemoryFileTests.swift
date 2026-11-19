@@ -236,14 +236,17 @@ import Testing
     #expect(lock.withLock { $0 } == 2)
   }
 
-  @Test func `Stops The Process When Reached Again While In Use`() async {
-    await #expect(processExitsWith: .failure) {
-      let lock = StoreLock(0)
-      lock.withLock { _ in
-        lock.withLock { $0 += 1 }
+  // Exit tests run only where a test can start another process.
+  #if os(macOS) || os(Linux) || os(Windows)
+    @Test func `Stops The Process When Reached Again While In Use`() async {
+      await #expect(processExitsWith: .failure) {
+        let lock = StoreLock(0)
+        lock.withLock { _ in
+          lock.withLock { $0 += 1 }
+        }
       }
     }
-  }
+  #endif
 }
 
 // MARK: - Support
