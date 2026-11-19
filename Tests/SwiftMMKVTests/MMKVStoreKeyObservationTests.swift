@@ -155,7 +155,7 @@ import Testing
 
   @Test func `Decodes Values With A Custom Decoder`() async throws {
     let store = try makeStore()
-    var values = store.values(forKey: "count", as: Int.self, with: IntegerTextDecoder())
+    var values = store.values(forKey: "count", as: Int.self, with: DescriptionCoder())
       .makeAsyncIterator()
     #expect(try await values.next() == .some(nil))
 
@@ -166,22 +166,12 @@ import Testing
   @Test func `A Value That Cannot Be Decoded Is Thrown And Ends The Sequence`() async throws {
     let store = try makeStore()
     store.set("not a number", forKey: "count")
-    var values = store.values(forKey: "count", as: Int.self, with: IntegerTextDecoder())
+    var values = store.values(forKey: "count", as: Int.self, with: DescriptionCoder())
       .makeAsyncIterator()
 
-    await #expect(throws: IntegerTextDecoder.NotAnInteger.self) { try await values.next() }
+    await #expect(throws: DescriptionCoder.Failure.self) { try await values.next() }
 
     store.set("42", forKey: "count")
     #expect(try await values.next() == nil)
-  }
-}
-
-/// Decodes an integer from its decimal text.
-private struct IntegerTextDecoder: MMKVTopLevelDecoder {
-  struct NotAnInteger: Error {}
-
-  func decode<T: Decodable>(_ type: T.Type, from input: String) throws -> T {
-    guard let integer = Int(input), let value = integer as? T else { throw NotAnInteger() }
-    return value
   }
 }

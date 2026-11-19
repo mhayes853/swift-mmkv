@@ -5,9 +5,9 @@ import Testing
 @Suite(.requires(.store, .encryption)) struct MMKVStoreEncryptionTests {
   private static let secret = "a very recognisable plaintext value"
 
-  private func fileContains(_ text: String, rootDirectory: String, id: String) throws -> Bool {
+  private func fileContainsSecret(rootDirectory: String, id: String) throws -> Bool {
     let contents = try Data(contentsOf: URL(fileURLWithPath: "\(rootDirectory)/\(id)"))
-    return contents.range(of: Data(text.utf8)) != nil
+    return contents.range(of: Data(Self.secret.utf8)) != nil
   }
 
   @Test(arguments: [
@@ -27,7 +27,7 @@ import Testing
 
     #expect(store.value(forKey: "key", as: String.self) == Self.secret)
     #expect(store.value(forKey: "number", as: Double.self) == 42)
-    #expect(try !self.fileContains(Self.secret, rootDirectory: rootDirectory, id: "secret"))
+    #expect(try !self.fileContainsSecret(rootDirectory: rootDirectory, id: "secret"))
   }
 
   @Test func `A Plain Store Has Plaintext On Disk`() throws {
@@ -37,7 +37,7 @@ import Testing
     store.set(Self.secret, forKey: "key")
     store.sync()
 
-    #expect(try self.fileContains(Self.secret, rootDirectory: rootDirectory, id: "plain"))
+    #expect(try self.fileContainsSecret(rootDirectory: rootDirectory, id: "plain"))
   }
 
   @Test func `Rekeying Encrypts Decrypts And Updates The Configuration`() throws {
@@ -48,13 +48,13 @@ import Testing
     try store.rekey(.aes256(key: "a new key"))
     store.sync()
     #expect(store.value(forKey: "key", as: String.self) == Self.secret)
-    #expect(try !self.fileContains(Self.secret, rootDirectory: rootDirectory, id: "rekey"))
+    #expect(try !self.fileContainsSecret(rootDirectory: rootDirectory, id: "rekey"))
     #expect(store.configuration.encryption == .aes256(key: "a new key"))
 
     try store.rekey(nil)
     store.sync()
     #expect(store.value(forKey: "key", as: String.self) == Self.secret)
-    #expect(try self.fileContains(Self.secret, rootDirectory: rootDirectory, id: "rekey"))
+    #expect(try self.fileContainsSecret(rootDirectory: rootDirectory, id: "rekey"))
     #expect(store.configuration.encryption == nil)
   }
 

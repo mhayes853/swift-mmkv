@@ -1,4 +1,3 @@
-import Foundation
 @_spi(Engines) import SwiftMMKV
 import Testing
 
@@ -22,12 +21,12 @@ import Testing
     var model = [String: TestValue]()
 
     for step in 0..<250 {
-      let operation = Operation.random(using: &generator, configuration: configuration)
+      let operation = Operation.random(using: &generator)
       let cxx = operation.apply(to: pair.cxx)
       let swift = operation.apply(to: pair.swift)
       let context = "seed \(seed), step \(step), \(configuration), \(operation)"
       #expect(cxx == swift, "results differ: \(context)")
-      operation.apply(to: &model, result: cxx, configuration: configuration)
+      operation.apply(to: &model, result: cxx)
 
       try expectContents(of: pair.cxx, match: model, context + " (C++)")
       try expectContents(of: pair.swift, match: model, context + " (Swift)")
@@ -49,7 +48,6 @@ import Testing
   ) throws {
     let reader: MMKVConfiguration.Engine = writer == .cxx ? .swift : .cxx
     var generator = SplitMix64(seed: writer == .cxx ? 100 : 200)
-    let configuration = RandomConfiguration(withoutLimits: ())
     let directory = temporaryRootDirectory()
     let store = try makeStore(
       id: "store",
@@ -59,19 +57,14 @@ import Testing
     )
     var model = [String: TestValue]()
     for _ in 0..<400 {
-      let operation = Operation.random(using: &generator, configuration: configuration)
+      let operation = Operation.random(using: &generator)
       let result = operation.apply(to: store)
-      operation.apply(to: &model, result: result, configuration: configuration)
+      operation.apply(to: &model, result: result)
     }
     store.sync()
 
     // A copy under another identifier gets an instance of its own.
-    for suffix in ["", ".crc"] {
-      try FileManager.default.copyItem(
-        atPath: "\(directory)/store\(suffix)",
-        toPath: "\(directory)/copy\(suffix)"
-      )
-    }
+    try copyStoreFiles(id: "store", to: "copy", in: directory)
     let copy = try makeStore(
       id: "copy",
       rootDirectory: directory,
@@ -87,12 +80,7 @@ import Testing
     model["k1"] = .string(String(repeating: "large", count: 100))
     try expectContents(of: copy, match: model, "\(reader) writing after \(writer)")
     copy.sync()
-    for suffix in ["", ".crc"] {
-      try FileManager.default.copyItem(
-        atPath: "\(directory)/copy\(suffix)",
-        toPath: "\(directory)/back\(suffix)"
-      )
-    }
+    try copyStoreFiles(id: "copy", to: "back", in: directory)
     let back = try makeStore(
       id: "back",
       rootDirectory: directory,
@@ -137,12 +125,7 @@ import Testing
 
     for reader in [MMKVConfiguration.Engine.cxx, .swift] {
       let id = "copy-\(reader)"
-      for suffix in ["", ".crc"] {
-        try FileManager.default.copyItem(
-          atPath: "\(directory)/store\(suffix)",
-          toPath: "\(directory)/\(id)\(suffix)"
-        )
-      }
+      try copyStoreFiles(id: "store", to: id, in: directory)
       let copy = try makeStore(
         id: id,
         rootDirectory: directory,
@@ -158,13 +141,12 @@ import Testing
   func `Each Core Reads What The Other Re-Encrypted`(writer: MMKVConfiguration.Engine) throws {
     let reader: MMKVConfiguration.Engine = writer == .cxx ? .swift : .cxx
     var generator = SplitMix64(seed: writer == .cxx ? 300 : 400)
-    let configuration = RandomConfiguration(withoutLimits: ())
     let directory = temporaryRootDirectory()
     let store = try makeStore(id: "store", rootDirectory: directory, engine: writer)
     var model = [String: TestValue]()
     for _ in 0..<200 {
-      let operation = Operation.random(using: &generator, configuration: configuration)
-      operation.apply(to: &model, result: operation.apply(to: store), configuration: configuration)
+      let operation = Operation.random(using: &generator)
+      operation.apply(to: &model, result: operation.apply(to: store))
     }
     let transitions: [MMKVConfiguration.Encryption?] = [
       .aes128(key: "first"), .aes256(key: "second key, longer"), .aes256(key: "third"), nil,
@@ -177,12 +159,7 @@ import Testing
       model["k2"] = .string("written after rekey \(index)")
       store.sync()
       let id = "reader-\(index)"
-      for suffix in ["", ".crc"] {
-        try FileManager.default.copyItem(
-          atPath: "\(directory)/store\(suffix)",
-          toPath: "\(directory)/\(id)\(suffix)"
-        )
-      }
+      try copyStoreFiles(id: "store", to: id, in: directory)
       let copy = try makeStore(
         id: id,
         rootDirectory: directory,
@@ -207,7 +184,6 @@ import Testing
     encryption: MMKVConfiguration.Encryption?
   ) throws {
     var generator = SplitMix64(seed: UInt64(1_000 + seed))
-    let configuration = RandomConfiguration(withoutLimits: ())
     let directory = temporaryRootDirectory()
     let id = "shared-\(seed)"
     let cxx = try makeStore(
@@ -227,10 +203,10 @@ import Testing
     var model = [String: TestValue]()
 
     for step in 0..<300 {
-      let operation = Operation.random(using: &generator, configuration: configuration)
+      let operation = Operation.random(using: &generator)
       let writer = Bool.random(using: &generator) ? cxx : swift
       let result = operation.apply(to: writer)
-      operation.apply(to: &model, result: result, configuration: configuration)
+      operation.apply(to: &model, result: result)
       let context =
         "seed \(seed), step \(step), \(operation) through \(writer === cxx ? "C++" : "Swift")"
       try expectContents(of: cxx, match: model, context + ", read by C++")
@@ -343,12 +319,6 @@ private struct RandomConfiguration: CustomStringConvertible {
     self.expectedCapacity = [0, 0, 50_000][Int.random(in: 0..<3, using: &generator)]
   }
 
-  init(withoutLimits: Void) {
-    self.compareBeforeSet = false
-    self.itemSizeLimit = nil
-    self.expectedCapacity = 0
-  }
-
   var description: String {
     "compareBeforeSet \(self.compareBeforeSet), itemSizeLimit \(self.itemSizeLimit.map(String.init) ?? "none"), expectedCapacity \(self.expectedCapacity)"
   }
@@ -419,27 +389,6 @@ private enum TestValue: Equatable, CustomStringConvertible {
     }
   }
 
-  /// The size of the record MMKV writes, for the item size limit.
-  func recordSize(forKey key: String) -> Int {
-    let keySize = varintSize(key.utf8.count) + key.utf8.count
-    let valueSize: Int
-    switch self {
-    case .bool: valueSize = 1
-    case .int32(let value): valueSize = value < 0 ? 10 : varintSize(Int(value))
-    case .uint32(let value): valueSize = varintSize(Int(value))
-    case .int64(let value): valueSize = varintSize(UInt64(bitPattern: value))
-    case .uint64(let value): valueSize = varintSize(value)
-    case .float: valueSize = 4
-    case .double: valueSize = 8
-    case .string(let value): valueSize = varintSize(value.utf8.count) + value.utf8.count
-    case .bytes(let value): valueSize = varintSize(value.count) + value.count
-    case .strings(let value):
-      let items = value.reduce(0) { $0 + varintSize($1.utf8.count) + $1.utf8.count }
-      valueSize = varintSize(items) + items
-    }
-    return keySize + varintSize(valueSize) + valueSize
-  }
-
   var description: String {
     switch self {
     case .bool(let value): "bool(\(value))"
@@ -456,20 +405,6 @@ private enum TestValue: Equatable, CustomStringConvertible {
   }
 }
 
-private func varintSize(_ value: Int) -> Int {
-  varintSize(UInt64(value))
-}
-
-private func varintSize(_ value: UInt64) -> Int {
-  var size = 1
-  var remaining = value >> 7
-  while remaining != 0 {
-    size += 1
-    remaining >>= 7
-  }
-  return size
-}
-
 private enum Operation: CustomStringConvertible {
   case set(String, TestValue)
   case remove(String)
@@ -479,10 +414,7 @@ private enum Operation: CustomStringConvertible {
 
   static let keys = (0..<16).map { "k\($0)" } + [String(repeating: "long-key-", count: 40)]
 
-  static func random(
-    using generator: inout SplitMix64,
-    configuration: RandomConfiguration
-  ) -> Operation {
+  static func random(using generator: inout SplitMix64) -> Operation {
     func key() -> String { Self.keys.randomElement(using: &generator)! }
     switch Int.random(in: 0..<100, using: &generator) {
     case 0..<70: return .set(key(), .random(using: &generator))
@@ -497,32 +429,17 @@ private enum Operation: CustomStringConvertible {
   /// Applies the operation, returning what the store reported.
   func apply(to store: MMKVStore) -> Bool? {
     switch self {
-    case .set(let key, let value): value.set(in: store, forKey: key)
-    case .remove(let key): store.removeValue(forKey: key)
-    case .removeMany(let keys):
-      {
-        store.removeValues(forKeys: keys)
-        return nil
-      }()
-    case .removeAll(let keepingCapacity):
-      {
-        store.removeAll(keepingCapacity: keepingCapacity)
-        return nil
-      }()
-    case .trim:
-      {
-        store.trim()
-        return nil
-      }()
+    case .set(let key, let value): return value.set(in: store, forKey: key)
+    case .remove(let key): return store.removeValue(forKey: key)
+    case .removeMany(let keys): store.removeValues(forKeys: keys)
+    case .removeAll(let keepingCapacity): store.removeAll(keepingCapacity: keepingCapacity)
+    case .trim: store.trim()
     }
+    return nil
   }
 
   /// Applies the operation to the model of what the store holds.
-  func apply(
-    to model: inout [String: TestValue],
-    result: Bool?,
-    configuration: RandomConfiguration
-  ) {
+  func apply(to model: inout [String: TestValue], result: Bool?) {
     switch self {
     case .set(let key, let value):
       if result == true {
@@ -559,16 +476,14 @@ private struct StorePair {
     self.cxxDirectory = temporaryRootDirectory()
     self.swiftDirectory = temporaryRootDirectory()
     func open(_ engine: MMKVConfiguration.Engine, _ directory: String) throws -> MMKVStore {
-      var storeConfiguration = MMKVConfiguration(
+      try makeStore(
         id: "store",
-        directory: MMKVDirectory(path: directory),
-        mode: .singleProcess,
+        rootDirectory: directory,
         expectedCapacity: configuration.expectedCapacity,
         compareBeforeSet: configuration.compareBeforeSet,
-        itemSizeLimit: configuration.itemSizeLimit
+        itemSizeLimit: configuration.itemSizeLimit,
+        engine: engine
       )
-      storeConfiguration.engine = engine
-      return try MMKVStore(storeConfiguration)
     }
     self.cxx = try open(.cxx, self.cxxDirectory)
     self.swift = try open(.swift, self.swiftDirectory)
@@ -603,8 +518,8 @@ private struct NormalizedStoreFiles: Equatable {
   var metadata: [UInt8]
 
   init(directory: String) throws {
-    self.data = Array(try Data(contentsOf: URL(fileURLWithPath: "\(directory)/store")))
-    self.metadata = Array(try Data(contentsOf: URL(fileURLWithPath: "\(directory)/store.crc")))
+    self.data = try readFile(atPath: "\(directory)/store")
+    self.metadata = try readFile(atPath: "\(directory)/store.crc")
     if self.data.count >= 8 {
       self.data.replaceSubrange(4..<8, with: [0, 0, 0, 0])
     }
@@ -629,22 +544,5 @@ private struct NormalizedStoreFiles: Equatable {
     ]
     .filter { !$0.isEmpty }
     .joined(separator: "\n")
-  }
-}
-
-/// A small seeded generator, so that failures reproduce.
-private struct SplitMix64: RandomNumberGenerator {
-  private var state: UInt64
-
-  init(seed: UInt64) {
-    self.state = seed
-  }
-
-  mutating func next() -> UInt64 {
-    self.state &+= 0x9E37_79B9_7F4A_7C15
-    var z = self.state
-    z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
-    z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
-    return z ^ (z >> 31)
   }
 }

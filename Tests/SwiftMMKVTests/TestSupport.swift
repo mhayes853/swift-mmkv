@@ -60,7 +60,7 @@ extension Trait where Self == ConditionTrait {
 ///
 /// MMKV keeps every store open for the rest of the process, so the directory is left behind
 /// for the system to clean up rather than removed from under a live memory map.
-func temporaryRootDirectory(function: String = #function) -> String {
+func temporaryRootDirectory() -> String {
   let directory = FileManager.default.temporaryDirectory
     .appendingPathComponent("swift-mmkv-tests")
     .appendingPathComponent(UUID().uuidString)
@@ -120,6 +120,18 @@ func makeLinkedStores(
   return (first, try makeStore(id: "link-\(suffix)", rootDirectory: rootDirectory, mode: mode))
 }
 
+/// Copies the two files of the store `id` in `rootDirectory` to `newID`. MMKV keeps one instance
+/// per identifier, so opening the copy gives an instance of its own over the store's contents as
+/// they are now.
+func copyStoreFiles(id: String, to newID: String, in rootDirectory: String) throws {
+  for suffix in ["", ".crc"] {
+    try FileManager.default.copyItem(
+      atPath: "\(rootDirectory)/\(id)\(suffix)",
+      toPath: "\(rootDirectory)/\(newID)\(suffix)"
+    )
+  }
+}
+
 /// Creates the two files of a store at `path` without opening that store in this process, by
 /// copying those of a store that is opened elsewhere.
 func makeUnopenedStoreFiles(at path: String) throws {
@@ -139,20 +151,9 @@ func makeUnopenedStoreFiles(at path: String) throws {
 }
 
 /// Collects the changes a store reports.
-final class ChangeRecorder: Sendable {
-  private let changes = NSLock()
-  nonisolated(unsafe) private var recorded = [MMKVStore.Change]()
+typealias ChangeRecorder = ValueRecorder<MMKVStore.Change>
 
-  var all: [MMKVStore.Change] {
-    self.changes.withLock { self.recorded }
-  }
-
-  func record(_ change: MMKVStore.Change) {
-    self.changes.withLock { self.recorded.append(change) }
-  }
-}
-
-/// Collects the values a per-key subscription delivers.
+/// Collects the values a subscription delivers.
 final class ValueRecorder<Value: Sendable>: Sendable {
   private let values = NSLock()
   nonisolated(unsafe) private var recorded = [Value]()
@@ -163,5 +164,55 @@ final class ValueRecorder<Value: Sendable>: Sendable {
 
   func record(_ value: Value) {
     self.values.withLock { self.recorded.append(value) }
+  }
+}
+
+// MARK: - Files
+
+func readFile(atPath path: String) throws -> [UInt8] {
+  try Array(Data(contentsOf: URL(fileURLWithPath: path)))
+}
+
+func sizeOfFile(atPath path: String) throws -> Int {
+  try #require(FileManager.default.attributesOfItem(atPath: path)[.size] as? Int)
+}
+
+// MARK: - Coding and randomness
+
+/// Encodes a value as its description and decodes it back, to stand in for a coder this package
+/// knows nothing about.
+struct DescriptionCoder: MMKVTopLevelEncoder, MMKVTopLevelDecoder, Sendable {
+  struct Failure: Error, Equatable {}
+
+  func encode<T: Encodable>(_ value: T) throws -> String {
+    guard let value = value as? any LosslessStringConvertible else { throw Failure() }
+    return value.description
+  }
+
+  func decode<T: Decodable>(_ type: T.Type, from input: String) throws -> T {
+    guard
+      let type = type as? any LosslessStringConvertible.Type,
+      let value = type.init(input) as? T
+    else {
+      throw Failure()
+    }
+    return value
+  }
+}
+
+/// A small seeded generator, so that failures reproduce.
+struct SplitMix64: RandomNumberGenerator {
+  private var state: UInt64
+
+  init(seed: UInt64) {
+    self.state = seed
+  }
+
+  mutating func next() -> UInt64 {
+    self.state &+= 0x9E37_79B9_7F4A_7C15
+    var z = self.state
+    z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+    z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+    return z ^ (z >> 31)
   }
 }

@@ -565,17 +565,3 @@ import Testing
     #expect(store.value(forKey: "ordinary", as: String.self) == "intact")
   }
 }
-
-/// How long to wait for a value written to expire in one second.
-///
-/// MMKV stores an expiry date in whole seconds, `time(nullptr) + duration`, and treats a value as
-/// expired once the current second reaches it. A one-second value therefore expires somewhere
-/// between an instant and one second after it is written, and a little over a second is always
-/// enough.
-let oneSecondExpiry = Duration.milliseconds(1100)
-
-/// Enables expiration on `store` the only way the package can: with an expiring write.
-func enableExpiration(on store: MMKVStore) throws {
-  #expect(store.set(true, forKey: "enable-expiration", expiringIn: .seconds(3600)))
-  #expect(store.removeValue(forKey: "enable-expiration"))
-}

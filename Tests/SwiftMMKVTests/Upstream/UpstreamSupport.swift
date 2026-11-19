@@ -12,7 +12,20 @@ let pageSize = Int(getpagesize())
 /// The key upstream reads when it wants one with no value.
 let keyNotExist = "KeyNotExist"
 
-/// Whether the tests run against the vendored C++ core, for known issues that only it has.
+/// How long to wait for a value written to expire in one second.
+///
+/// MMKV stores an expiry date in whole seconds, `time(nullptr) + duration`, and treats a value as
+/// expired once the current second reaches it. A one-second value therefore expires somewhere
+/// between an instant and one second after it is written, and a little over a second is always
+/// enough.
+let oneSecondExpiry = Duration.milliseconds(1100)
+
+/// Enables expiration on `store` the only way the package can: with an expiring write.
+func enableExpiration(on store: MMKVStore) throws {
+  #expect(store.set(true, forKey: "enable-expiration", expiringIn: .seconds(3600)))
+  #expect(store.removeValue(forKey: "enable-expiration"))
+}
+
 // MARK: - Files
 
 /// A store's pair of files: the data file `<root>/<id>` and the metadata file `<root>/<id>.crc`.
@@ -73,19 +86,8 @@ func copyFiles(of store: MMKVStore, in rootDirectory: String, to newID: String) 
   -> StoreFiles
 {
   store.sync()
-  let source = StoreFiles(id: store.id, rootDirectory: rootDirectory)
-  let copy = StoreFiles(id: newID, rootDirectory: rootDirectory)
-  try FileManager.default.copyItem(atPath: source.dataPath, toPath: copy.dataPath)
-  try FileManager.default.copyItem(atPath: source.metadataPath, toPath: copy.metadataPath)
-  return copy
-}
-
-func readFile(atPath path: String) throws -> [UInt8] {
-  try Array(Data(contentsOf: URL(fileURLWithPath: path)))
-}
-
-func sizeOfFile(atPath path: String) throws -> Int {
-  try #require(FileManager.default.attributesOfItem(atPath: path)[.size] as? Int)
+  try copyStoreFiles(id: store.id, to: newID, in: rootDirectory)
+  return StoreFiles(id: newID, rootDirectory: rootDirectory)
 }
 
 /// Overwrites four bytes of a file, little-endian, without changing anything else.

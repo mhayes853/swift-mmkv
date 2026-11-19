@@ -71,7 +71,7 @@ import Testing
     let rootDirectory = temporaryRootDirectory()
     let store = try makeStore(rootDirectory: rootDirectory)
     let path = "\(rootDirectory)/\(MMKVConfiguration.defaultID)"
-    #expect(store.byteSize == (try fileSize(atPath: path)))
+    #expect(store.byteSize == (try sizeOfFile(atPath: path)))
     #expect(store.byteSize > 0)
     let emptySize = store.byteSize
     let emptyUsedSize = store.usedByteSize
@@ -79,7 +79,7 @@ import Testing
     for index in 0..<64 {
       store.set(String(repeating: "x", count: 16_384), forKey: "blob\(index)")
     }
-    #expect(store.byteSize == (try fileSize(atPath: path)))
+    #expect(store.byteSize == (try sizeOfFile(atPath: path)))
     #expect(store.byteSize > emptySize)
     #expect(store.usedByteSize >= 64 * 16_384)
     #expect(store.usedByteSize <= store.byteSize)
@@ -97,15 +97,15 @@ import Testing
       store.set(String(repeating: "x", count: 16_384), forKey: "blob\(index)")
     }
     store.set("kept", forKey: "kept")
-    let grownSize = try fileSize(atPath: path)
+    let grownSize = try sizeOfFile(atPath: path)
 
     store.removeAll(keepingCapacity: true) { $0.hasPrefix("blob") }
-    #expect(try fileSize(atPath: path) == grownSize)
+    #expect(try sizeOfFile(atPath: path) == grownSize)
 
     store.set(String(repeating: "x", count: 16_384), forKey: "blob")
     store.removeAll { $0.hasPrefix("blob") }
 
-    #expect(try fileSize(atPath: path) < grownSize)
+    #expect(try sizeOfFile(atPath: path) < grownSize)
     #expect(store.keys == ["kept"])
   }
 
@@ -217,8 +217,4 @@ import Testing
 
     #expect(result == 1)
   }
-}
-
-private func fileSize(atPath path: String) throws -> Int {
-  try #require(FileManager.default.attributesOfItem(atPath: path)[.size] as? Int)
 }
