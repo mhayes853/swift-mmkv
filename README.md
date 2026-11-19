@@ -155,6 +155,25 @@ extension MMKVStore.DefaultedCodedKey where Value == Settings {
 }
 ```
 
+Every kind of key can be followed with `subscribe(for:)` and `values(for:)`. A defaulted key
+delivers its default in place of a missing value, and a coded key's listener is given a `Result`,
+since it cannot throw:
+
+```swift
+for await volume in store.values(for: .volume) {  // Double, from the DefaultedKey
+  player.volume = volume
+}
+
+let subscription = store.subscribe(for: .settings) { result in
+  switch result {
+  case .success(let settings): apply(settings)
+  case .failure(let error): report(error)
+  }
+}
+```
+
+See [Change listeners](#change-listeners) for when these run.
+
 Two things to know about coded keys that are given their coders:
 
 - The coders must be classes, as `JSONEncoder`, `JSONDecoder` and the property list coders are.
@@ -280,6 +299,18 @@ for await volume in store.values(forKey: "volume", as: Double.self) {
 
 for try await settings in store.values(forKey: "settings", as: Settings.self, with: JSONDecoder()) {
   apply(settings ?? Settings())
+}
+```
+
+A listener cannot throw, so one that decodes is given a `Result`. It carries on after a failure,
+whereas the sequence ends with the error:
+
+```swift
+let subscription = store.subscribe(forKey: "settings", as: Settings.self, with: JSONDecoder()) {
+  switch $0 {
+  case .success(let settings): apply(settings ?? Settings())
+  case .failure(let error): report(error)
+  }
 }
 ```
 

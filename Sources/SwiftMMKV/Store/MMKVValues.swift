@@ -79,6 +79,25 @@ extension MMKVStore {
 // MARK: - Typed Keys
 
 extension MMKVStore {
+  /// The values of `key` over time, starting with the value the store holds when iteration
+  /// begins.
+  ///
+  /// ```swift
+  /// for await volume in store.values(for: .volume) {
+  ///   player.volume = volume
+  /// }
+  /// ```
+  ///
+  /// An element is the key's default whenever the store has no value for the key. In every
+  /// other respect this behaves like ``values(forKey:as:)``, including producing repeated
+  /// values.
+  public func values<V>(for key: DefaultedKey<V>) -> MMKVValues<V> {
+    MMKVValues(store: self, key: key.key.name) { store in
+      let value = store.value(for: key.key)
+      return value == nil && store.isSuspended ? nil : value ?? key.defaultValue
+    }
+  }
+
   /// The decoded values of `key` over time, starting with the value the store holds when
   /// iteration begins.
   ///
@@ -93,6 +112,25 @@ extension MMKVStore {
   /// this behaves like ``values(forKey:as:)``, including producing repeated values.
   public func values<V>(for key: CodedKey<V>) -> MMKVThrowingValues<V?> {
     MMKVThrowingValues(store: self, key: key.name) { store in
+      try store.value(for: key)
+    }
+  }
+
+  /// The decoded values of `key` over time, starting with the value the store holds when
+  /// iteration begins.
+  ///
+  /// ```swift
+  /// for try await settings in store.values(for: .settings) {
+  ///   apply(settings)
+  /// }
+  /// ```
+  ///
+  /// An element is the key's default whenever the store has no value for the key. A value
+  /// that the key's decoder cannot read is thrown from the iteration, which ends the sequence.
+  /// In every other respect this behaves like ``values(forKey:as:)``, including producing
+  /// repeated values.
+  public func values<V>(for key: DefaultedCodedKey<V>) -> MMKVThrowingValues<V> {
+    MMKVThrowingValues(store: self, key: key.key.name) { store in
       try store.value(for: key)
     }
   }

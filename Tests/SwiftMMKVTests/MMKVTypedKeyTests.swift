@@ -171,4 +171,26 @@ extension MMKVStore.DefaultedKey where Value == String {
     #expect(recorder.all == ["system", "dark", "system"])
     subscription.cancel()
   }
+
+  @Test func `Produces The Default In Place Of A Missing Value Over Time`() async throws {
+    let store = try makeStore()
+    var iterator = store.values(for: .theme).makeAsyncIterator()
+
+    #expect(await iterator.next() == "system")
+    store[.theme] = "dark"
+    #expect(await iterator.next() == "dark")
+    store.removeValue(for: .theme)
+    #expect(await iterator.next() == "system")
+  }
+
+  @Test func `Produces Nothing While The Store Is Suspended`() async throws {
+    let store = try makeStore(mode: .multiProcess)
+    store[.theme] = "dark"
+    store.suspend()
+    var iterator = store.values(for: .theme).makeAsyncIterator()
+
+    store.resume()
+
+    #expect(await iterator.next() == "dark")
+  }
 }

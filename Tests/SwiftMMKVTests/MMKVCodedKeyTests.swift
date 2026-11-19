@@ -251,4 +251,26 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
     #expect(recorder.all.map(\.success) == [nil])
     subscription.cancel()
   }
+
+  @Test func `Produces The Default In Place Of A Missing Value Over Time`() async throws {
+    let store = try makeStore()
+    var iterator = store.values(for: .lives).makeAsyncIterator()
+
+    #expect(try await iterator.next() == 3)
+    try store.set(2, for: .lives)
+    #expect(try await iterator.next() == 2)
+    store.removeValue(for: .lives)
+    #expect(try await iterator.next() == 3)
+  }
+
+  @Test func `The Values End With The Error Of A Value That Does Not Decode`() async throws {
+    let store = try makeStore()
+    store.set("not a number", forKey: "lives")
+    var iterator = store.values(for: .lives).makeAsyncIterator()
+
+    await #expect(throws: TextCoder.Failure.self) { try await iterator.next() }
+
+    try store.set(2, for: .lives)
+    #expect(try await iterator.next() == nil)
+  }
 }
