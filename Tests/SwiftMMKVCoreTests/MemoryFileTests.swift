@@ -8,7 +8,7 @@ import Testing
   @Test func `A New File Is One Zeroed Page`() throws {
     let path = temporaryFile()
     let file = MemoryFile(path: path, isReadOnly: false, isMayflyFD: true)
-    #expect(file.isFileValid)
+    #expect(file.isFileValid == true)
     #expect(file.size == pageSize)
     #expect(try contents(path).count == pageSize)
     #expect(try contents(path).allSatisfy { $0 == 0 })
@@ -43,28 +43,28 @@ import Testing
   @Test func `A Read Only File Is Neither Created Nor Resized`() throws {
     let missing = temporaryFile()
     let file = MemoryFile(path: missing, isReadOnly: true, isMayflyFD: true)
-    #expect(!file.isFileValid)
+    #expect(file.isFileValid == false)
     #expect(!FileManager.default.fileExists(atPath: missing))
 
     let odd = temporaryFile()
     try Data([1, 2, 3]).write(to: URL(fileURLWithPath: odd))
-    let readOnly = MemoryFile(path: odd, isReadOnly: true, isMayflyFD: true)
-    #expect(readOnly.isFileValid)
+    var readOnly = MemoryFile(path: odd, isReadOnly: true, isMayflyFD: true)
+    #expect(readOnly.isFileValid == true)
     #expect(readOnly.size == 3)
-    #expect(!readOnly.truncate(to: pageSize))
+    #expect(readOnly.truncate(to: pageSize) == false)
     #expect(try contents(odd) == [1, 2, 3])
   }
 
   @Test func `Truncating Grows With Zeros And Shrinks To Whole Pages`() throws {
     let path = temporaryFile()
-    let file = MemoryFile(path: path, isReadOnly: false, isMayflyFD: true)
+    var file = MemoryFile(path: path, isReadOnly: false, isMayflyFD: true)
     file.memory!.storeBytes(of: 0xab, as: UInt8.self)
-    #expect(file.truncate(to: pageSize * 2 + 10))
+    #expect(file.truncate(to: pageSize * 2 + 10) == true)
     #expect(file.size == pageSize * 3)
     #expect(file.memory!.load(as: UInt8.self) == 0xab)
     #expect(UnsafeRawBufferPointer(start: file.memory! + 1, count: file.size - 1).allSatisfy { $0 == 0 })
 
-    #expect(file.truncate(to: pageSize))
+    #expect(file.truncate(to: pageSize) == true)
     #expect(file.size == pageSize)
     #expect(file.actualFileSize == pageSize)
     #expect(file.memory!.load(as: UInt8.self) == 0xab)
@@ -76,7 +76,7 @@ import Testing
     for (index, byte) in [UInt8](arrayLiteral: 4, 5, 6).enumerated() {
       file.memory!.storeBytes(of: byte, toByteOffset: index, as: UInt8.self)
     }
-    #expect(file.msync(synchronously: true))
+    #expect(file.msync(synchronously: true) == true)
     #expect(try contents(path).prefix(3) == [4, 5, 6])
   }
 
@@ -88,43 +88,43 @@ import Testing
       isMayflyFD: true,
       fileSystem: spy.fileSystem
     )
-    #expect(mayfly.isFileValid)
+    #expect(mayfly.isFileValid == true)
     #expect(spy.openDescriptors == 0)
 
-    let kept = MemoryFile(
+    var kept = MemoryFile(
       path: temporaryFile(),
       isReadOnly: false,
       isMayflyFD: false,
       fileSystem: spy.fileSystem
     )
-    #expect(kept.isFileValid)
+    #expect(kept.isFileValid == true)
     #expect(spy.openDescriptors == 1)
     kept.clearMemoryCache()
     #expect(spy.openDescriptors == 0)
-    #expect(!kept.isFileValid)
+    #expect(kept.isFileValid == false)
   }
 
   @Test func `A Failed Resize Keeps The Old Size And Mapping`() throws {
     let spy = FileSystemSpy()
     let path = temporaryFile()
-    let file = MemoryFile(path: path, isReadOnly: false, isMayflyFD: true, fileSystem: spy.fileSystem)
+    var file = MemoryFile(path: path, isReadOnly: false, isMayflyFD: true, fileSystem: spy.fileSystem)
     file.memory!.storeBytes(of: 0xcd, as: UInt8.self)
 
     spy.failFtruncate = true
-    #expect(!file.truncate(to: pageSize * 4))
+    #expect(file.truncate(to: pageSize * 4) == false)
     #expect(file.size == pageSize)
-    #expect(file.isFileValid)
+    #expect(file.isFileValid == true)
     #expect(file.memory!.load(as: UInt8.self) == 0xcd)
     spy.failFtruncate = false
 
     // Zero-filling fails once the file has grown, so it is shrunk back.
     spy.failWrite = true
-    #expect(!file.truncate(to: pageSize * 4))
+    #expect(file.truncate(to: pageSize * 4) == false)
     #expect(file.size == pageSize)
     #expect(file.actualFileSize == pageSize)
     spy.failWrite = false
 
-    #expect(file.truncate(to: pageSize * 4))
+    #expect(file.truncate(to: pageSize * 4) == true)
     #expect(file.size == pageSize * 4)
   }
 }
@@ -222,6 +222,26 @@ import Testing
         return true
       }
     )
+  }
+}
+
+@Suite struct StoreLockTests {
+  @Test func `Hands Out The State While This Thread Holds The Lock`() {
+    let lock = StoreLock(0)
+    lock.lock()
+    lock.withLock { $0 += 1 }
+    lock.withLock { $0 += 1 }
+    lock.unlock()
+    #expect(lock.withLock { $0 } == 2)
+  }
+
+  @Test func `Stops The Process When Reached Again While In Use`() async {
+    await #expect(processExitsWith: .failure) {
+      let lock = StoreLock(0)
+      lock.withLock { _ in
+        lock.withLock { $0 += 1 }
+      }
+    }
   }
 }
 

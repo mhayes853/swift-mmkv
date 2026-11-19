@@ -206,12 +206,13 @@ time with package-benchmark and memory with `MemoryReport` (see its README).
    store sorts once per rewrite rather than twice. CRC-32 is computed in C
    (`CSwiftMMKVCrypto/crc32.c`), with the ARMv8 CRC32 instructions on 64-bit ARM, Apple
    platforms included, and zlib elsewhere, instead of with a table in Swift.
-4. **No exclusivity checks on the store's state.** Checking every access to `StoreInstance`'s and
-   `MemoryFile`'s mutable properties at run time took about a third of a write's time. They are
-   marked `@exclusivity(unchecked)`, which needs no compiler flags, unlike
-   `-enforce-exclusivity=unchecked`, which SwiftPM refuses in a dependency. The checks only caught
-   two accesses overlapping on one thread. The store's lock already orders accesses across
-   threads, and `StoreInstance`'s documentation states the rules that take the checks' place.
+4. **State owned by the store's lock.** Checking every access to the store's mutable properties
+   at run time took about a third of a write. They now live in a noncopyable `StoreState`, which
+   `StoreLock` owns and hands out as one `inout` per operation, so the compiler checks
+   exclusivity inside it statically and nothing is checked at run time. `MemoryFile` is a
+   noncopyable struct within it. The lock stays recursive for `withExclusiveLock`, but reaching
+   the state again while an operation has it stops the process. Each write also takes the lock
+   once, where it used to take it twice.
 
 None of these changes the file format: the differential tests still compare the cores byte for
 byte.
@@ -236,18 +237,18 @@ Time per operation, p50 on an M1 Pro:
 
 | Benchmark | C++ core | Swift core before | Swift core now |
 | --- | ---: | ---: | ---: |
-| `write.int32` | 148 ns | 657 ns | 161 ns |
-| `write.string` | 177 ns | 593 ns | 183 ns |
-| `write.double.overwrite` | 199 ns | 712 ns | 221 ns |
-| `write.string.encrypted` | 288 ns | – | 258 ns |
-| `read.int32` | 84 ns | 201 ns | 96 ns |
-| `read.string` | 362 ns | 363 ns | 173 ns |
+| `write.int32` | 146 ns | 657 ns | 157 ns |
+| `write.string` | 176 ns | 593 ns | 170 ns |
+| `write.double.overwrite` | 197 ns | 712 ns | 213 ns |
+| `write.string.encrypted` | 281 ns | – | 246 ns |
+| `read.int32` | 86 ns | 201 ns | 94 ns |
+| `read.string` | 361 ns | 363 ns | 176 ns |
 | `open.plain` | 1.33 ms | 2.82 ms | 1.31 ms |
 | `open.encrypted` | 2.06 ms | 3.79 ms | 2.13 ms |
 | `reload.full` | 142 µs | 328 µs | 130 µs |
 
-The Swift core now allocates nothing per write, as the C++ core does. The write rows were measured
-together, after item 4, so their C++ figures differ slightly from earlier runs.
+The Swift core now allocates nothing per write, as the C++ core does. The write and read rows were
+measured together, after item 4, so their C++ figures differ slightly from earlier runs.
 
 The p50 of a write misses most of the cost of the full write-backs that keep a store compact.
 A loop of 2,000,000 writes to the same 10,000 keys, which includes them, took on average (not
@@ -255,15 +256,16 @@ yet one of the benchmarks):
 
 | Writes | C++ core | Swift core before item 3 | Swift core now |
 | --- | ---: | ---: | ---: |
-| Strings | 264–297 ns | 434 ns | 227–244 ns |
-| `Int32` | 190–199 ns | 292 ns | 173–181 ns |
-| Strings, encrypted | 431–452 ns | 707 ns | 427–447 ns |
+| Strings | 263 ns | 434 ns | 218–223 ns |
+| `Int32` | 187–191 ns | 292 ns | 171–178 ns |
+| Strings, encrypted | 420–430 ns | 707 ns | 418–422 ns |
 
 ### Next
 
 Over many writes the Swift core is now faster than the C++ core, and level with it when
-encrypted, but a single unencrypted write's p50 is still 3 to 11% slower. What remains was
-measured but not yet changed: `set` takes the store's lock once to read `enableKeyExpire` and
-again to write, where the C++ core takes it once; the public layer copies `MMKVCore`, with its
-`any MMKVEngine`, on every write, which costs both engines; and `MetaInfo` keeps its IV and
-reserved words in arrays, which a reload allocates.
+encrypted. A single write's p50 is faster for strings, but still 7 to 8% slower for `Int32` and
+`Double`. What remains was measured but not yet changed: the store's lock is a recursive pthread
+mutex, which takes the slow path on every call, where `os_unfair_lock` was about 8 ns a call
+faster in a microbenchmark, though it would need an owner check to stay recursive; the public
+layer copies `MMKVCore`, with its `any MMKVEngine`, on every write, which costs both engines;
+and `MetaInfo` keeps its IV and reserved words in arrays, which a reload allocates.

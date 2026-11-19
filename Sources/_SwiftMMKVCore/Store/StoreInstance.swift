@@ -7,56 +7,88 @@
 /// One open store. Every open of the same files in a process shares one instance, which
 /// ``StoreRegistry`` hands out, and an instance lives for the rest of the process.
 ///
-/// Thread-safe: every operation takes ``lock``, a recursive mutex, and a multi-process store also
-/// takes a file lock that excludes other processes and other copies of MMKV.
-///
-/// The mutable properties are marked `@exclusivity(unchecked)`, because checking every access to
-/// them at run time made writes about a third slower. The checks only ever caught two accesses
-/// to a property overlapping on one thread, so the class keeps two rules in their place:
-///
-/// 1. The properties, and those of ``file`` and ``metaFile``, are read and written only with
-///    ``lock`` held.
-/// 2. While an access to one of them is open across a call, such as an `inout` argument or a
-///    method of the property that takes a closure, nothing the call reaches writes to that
-///    property, or reads it if the open access writes. Reads may overlap reads, as when a
-///    closure passed to `forEachEntry` looks up a key in the same index. Breaking this rule is
-///    undefined behaviour, not a trap.
-///
-/// The places that hold a writing access across a call say so where they do it.
-package final class StoreInstance: @unchecked Sendable {
+/// Thread-safe: every operation takes ``state``'s lock, and a multi-process store also takes a
+/// file lock that excludes other processes and other copies of MMKV. The operations themselves are
+/// ``StoreState``'s, which the lock hands out one at a time.
+package final class StoreInstance: Sendable {
   package let id: String
   let path: String
-  let crcPath: String
   package let isMultiProcess: Bool
   package let isReadOnly: Bool
+  let state: StoreLock<StoreState>
+
+  init(_ configuration: StoreConfiguration, root: String) {
+    let state = StoreState(configuration, root: root)
+    self.id = state.id
+    self.path = state.path
+    self.isMultiProcess = state.isMultiProcess
+    self.isReadOnly = state.isReadOnly
+    self.state = StoreLock(state)
+  }
+
+  /// Runs `body` with the state, then calls the content-changed handler if `body` noticed another
+  /// process's changes.
+  @inline(__always)
+  func withState<R>(_ body: (inout StoreState) -> R) -> R {
+    let (result, handler) = self.state.withLock { state in
+      let result = body(&state)
+      return (result, state.takePendingContentChangedHandler())
+    }
+    handler?()
+    return result
+  }
+
+  /// Called just after an operation that noticed that another process, or another copy of MMKV,
+  /// changed the store's files (`onContentChangedByOuterProcess`). The C++ core calls it with its
+  /// lock held; this calls it once the lock is released.
+  package func setContentChangedHandler(_ handler: (@Sendable () -> Void)?) {
+    self.withState { $0.contentChangedHandler = handler }
+  }
+}
+
+/// Calls `body` with the UTF-8 bytes of `key`, without copying them when the string is stored
+/// contiguously.
+@inline(__always)
+func withKeyBytes<R>(_ key: String, _ body: (UnsafeRawBufferPointer) -> R) -> R {
+  var key = key
+  return key.withUTF8 { body(UnsafeRawBufferPointer($0)) }
+}
+
+/// Everything about an open store that changes, with the operations on it. ``StoreInstance``'s
+/// lock owns it, so it is only ever reached by one thread, through one `inout`, at a time.
+struct StoreState: ~Copyable {
+  let id: String
+  let path: String
+  let crcPath: String
+  let isMultiProcess: Bool
+  let isReadOnly: Bool
   let expectedCapacity: Int
   let fileSystem: FileSystem
 
   /// Where each key's latest record is in a plain-text store (`m_dic`).
-  @exclusivity(unchecked) var dic = RecordIndex()
+  var dic = RecordIndex()
   /// Each key's entry in an encrypted store (`m_dicCrypt`).
-  @exclusivity(unchecked) var dicCrypt = CryptIndex()
+  var dicCrypt = CryptIndex()
   /// The cryptor of an encrypted store, whose state is the end of the data (`m_crypter`).
-  @exclusivity(unchecked) var crypter: AESCryptor?
+  var crypter: AESCryptor?
   /// The stream's state where the last appended record started, if its value is left in the file
   /// (`t_status`).
-  @exclusivity(unchecked) var appendState: CipherState?
-  let file: MemoryFile
-  let metaFile: MemoryFile
-  @exclusivity(unchecked) var metaInfo = MetaInfo()
+  var appendState: CipherState?
+  var file: MemoryFile
+  var metaFile: MemoryFile
+  var metaInfo = MetaInfo()
   /// Where the next record is written (`m_output`), relative to the start of the data.
-  @exclusivity(unchecked) var output: OutputState?
+  var output: OutputState?
   /// How many bytes of data follow the header (`m_actualSize`).
-  @exclusivity(unchecked) var actualSize = 0
-  @exclusivity(unchecked) var crcDigest: UInt32 = 0
-  @exclusivity(unchecked) var needLoadFromFile = true
-  @exclusivity(unchecked) var hasFullWriteback = false
-  @exclusivity(unchecked) var isSecondLoad = false
+  var actualSize = 0
+  var crcDigest: UInt32 = 0
+  var needLoadFromFile = true
+  var hasFullWriteback = false
+  var isSecondLoad = false
 
-  let lock = ThreadLock()
   let fileLock: FileLock
-  @exclusivity(unchecked) var sharedProcessLock: InterProcessLock
-  @exclusivity(unchecked) var exclusiveProcessLock: InterProcessLock
+  var sharedProcessLock: InterProcessLock
+  var exclusiveProcessLock: InterProcessLock
   #if os(Android)
     /// Held shared for the instance's life, so that Android's MMKV knows the file is in use and
     /// does not migrate it to another name.
@@ -65,11 +97,14 @@ package final class StoreInstance: @unchecked Sendable {
 
   let recoverOnError: Bool
   let itemSizeLimit: UInt32
-  @exclusivity(unchecked) var enableKeyExpire = false
-  @exclusivity(unchecked) var expiredInSeconds: UInt32 = 0
-  @exclusivity(unchecked) var enableCompareBeforeSet = false
+  var enableKeyExpire = false
+  var expiredInSeconds: UInt32 = 0
+  var enableCompareBeforeSet = false
 
-  @exclusivity(unchecked) private var contentChangedHandler: (@Sendable () -> Void)?
+  var contentChangedHandler: (@Sendable () -> Void)?
+  /// Whether an operation noticed another process's changes, which ``StoreInstance`` reports once
+  /// the operation ends.
+  var hasPendingContentChange = false
 
   /// The position and size of the output, as `CodedOutputData` keeps them. The size is fixed when
   /// the output is created, as the C++ one is.
@@ -92,53 +127,58 @@ package final class StoreInstance: @unchecked Sendable {
       // encodeFilePath creates the directory whether or not the store is read-only.
       makeDirectories("\(root)/\(StorePaths.specialCharacterDirectoryName)")
     }
-    self.path = "\(root)/\(relative.path)"
-    self.crcPath = StorePaths.metaPath(dataPath: self.path)
-    self.expectedCapacity = max(
+    let path = "\(root)/\(relative.path)"
+    self.path = path
+    let crcPath = StorePaths.metaPath(dataPath: path)
+    self.crcPath = crcPath
+    let expectedCapacity = max(
       pageSize,
       roundUp(max(configuration.expectedCapacity, 0), toMultipleOf: pageSize)
     )
+    self.expectedCapacity = expectedCapacity
     self.file = MemoryFile(
-      path: self.path,
-      expectedCapacity: self.expectedCapacity,
+      path: path,
+      expectedCapacity: expectedCapacity,
       isReadOnly: configuration.isReadOnly,
       isMayflyFD: true,
       fileSystem: configuration.fileSystem
     )
     #if os(Android)
       // Android keeps the metadata file open, and always locks it with flock.
-      self.metaFile = MemoryFile(
-        path: self.crcPath,
+      var metaFile = MemoryFile(
+        path: crcPath,
         expectedCapacity: pageSize,
         isReadOnly: configuration.isReadOnly,
         isMayflyFD: false,
         fileSystem: configuration.fileSystem
       )
-      self.fileLock = FileLock(
-        descriptor: self.metaFile.fileDescriptor,
+      let fileLock = FileLock(
+        descriptor: metaFile.fileDescriptor,
         fileSystem: configuration.fileSystem
       )
       let migrationLock = FileLock(
-        descriptor: self.metaFile.fileDescriptor,
+        descriptor: metaFile.fileDescriptor,
         kind: .openFileDescription(start: 2, length: 3),
         fileSystem: configuration.fileSystem
       )
       _ = migrationLock.tryLock(.shared)
       self.migrationLock = migrationLock
     #else
-      self.metaFile = MemoryFile(
-        path: self.crcPath,
+      var metaFile = MemoryFile(
+        path: crcPath,
         isReadOnly: configuration.isReadOnly,
         isMayflyFD: !configuration.isMultiProcess,
         fileSystem: configuration.fileSystem
       )
-      self.fileLock = FileLock(
-        descriptor: configuration.isMultiProcess ? self.metaFile.fileDescriptor : -1,
+      let fileLock = FileLock(
+        descriptor: configuration.isMultiProcess ? metaFile.fileDescriptor : -1,
         fileSystem: configuration.fileSystem
       )
     #endif
-    self.sharedProcessLock = InterProcessLock(fileLock: self.fileLock, type: .shared)
-    self.exclusiveProcessLock = InterProcessLock(fileLock: self.fileLock, type: .exclusive)
+    self.metaFile = metaFile
+    self.fileLock = fileLock
+    self.sharedProcessLock = InterProcessLock(fileLock: fileLock, type: .shared)
+    self.exclusiveProcessLock = InterProcessLock(fileLock: fileLock, type: .exclusive)
     self.sharedProcessLock.isEnabled = configuration.isMultiProcess
     self.exclusiveProcessLock.isEnabled = configuration.isMultiProcess
     self.recoverOnError = configuration.recoverOnError
@@ -152,17 +192,15 @@ package final class StoreInstance: @unchecked Sendable {
     }
   }
 
-  /// Called with the instance's locks held when it notices that another process, or another copy
-  /// of MMKV, changed its files (`onContentChangedByOuterProcess`).
-  package func setContentChangedHandler(_ handler: (@Sendable () -> Void)?) {
-    self.lock.withLock { self.contentChangedHandler = handler }
+  mutating func notifyContentChanged() {
+    self.hasPendingContentChange = true
   }
 
-  func notifyContentChanged() {
-    // The handler runs with the lock held and can call back into the store, so it is called
-    // outside any access to a property (rule 2 in the class's documentation).
-    let handler = self.contentChangedHandler
-    handler?()
+  /// The handler to call for changes noticed since this was last asked, if any.
+  mutating func takePendingContentChangedHandler() -> (@Sendable () -> Void)? {
+    guard self.hasPendingContentChange else { return nil }
+    self.hasPendingContentChange = false
+    return self.contentChangedHandler
   }
 
   var isFileValid: Bool {
@@ -183,19 +221,18 @@ package final class StoreInstance: @unchecked Sendable {
     self.file.memory.map { UnsafeRawPointer($0 + fixed32Size) }
   }
 
-  /// Calls `body` with the UTF-8 bytes of `key`, without copying them when the string is stored
-  /// contiguously.
-  @inline(__always)
-  func withKeyBytes<R>(_ key: String, _ body: (UnsafeRawBufferPointer) -> R) -> R {
-    var key = key
-    return key.withUTF8 { body(UnsafeRawBufferPointer($0)) }
+  /// Takes the file lock of `type`. A single-process store's is turned off.
+  func lockProcess(_ type: LockType) {
+    switch type {
+    case .shared: self.sharedProcessLock.lock()
+    case .exclusive: self.exclusiveProcessLock.lock()
+    }
   }
 
-  /// Runs `body` holding both the instance's lock and its file lock of `type`.
-  func withLocks<R>(_ type: LockType, _ body: () -> R) -> R {
-    self.lock.withLock {
-      let processLock = type == .shared ? self.sharedProcessLock : self.exclusiveProcessLock
-      return processLock.withLock(body)
+  func unlockProcess(_ type: LockType) {
+    switch type {
+    case .shared: self.sharedProcessLock.unlock()
+    case .exclusive: self.exclusiveProcessLock.unlock()
     }
   }
 }
@@ -212,24 +249,8 @@ extension StoreInstance {
     _ body: (UnsafeRawBufferPointer) throws(CodingError) -> R
   ) -> R? {
     guard !key.isEmpty else { return nil }
-    return self.withKeyBytes(key) { key in
-      self.withValue(forKey: key, body)
-    }
-  }
-
-  func withValue<R>(
-    forKey key: UnsafeRawBufferPointer,
-    _ body: (UnsafeRawBufferPointer) throws(CodingError) -> R
-  ) -> R? {
-    self.withLocks(.shared) {
-      let data = self.getDataForKey(key)
-      guard data.count > 0 else { return nil }
-      do throws(CodingError) {
-        return try data.withBytes(body)
-      } catch {
-        Log.error("cannot read the value of a key in [\(self.id)]: \(error)")
-        return nil
-      }
+    return withKeyBytes(key) { key in
+      self.withState { $0.withValue(forKey: key, body) }
     }
   }
 
@@ -279,6 +300,24 @@ extension StoreInstance {
   }
 }
 
+extension StoreState {
+  mutating func withValue<R>(
+    forKey key: UnsafeRawBufferPointer,
+    _ body: (UnsafeRawBufferPointer) throws(CodingError) -> R
+  ) -> R? {
+    self.lockProcess(.shared)
+    defer { self.unlockProcess(.shared) }
+    let data = self.getDataForKey(key)
+    guard data.count > 0 else { return nil }
+    do throws(CodingError) {
+      return try data.withBytes(body)
+    } catch {
+      Log.error("cannot read the value of a key in [\(self.id)]: \(error)")
+      return nil
+    }
+  }
+}
+
 // MARK: - Writes
 
 extension StoreInstance {
@@ -292,47 +331,49 @@ extension StoreInstance {
     if self.isReadOnly {
       return false
     }
-    let isExpirationEnabled = self.lock.withLock { self.enableKeyExpire }
-    if expiresInSeconds != 0 && !isExpirationEnabled && !self.enableAutoKeyExpire(0) {
-      return false
-    }
-    return self.withKeyBytes(key) { key in
-      self.set(value, forKey: key, expireDuration: expiresInSeconds)
+    return withKeyBytes(key) { key in
+      self.withState { $0.set(value, forKey: key, expiresInSeconds: expiresInSeconds) }
     }
   }
+}
 
-  /// MMKV's typed `set(value, key, expireDuration)`.
-  private func set(
+extension StoreState {
+  /// The shim's `mmkv_set_*`, after the read-only check, then MMKV's typed
+  /// `set(value, key, expireDuration)`.
+  mutating func set(
     _ value: EncodedValue,
     forKey key: UnsafeRawBufferPointer,
-    expireDuration: UInt32
+    expiresInSeconds: UInt32
   ) -> Bool {
+    if expiresInSeconds != 0 && !self.enableKeyExpire && !self.enableAutoKeyExpire(0) {
+      return false
+    }
     guard !key.isEmpty else { return false }
     switch value {
     case .bytes(let bytes):
-      return self.setDataForKey(bytes, key, expireDuration: expireDuration, isDataHolder: true)
+      return self.setDataForKey(bytes, key, expireDuration: expiresInSeconds, isDataHolder: true)
     case .strings:
       guard let data = try? value.encode(expiry: nil) else { return false }
       return data.withUnsafeBytes {
-        self.setDataForKey($0, key, expireDuration: expireDuration, isDataHolder: false)
+        self.setDataForKey($0, key, expireDuration: expiresInSeconds, isDataHolder: false)
       }
     default:
-      return self.withLocks(.exclusive) {
-        self.checkLoadData()
-        let expiry: UInt32? =
-          self.enableKeyExpire
-          ? (expireDuration != 0 ? Self.safeExpirationPlusCurrentTime(expireDuration) : 0)
-          : nil
-        return value.withEncoded(expiry: expiry) { data in
-          self.setDataForKey(data, key, isDataHolder: false)
-        } ?? false
-      }
+      self.lockProcess(.exclusive)
+      defer { self.unlockProcess(.exclusive) }
+      self.checkLoadData()
+      let expiry: UInt32? =
+        self.enableKeyExpire
+        ? (expiresInSeconds != 0 ? Self.safeExpirationPlusCurrentTime(expiresInSeconds) : 0)
+        : nil
+      return value.withEncoded(expiry: expiry) { data in
+        self.setDataForKey(data, key, isDataHolder: false)
+      } ?? false
     }
   }
 
   /// `setDataForKey(data, key, expireDuration, isDataHolder)`: adds the expiry time when the store
   /// has expiring keys.
-  func setDataForKey(
+  mutating func setDataForKey(
     _ data: UnsafeRawBufferPointer,
     _ key: UnsafeRawBufferPointer,
     expireDuration: UInt32,
@@ -341,37 +382,37 @@ extension StoreInstance {
     if !isDataHolder && data.isEmpty {
       return false
     }
-    return self.withLocks(.exclusive) {
-      self.checkLoadData()
-      guard self.enableKeyExpire else {
-        return self.setDataForKey(data, key, isDataHolder: isDataHolder)
-      }
-      guard data.count <= Int(UInt32.max) else {
-        Log.error("[\(self.id)] reject value too large to encode: \(data.count)")
-        return false
-      }
-      let encodedLength =
-        data.count + (isDataHolder ? pbRawVarint32Size(UInt32(data.count)) : 0) + fixed32Size
-      guard encodedLength <= Int(UInt32.max) else {
-        Log.error("[\(self.id)] reject expiring value too large to encode: \(data.count)")
-        return false
-      }
-      let time = expireDuration != 0 ? Self.safeExpirationPlusCurrentTime(expireDuration) : 0
-      // On the stack unless the value is large.
-      return withUnsafeTemporaryAllocation(byteCount: encodedLength, alignment: 1) { buffer in
-        var output = CodedOutput(buffer)
-        do throws(CodingError) {
-          if isDataHolder {
-            try output.writeData(data)
-          } else {
-            try output.writeRawData(data)
-          }
-          try output.writeRawLittleEndian32(time)
-        } catch {
-          return false
+    self.lockProcess(.exclusive)
+    defer { self.unlockProcess(.exclusive) }
+    self.checkLoadData()
+    guard self.enableKeyExpire else {
+      return self.setDataForKey(data, key, isDataHolder: isDataHolder)
+    }
+    guard data.count <= Int(UInt32.max) else {
+      Log.error("[\(self.id)] reject value too large to encode: \(data.count)")
+      return false
+    }
+    let encodedLength =
+      data.count + (isDataHolder ? pbRawVarint32Size(UInt32(data.count)) : 0) + fixed32Size
+    guard encodedLength <= Int(UInt32.max) else {
+      Log.error("[\(self.id)] reject expiring value too large to encode: \(data.count)")
+      return false
+    }
+    let time = expireDuration != 0 ? Self.safeExpirationPlusCurrentTime(expireDuration) : 0
+    // On the stack unless the value is large.
+    return withUnsafeTemporaryAllocation(byteCount: encodedLength, alignment: 1) { buffer in
+      var output = CodedOutput(buffer)
+      do throws(CodingError) {
+        if isDataHolder {
+          try output.writeData(data)
+        } else {
+          try output.writeRawData(data)
         }
-        return self.setDataForKey(UnsafeRawBufferPointer(buffer), key, isDataHolder: false)
+        try output.writeRawLittleEndian32(time)
+      } catch {
+        return false
       }
+      return self.setDataForKey(UnsafeRawBufferPointer(buffer), key, isDataHolder: false)
     }
   }
 }
@@ -381,59 +422,65 @@ extension StoreInstance {
 extension StoreInstance {
   /// The number of keys, without those that have expired (`count(true)`).
   package var count: Int {
-    self.lock.withLock {
-      self.checkLoadData()
-      self.filterExpiredKeysBeforeListing()
-      return self.indexCount
+    self.withState { state in
+      state.checkLoadData()
+      state.filterExpiredKeysBeforeListing()
+      return state.indexCount
     }
   }
 
   /// Every key, without those that have expired (`allKeys(true)`), in no particular order.
   package var keys: [String] {
-    self.lock.withLock {
-      self.checkLoadData()
-      self.filterExpiredKeysBeforeListing()
-      if self.crypter != nil {
-        var keys = [String]()
-        keys.reserveCapacity(self.dicCrypt.count)
-        self.dicCrypt.forEachEntry { slot, _ in
-          keys.append(String(decoding: self.dicCrypt.key(at: slot), as: UTF8.self))
-        }
-        return keys
-      }
-      guard let base = self.dataBase else { return [] }
+    self.withState { $0.allKeys() }
+  }
+
+  package func contains(_ key: String) -> Bool {
+    withKeyBytes(key) { key in
+      self.withState { $0.contains(key) }
+    }
+  }
+}
+
+extension StoreState {
+  mutating func allKeys() -> [String] {
+    self.checkLoadData()
+    self.filterExpiredKeysBeforeListing()
+    if self.crypter != nil {
       var keys = [String]()
-      keys.reserveCapacity(self.dic.count)
-      self.dic.forEachRecord { _, location in
-        keys.append(String(decoding: RecordIndex.key(at: location, in: base), as: UTF8.self))
+      keys.reserveCapacity(self.dicCrypt.count)
+      self.dicCrypt.forEachEntry { slot, _ in
+        keys.append(String(decoding: self.dicCrypt.key(at: slot), as: UTF8.self))
       }
       return keys
     }
+    guard let base = self.dataBase else { return [] }
+    var keys = [String]()
+    keys.reserveCapacity(self.dic.count)
+    self.dic.forEachRecord { _, location in
+      keys.append(String(decoding: RecordIndex.key(at: location, in: base), as: UTF8.self))
+    }
+    return keys
   }
 
-  private func filterExpiredKeysBeforeListing() {
+  mutating func filterExpiredKeysBeforeListing() {
     guard self.enableKeyExpire else { return }
     if self.isReadOnly {
       self.filterExpiredKeys()
     } else {
-      self.exclusiveProcessLock.withLock {
-        _ = self.fullWriteback(onlyWhileExpire: true)
-      }
+      self.exclusiveProcessLock.lock()
+      defer { self.exclusiveProcessLock.unlock() }
+      self.fullWriteback(onlyWhileExpire: true)
     }
   }
 
-  package func contains(_ key: String) -> Bool {
-    self.withKeyBytes(key) { key in
-      self.lock.withLock {
-        self.checkLoadData()
-        if !self.enableKeyExpire {
-          return self.crypter == nil
-            ? self.dic.slot(of: key, base: self.dataBase) != nil
-            : self.dicCrypt.contains(key)
-        }
-        return self.getDataWithoutMTimeForKey(key).count != 0
-      }
+  mutating func contains(_ key: UnsafeRawBufferPointer) -> Bool {
+    self.checkLoadData()
+    if !self.enableKeyExpire {
+      return self.crypter == nil
+        ? self.dic.slot(of: key, base: self.dataBase) != nil
+        : self.dicCrypt.contains(key)
     }
+    return self.getDataWithoutMTimeForKey(key).count != 0
   }
 }
 
@@ -442,19 +489,8 @@ extension StoreInstance {
 extension StoreInstance {
   @discardableResult
   package func removeValue(forKey key: String) -> Bool {
-    self.withKeyBytes(key) { self.removeValue(forKey: $0) }
-  }
-
-  @discardableResult
-  func removeValue(forKey key: UnsafeRawBufferPointer) -> Bool {
-    guard !key.isEmpty else { return false }
-    if self.isReadOnly {
-      Log.warning("[\(self.id)] file readonly")
-      return false
-    }
-    return self.withLocks(.exclusive) {
-      self.checkLoadData()
-      return self.removeDataForKey(key)
+    withKeyBytes(key) { key in
+      self.withState { $0.removeValue(forKey: key) }
     }
   }
 
@@ -471,30 +507,49 @@ extension StoreInstance {
     if keys.count == 1 {
       return self.removeValue(forKey: keys[0])
     }
-    return self.withLocks(.exclusive) {
-      self.checkLoadData()
-      var deleteCount = 0
-      for key in keys {
-        let removed = self.withKeyBytes(key) { key in
-          self.crypter == nil
-            ? self.dic.remove(key, base: self.dataBase) != nil
-            : self.dicCrypt.remove(key)
-        }
-        if removed {
-          deleteCount += 1
-        }
-      }
-      guard deleteCount > 0 else { return true }
-      self.hasFullWriteback = false
-      let didWriteBack = self.fullWriteback()
-      if !didWriteBack {
-        self.clearMemoryCache()
-      }
-      return didWriteBack
+    return self.withState { $0.removeValues(forKeys: keys) }
+  }
+}
+
+extension StoreState {
+  @discardableResult
+  mutating func removeValue(forKey key: UnsafeRawBufferPointer) -> Bool {
+    guard !key.isEmpty else { return false }
+    if self.isReadOnly {
+      Log.warning("[\(self.id)] file readonly")
+      return false
     }
+    self.lockProcess(.exclusive)
+    defer { self.unlockProcess(.exclusive) }
+    self.checkLoadData()
+    return self.removeDataForKey(key)
   }
 
-  func removeDataForKey(_ key: UnsafeRawBufferPointer) -> Bool {
+  mutating func removeValues(forKeys keys: [String]) -> Bool {
+    self.lockProcess(.exclusive)
+    defer { self.unlockProcess(.exclusive) }
+    self.checkLoadData()
+    var deleteCount = 0
+    for key in keys {
+      let removed = withKeyBytes(key) { key in
+        self.crypter == nil
+          ? self.dic.remove(key, base: self.dataBase) != nil
+          : self.dicCrypt.remove(key)
+      }
+      if removed {
+        deleteCount += 1
+      }
+    }
+    guard deleteCount > 0 else { return true }
+    self.hasFullWriteback = false
+    let didWriteBack = self.fullWriteback()
+    if !didWriteBack {
+      self.clearMemoryCache()
+    }
+    return didWriteBack
+  }
+
+  mutating func removeDataForKey(_ key: UnsafeRawBufferPointer) -> Bool {
     guard !key.isEmpty else { return false }
     let empty = UnsafeRawBufferPointer(start: nil, count: 0)
     if self.crypter != nil {
@@ -531,44 +586,65 @@ extension StoreInstance {
   /// Takes the instance's lock and, for a multi-process store, the exclusive file lock. Recursive
   /// on the thread that holds it (the shim's `mmkv_lock`).
   package func lockExclusively() {
-    self.lock.lock()
-    self.lock.withLock { self.exclusiveProcessLock.lock() }
+    self.state.lock()
+    self.withState { $0.exclusiveProcessLock.lock() }
   }
 
   package func unlockExclusively() {
-    self.lock.withLock { self.exclusiveProcessLock.unlock() }
-    self.lock.unlock()
+    self.withState { $0.exclusiveProcessLock.unlock() }
+    self.state.unlock()
   }
 
   /// The size of the data file.
   package var totalSize: Int {
-    self.lock.withLock {
-      self.checkLoadData()
-      return self.file.size
+    self.withState { state in
+      state.checkLoadData()
+      return state.file.size
     }
   }
 
   /// The number of bytes of data in the file.
   package var dataSize: Int {
-    self.lock.withLock {
-      self.checkLoadData()
-      return self.actualSize
+    self.withState { state in
+      state.checkLoadData()
+      return state.actualSize
     }
   }
 
   package func checkContentChanged() {
-    self.lock.withLock { self.checkLoadData() }
+    self.withState { $0.checkLoadData() }
   }
 
   /// Writes the files' mapped memory to disk.
   package func sync(synchronously: Bool = true) {
-    self.lock.withLock {
-      guard !self.needLoadFromFile, self.isFileValid else { return }
-      self.exclusiveProcessLock.withLock {
-        self.file.msync(synchronously: synchronously)
-        self.metaFile.msync(synchronously: synchronously)
-      }
-    }
+    self.withState { $0.sync(synchronously: synchronously) }
+  }
+
+  /// Compacts the file and shrinks it by halves while it is more than twice its data, but not below
+  /// the expected capacity (`trim`).
+  package func trim() {
+    self.withState { $0.trim() }
+  }
+
+  /// Removes every key, shrinking the file back to the expected capacity unless `keepSpace`
+  /// (`clearAll`).
+  package func clearAll(keepSpace: Bool = false) {
+    self.withState { $0.clearAll(keepSpace: keepSpace) }
+  }
+
+  /// Re-encrypts the store with `key`, or decrypts it when `key` is `nil` (`reKey`).
+  package func rekey(key: [UInt8]?, isAES256: Bool) -> Bool {
+    self.withState { $0.rekey(key: key, isAES256: isAES256) }
+  }
+}
+
+extension StoreState {
+  mutating func sync(synchronously: Bool = true) {
+    guard !self.needLoadFromFile, self.isFileValid else { return }
+    self.exclusiveProcessLock.lock()
+    defer { self.exclusiveProcessLock.unlock() }
+    self.file.msync(synchronously: synchronously)
+    self.metaFile.msync(synchronously: synchronously)
   }
 }
 
@@ -590,41 +666,67 @@ extension StoreInstance {
     }
     // Lock a pair of stores in a stable order, across processes too, so two imports in opposite
     // directions cannot deadlock.
-    let (first, second) =
-      (source.path < self.path
-        || (source.path == self.path && ObjectIdentifier(source) < ObjectIdentifier(self)))
-      ? (source, self) : (self, source)
-    return first.withLocks(.exclusive) {
-      second.withLocks(.exclusive) {
-        self.checkLoadData()
-        source.checkLoadData()
-        guard self.isFileValid, source.isFileValid else {
-          Log.warning("[\(self.id)] or [\(source.id)] file not valid")
-          return 0
-        }
-        let time =
-          self.expiredInSeconds != 0
-          ? Self.safeExpirationPlusCurrentTime(self.expiredInSeconds) : 0
-        var count = 0
-        for key in source.keysInRecordOrder() {
-          // Copied, because the source may move its records while this store is written.
-          let didSet = key.bytes.withUnsafeBytes { key in
-            var value = source.getDataForKey(key).array
-            guard !value.isEmpty else { return false }
-            if self.enableKeyExpire {
-              withUnsafeBytes(of: time.littleEndian) { value.append(contentsOf: $0) }
-            }
-            return value.withUnsafeBytes { self.setDataForKey($0, key, isDataHolder: false) }
-          }
-          count += didSet ? 1 : 0
-        }
-        return count
+    let sourceFirst =
+      source.path < self.path
+      || (source.path == self.path && ObjectIdentifier(source) < ObjectIdentifier(self))
+    let (first, second) = sourceFirst ? (source, self) : (self, source)
+    return first.withState { first in
+      second.withState { second in
+        sourceFirst
+          ? StoreState.importAll(into: &second, from: &first, sourceFirst: true)
+          : StoreState.importAll(into: &first, from: &second, sourceFirst: false)
       }
     }
   }
 }
 
-extension StoreInstance {
+extension StoreState {
+  static func importAll(
+    into target: inout StoreState,
+    from source: inout StoreState,
+    sourceFirst: Bool
+  ) -> Int {
+    if sourceFirst {
+      source.lockProcess(.exclusive)
+      target.lockProcess(.exclusive)
+    } else {
+      target.lockProcess(.exclusive)
+      source.lockProcess(.exclusive)
+    }
+    defer {
+      if sourceFirst {
+        target.unlockProcess(.exclusive)
+        source.unlockProcess(.exclusive)
+      } else {
+        source.unlockProcess(.exclusive)
+        target.unlockProcess(.exclusive)
+      }
+    }
+    target.checkLoadData()
+    source.checkLoadData()
+    guard target.isFileValid, source.isFileValid else {
+      Log.warning("[\(target.id)] or [\(source.id)] file not valid")
+      return 0
+    }
+    let time =
+      target.expiredInSeconds != 0
+      ? Self.safeExpirationPlusCurrentTime(target.expiredInSeconds) : 0
+    var count = 0
+    for key in source.keysInRecordOrder() {
+      // Copied, because the source may move its records while this store is written.
+      let didSet = key.bytes.withUnsafeBytes { key in
+        var value = source.getDataForKey(key).array
+        guard !value.isEmpty else { return false }
+        if target.enableKeyExpire {
+          withUnsafeBytes(of: time.littleEndian) { value.append(contentsOf: $0) }
+        }
+        return value.withUnsafeBytes { target.setDataForKey($0, key, isDataHolder: false) }
+      }
+      count += didSet ? 1 : 0
+    }
+    return count
+  }
+
   /// Copies of every key, in the order of their records in the file, for the operations that
   /// rewrite every key and so cannot keep pointing into the file.
   func keysInRecordOrder() -> [StoreKey] {

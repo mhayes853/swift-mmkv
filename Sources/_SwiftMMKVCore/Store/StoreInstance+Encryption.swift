@@ -100,17 +100,27 @@ enum WriteBackEncryption {
   case new(AESCryptor)
 }
 
-extension StoreInstance {
+extension StoreState {
   // MARK: - Reading
 
   /// The decrypted bytes of an entry (`KeyValueHolderCrypt::toMMBuffer`). A value kept in memory
   /// is read where the index keeps it, so it is valid until the index next changes.
   func value(of entry: CryptEntry) -> RawValue {
+    Self.value(of: entry, memory: self.file.memory, crypter: self.crypter)
+  }
+
+  /// ``value(of:)``, given the parts of the state it reads, for a caller that is changing another
+  /// part of it.
+  static func value(
+    of entry: CryptEntry,
+    memory: UnsafeMutableRawPointer?,
+    crypter: AESCryptor?
+  ) -> RawValue {
     switch entry {
     case .memory(let value, _):
       return .mapped(value)
     case .offset(let record):
-      guard let memory = self.file.memory, let crypter = self.crypter else { return .empty }
+      guard let memory, let crypter else { return .empty }
       var decrypter = crypter.cloned(at: record.state)
       let start = memory + fixed32Size + Int(record.offset)
       let position = Int(record.pbKeyValueSize) + Int(record.keySize)
@@ -137,7 +147,7 @@ extension StoreInstance {
   /// - Parameter greedy: Whether to keep what was decoded before an error.
   /// - Returns: Whether everything decoded.
   @discardableResult
-  func decodeCrypt(from position: Int, size: Int, greedy: Bool) -> Bool {
+  mutating func decodeCrypt(from position: Int, size: Int, greedy: Bool) -> Bool {
     guard let memory = self.file.memory, let crypter = self.crypter else { return false }
     let ciphertext = UnsafeRawBufferPointer(start: memory + fixed32Size, count: size)
     var reader = DecryptingReader(ciphertext: ciphertext, position: position, decrypter: crypter)
@@ -208,7 +218,7 @@ extension StoreInstance {
 
   /// Writes `data` as `key`'s value in an encrypted store (the encrypted branch of
   /// `setDataForKey`).
-  func setCryptDataForKey(
+  mutating func setCryptDataForKey(
     _ data: UnsafeRawBufferPointer,
     _ key: UnsafeRawBufferPointer,
     isDataHolder: Bool
@@ -227,7 +237,7 @@ extension StoreInstance {
     return self.appendCryptData(data, key, isDataHolder: isDataHolder)
   }
 
-  private func appendCryptData(
+  private mutating func appendCryptData(
     _ data: UnsafeRawBufferPointer,
     _ key: UnsafeRawBufferPointer,
     isDataHolder: Bool
@@ -311,7 +321,7 @@ extension StoreInstance {
 
   /// Rewrites an encrypted store's data (the encrypted `memmoveDictionary`): the placeholder, then
   /// the large records moved and re-encrypted, then the encoded records from memory.
-  func memmoveCryptDictionary(
+  mutating func memmoveCryptDictionary(
     decrypter: AESCryptor,
     encrypter: inout AESCryptor?,
     prepared: PreparedData
@@ -396,71 +406,71 @@ extension StoreInstance {
   // MARK: - Re-encrypting
 
   /// Re-encrypts the store with `key`, or decrypts it when `key` is `nil` (`reKey`).
-  package func rekey(key: [UInt8]?, isAES256: Bool) -> Bool {
+  mutating func rekey(key: [UInt8]?, isAES256: Bool) -> Bool {
     if self.isReadOnly {
       Log.warning("[\(self.id)] file readonly")
       return false
     }
-    return self.withLocks(.exclusive) {
-      self.checkLoadData()
-      guard self.isFileValid else {
-        Log.warning("[\(self.id)] file not valid")
-        return false
-      }
-      let didRekey: Bool
-      if let crypter = self.crypter {
-        if let key, !key.isEmpty {
-          if key == crypter.keyUpToFirstZero && crypter.isAES256 == isAES256 {
-            return true
-          }
-          // A new key.
-          let newCrypter = AESCryptor(key: key, isAES256: isAES256)
-          self.hasFullWriteback = false
-          didRekey = self.fullWriteback(encryption: .new(newCrypter))
-          if didRekey {
-            self.crypter = newCrypter
-          }
-        } else {
-          // Decrypting to plain text, which needs every pair to fit the plain index.
-          var fitsPlainIndex = true
-          self.dicCrypt.forEachEntry { slot, entry in
-            let keySize = self.dicCrypt.key(at: slot).count
-            fitsPlainIndex =
-              fitsPlainIndex
-              && Self.encodedEntrySize(
-                keyDataLength: keySize,
-                originKeyLength: keySize,
-                dataLength: entry.realValueSize,
-                isDataHolder: false,
-                needsPlainHolder: true
-              ) != nil
-          }
-          guard fitsPlainIndex else {
-            Log.error("[\(self.id)] reject decryption: key/value cannot fit a plain holder")
-            return false
-          }
-          self.hasFullWriteback = false
-          didRekey = self.fullWriteback(encryption: .plain)
-          if didRekey {
-            self.crypter = nil
-          }
+    self.lockProcess(.exclusive)
+    defer { self.unlockProcess(.exclusive) }
+    self.checkLoadData()
+    guard self.isFileValid else {
+      Log.warning("[\(self.id)] file not valid")
+      return false
+    }
+    let didRekey: Bool
+    if let crypter = self.crypter {
+      if let key, !key.isEmpty {
+        if key == crypter.keyUpToFirstZero && crypter.isAES256 == isAES256 {
+          return true
         }
-      } else {
-        guard let key, !key.isEmpty else { return true }
-        // Encrypting plain text.
-        self.hasFullWriteback = false
+        // A new key.
         let newCrypter = AESCryptor(key: key, isAES256: isAES256)
+        self.hasFullWriteback = false
         didRekey = self.fullWriteback(encryption: .new(newCrypter))
         if didRekey {
           self.crypter = newCrypter
         }
+      } else {
+        // Decrypting to plain text, which needs every pair to fit the plain index.
+        var fitsPlainIndex = true
+        self.dicCrypt.forEachEntry { slot, entry in
+          let keySize = self.dicCrypt.key(at: slot).count
+          fitsPlainIndex =
+            fitsPlainIndex
+            && Self.encodedEntrySize(
+              keyDataLength: keySize,
+              originKeyLength: keySize,
+              dataLength: entry.realValueSize,
+              isDataHolder: false,
+              needsPlainHolder: true
+            ) != nil
+        }
+        guard fitsPlainIndex else {
+          Log.error("[\(self.id)] reject decryption: key/value cannot fit a plain holder")
+          return false
+        }
+        self.hasFullWriteback = false
+        didRekey = self.fullWriteback(encryption: .plain)
+        if didRekey {
+          self.crypter = nil
+        }
       }
-      // The index is not valid after re-encrypting.
+    } else {
+      guard let key, !key.isEmpty else { return true }
+      // Encrypting plain text.
+      self.hasFullWriteback = false
+      let newCrypter = AESCryptor(key: key, isAES256: isAES256)
+      didRekey = self.fullWriteback(encryption: .new(newCrypter))
       if didRekey {
-        self.clearMemoryCache()
+        self.crypter = newCrypter
       }
-      return didRekey
     }
+    // The index is not valid after re-encrypting.
+    if didRekey {
+      self.clearMemoryCache()
+    }
+    return didRekey
   }
 }
 

@@ -7,20 +7,19 @@
 /// store. A multi-process store keeps its metadata file open, because its file lock lives on that
 /// descriptor.
 ///
-/// Not thread-safe; the engine's lock protects it. Its mutable properties skip exclusivity checks at
-/// run time under the same rules as ``StoreInstance``'s.
-package final class MemoryFile {
+/// Not thread-safe: a store keeps its files in the state its lock owns.
+package struct MemoryFile: ~Copyable {
   package let path: String
   package let isReadOnly: Bool
   package let isMayflyFD: Bool
   private let fileSystem: FileSystem
-  @exclusivity(unchecked) private var descriptor: Int32 = -1
+  private var descriptor: Int32 = -1
 
   /// The mapping, or `nil` if the file is not mapped.
-  @exclusivity(unchecked) package private(set) var memory: UnsafeMutableRawPointer?
+  package private(set) var memory: UnsafeMutableRawPointer?
 
   /// The size of the mapping, which is the file's size when it was last mapped.
-  @exclusivity(unchecked) package private(set) var size = 0
+  package private(set) var size = 0
 
   package init(
     path: String,
@@ -37,7 +36,12 @@ package final class MemoryFile {
   }
 
   deinit {
-    self.cleanMemoryCache()
+    if let memory = self.memory {
+      _ = self.fileSystem.munmap(memory, self.size)
+    }
+    if self.descriptor >= 0 {
+      _ = self.fileSystem.close(self.descriptor)
+    }
   }
 
   package var isFileValid: Bool {
@@ -46,10 +50,12 @@ package final class MemoryFile {
 
   /// The open descriptor, opening a mayfly file's again if needed (`getFd`).
   package var fileDescriptor: Int32 {
-    if self.isMayflyFD {
-      _ = self.openIfNeeded()
+    mutating get {
+      if self.isMayflyFD {
+        _ = self.openIfNeeded()
+      }
+      return self.descriptor
     }
-    return self.descriptor
   }
 
   /// The size of the file on disk, which another process may have changed since it was mapped.
@@ -63,20 +69,20 @@ package final class MemoryFile {
     return self.fileSystem.fileSizeAtPath(self.path) ?? 0
   }
 
-  private func openIfNeeded() -> Bool {
+  private mutating func openIfNeeded() -> Bool {
     guard self.descriptor < 0 else { return true }
     let flags = O_CLOEXEC | (self.isReadOnly ? O_RDONLY : O_RDWR | O_CREAT)
     self.descriptor = self.fileSystem.open(self.path, flags, S_IRWXU)
     return self.descriptor >= 0
   }
 
-  package func cleanMayflyFD() {
+  package mutating func cleanMayflyFD() {
     if self.isMayflyFD && self.descriptor >= 0 {
       self.closeDescriptor()
     }
   }
 
-  private func closeDescriptor() {
+  private mutating func closeDescriptor() {
     if self.descriptor >= 0 && self.fileSystem.close(self.descriptor) == 0 {
       self.descriptor = -1
     }
@@ -90,7 +96,7 @@ package final class MemoryFile {
   /// - Returns: Whether the file has its new size and is mapped. On failure the file keeps its
   ///   old size.
   @discardableResult
-  package func truncate(to newSize: Int, fileLock: FileLock? = nil) -> Bool {
+  package mutating func truncate(to newSize: Int, fileLock: FileLock? = nil) -> Bool {
     if self.isMayflyFD {
       _ = self.openIfNeeded()
     }
@@ -148,7 +154,7 @@ package final class MemoryFile {
     return self.fileSystem.msync(memory, self.size, synchronously ? MS_SYNC : MS_ASYNC) == 0
   }
 
-  private func mapOrCleanUp(fileLock: FileLock?) -> Bool {
+  private mutating func mapOrCleanUp(fileLock: FileLock?) -> Bool {
     let protection = self.isReadOnly ? PROT_READ : PROT_READ | PROT_WRITE
     // The old address is a hint, so a remapped file tends to stay where it was.
     guard let memory = self.fileSystem.mmap(self.memory, self.size, protection, self.descriptor)
@@ -170,7 +176,7 @@ package final class MemoryFile {
   ///
   /// The data file's own descriptor is locked while this happens, shared to read its size and
   /// exclusive to grow it, so two copies of MMKV opening the same file do not both resize it.
-  package func reloadFromFile(expectedCapacity: Int = 0) {
+  package mutating func reloadFromFile(expectedCapacity: Int = 0) {
     if self.isFileValid {
       self.cleanMemoryCache()
     }
@@ -191,11 +197,11 @@ package final class MemoryFile {
   }
 
   /// Unmaps the file and closes its descriptor (`clearMemoryCache`).
-  package func clearMemoryCache() {
+  package mutating func clearMemoryCache() {
     self.cleanMemoryCache()
   }
 
-  private func cleanMemoryCache() {
+  private mutating func cleanMemoryCache() {
     if let memory = self.memory {
       _ = self.fileSystem.munmap(memory, self.size)
     }

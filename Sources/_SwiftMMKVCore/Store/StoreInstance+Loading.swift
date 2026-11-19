@@ -1,8 +1,8 @@
 // Loading a store's files and noticing changes made by other processes, from MMKV_IO.cpp.
 
-extension StoreInstance {
+extension StoreState {
   /// Reads the metadata, validates the data, and builds the index (`loadFromFile`).
-  func loadFromFile() {
+  mutating func loadFromFile() {
     self.loadMetaInfoAndCheck()
     if self.crypter != nil && self.metaInfo.version >= MetaInfo.Version.randomIV {
       self.crypter!.resetIV(self.metaInfo.vector)
@@ -46,17 +46,17 @@ extension StoreInstance {
         }
       } else {
         // The file is empty or unreadable: discard everything.
-        self.exclusiveProcessLock.withLock {
-          let dataOffset = min(fileSize, fixed32Size)
-          self.output = OutputState(position: 0, size: fileSize - dataOffset)
-          if self.isReadOnly {
-            // Nothing to do.
-          } else if self.actualSize > 0 {
-            _ = self.writeActualSize(0, crcDigest: 0, iv: nil, increaseSequence: true)
-            self.sync()
-          } else {
-            _ = self.writeActualSize(0, crcDigest: 0, iv: nil, increaseSequence: false)
-          }
+        self.exclusiveProcessLock.lock()
+        defer { self.exclusiveProcessLock.unlock() }
+        let dataOffset = min(fileSize, fixed32Size)
+        self.output = OutputState(position: 0, size: fileSize - dataOffset)
+        if self.isReadOnly {
+          // Nothing to do.
+        } else if self.actualSize > 0 {
+          _ = self.writeActualSize(0, crcDigest: 0, iv: nil, increaseSequence: true)
+          self.sync()
+        } else {
+          _ = self.writeActualSize(0, crcDigest: 0, iv: nil, increaseSequence: false)
         }
       }
     }
@@ -65,7 +65,7 @@ extension StoreInstance {
 
   /// Reads only what another process appended since the last load (`partialLoadFromFile`), or
   /// loads everything again if the appended data does not match the checksum.
-  func partialLoadFromFile() {
+  mutating func partialLoadFromFile() {
     guard self.file.isFileValid else { return }
     self.metaInfo = MetaInfo(reading: self.metaFile.memory!)
     let oldActualSize = self.actualSize
@@ -105,62 +105,62 @@ extension StoreInstance {
 
   /// Loads the files on first use, and in a multi-process store reloads them if another process
   /// changed them since (`checkLoadData`).
-  func checkLoadData() {
+  mutating func checkLoadData() {
     if self.needLoadFromFile {
-      self.sharedProcessLock.withLock {
+      do {
+        self.sharedProcessLock.lock()
+        defer { self.sharedProcessLock.unlock() }
         self.needLoadFromFile = false
         self.loadFromFile()
       }
       return
     }
     guard self.isMultiProcess, self.metaFile.isFileValid else { return }
-    self.sharedProcessLock.withLock {
-      let metaInfo = MetaInfo.Summary(reading: self.metaFile.memory!)
-      if self.metaInfo.sequence != metaInfo.sequence {
-        // Another process rewrote the file.
-        self.clearMemoryCache()
-        self.loadFromFile()
-        self.notifyContentChanged()
-      } else if self.metaInfo.crcDigest != metaInfo.crcDigest
-        || self.metaInfo.actualSize != metaInfo.actualSize
-      {
-        // Another process appended to it.
-        self.partialLoadFromFile()
-        self.notifyContentChanged()
-      }
+    self.sharedProcessLock.lock()
+    defer { self.sharedProcessLock.unlock() }
+    let metaInfo = MetaInfo.Summary(reading: self.metaFile.memory!)
+    if self.metaInfo.sequence != metaInfo.sequence {
+      // Another process rewrote the file.
+      self.clearMemoryCache()
+      self.loadFromFile()
+      self.notifyContentChanged()
+    } else if self.metaInfo.crcDigest != metaInfo.crcDigest
+      || self.metaInfo.actualSize != metaInfo.actualSize
+    {
+      // Another process appended to it.
+      self.partialLoadFromFile()
+      self.notifyContentChanged()
     }
   }
 
   /// Forgets the index and unmaps the data file, so that the next operation loads again
   /// (`clearMemoryCache`).
-  func clearMemoryCache(keepSpace: Bool = false) {
-    self.lock.withLock {
-      guard !self.needLoadFromFile else { return }
-      self.needLoadFromFile = true
-      self.hasFullWriteback = false
-      self.dic.removeAll()
-      self.dicCrypt.removeAll()
-      if self.crypter != nil {
-        // A read-only store cannot be sure it has a random IV.
-        if self.metaInfo.version >= MetaInfo.Version.randomIV {
-          self.crypter!.resetIV(self.metaInfo.vector)
-        } else {
-          self.crypter!.resetIV()
-        }
+  mutating func clearMemoryCache(keepSpace: Bool = false) {
+    guard !self.needLoadFromFile else { return }
+    self.needLoadFromFile = true
+    self.hasFullWriteback = false
+    self.dic.removeAll()
+    self.dicCrypt.removeAll()
+    if self.crypter != nil {
+      // A read-only store cannot be sure it has a random IV.
+      if self.metaInfo.version >= MetaInfo.Version.randomIV {
+        self.crypter!.resetIV(self.metaInfo.vector)
+      } else {
+        self.crypter!.resetIV()
       }
-      self.output = nil
-      if !keepSpace {
-        self.file.clearMemoryCache()
-      }
-      // The metadata file stays open, because a multi-process store's file lock is on it.
-      self.actualSize = 0
-      self.metaInfo.crcDigest = 0
     }
+    self.output = nil
+    if !keepSpace {
+      self.file.clearMemoryCache()
+    }
+    // The metadata file stays open, because a multi-process store's file lock is on it.
+    self.actualSize = 0
+    self.metaInfo.crcDigest = 0
   }
 
   // MARK: - Metadata
 
-  func loadMetaInfoAndCheck() {
+  mutating func loadMetaInfoAndCheck() {
     if !self.metaFile.isFileValid {
       self.metaFile.reloadFromFile()
     }
@@ -203,13 +203,17 @@ extension StoreInstance {
   /// Only done the first time the instance loads.
   ///
   /// - Returns: Whether reading either file failed.
-  func checkFileHasDiskError() -> Bool {
+  mutating func checkFileHasDiskError() -> Bool {
     if self.isSecondLoad {
       return false
     }
     self.isSecondLoad = true
     var needReportReadFail = false
-    if self.isDiskOfMMAPFileCorrupted(self.metaFile, &needReportReadFail) {
+    if Self.isDiskOfMMAPFileCorrupted(
+      &self.metaFile,
+      &needReportReadFail,
+      fileSystem: self.fileSystem
+    ) {
       self.metaFile.clearMemoryCache()
       self.deleteOrRenameFile(self.metaFile.path)
       self.metaFile.reloadFromFile()
@@ -221,7 +225,8 @@ extension StoreInstance {
       Log.error("file [\(self.path)] not valid")
       return false
     }
-    if self.isDiskOfMMAPFileCorrupted(self.file, &needReportReadFail) {
+    if Self.isDiskOfMMAPFileCorrupted(&self.file, &needReportReadFail, fileSystem: self.fileSystem)
+    {
       self.file.clearMemoryCache()
       self.deleteOrRenameFile(self.file.path)
       self.file.reloadFromFile(expectedCapacity: self.expectedCapacity)
@@ -229,18 +234,20 @@ extension StoreInstance {
     return needReportReadFail
   }
 
-  private func isDiskOfMMAPFileCorrupted(_ file: MemoryFile, _ needReportReadFail: inout Bool)
-    -> Bool
-  {
+  private static func isDiskOfMMAPFileCorrupted(
+    _ file: inout MemoryFile,
+    _ needReportReadFail: inout Bool,
+    fileSystem: FileSystem
+  ) -> Bool {
     let descriptor = file.fileDescriptor
-    let oldPosition = self.fileSystem.lseek(descriptor, 0, SEEK_CUR)
-    _ = self.fileSystem.lseek(descriptor, 0, SEEK_SET)
+    let oldPosition = fileSystem.lseek(descriptor, 0, SEEK_CUR)
+    _ = fileSystem.lseek(descriptor, 0, SEEK_SET)
     var info: UInt32 = 0
     let size = withUnsafeMutableBytes(of: &info) {
-      self.fileSystem.read(descriptor, $0.baseAddress!, 4)
+      fileSystem.read(descriptor, $0.baseAddress!, 4)
     }
     let error = errno
-    _ = self.fileSystem.lseek(descriptor, oldPosition, SEEK_SET)
+    _ = fileSystem.lseek(descriptor, oldPosition, SEEK_SET)
     if size <= 0 {
       needReportReadFail = true
       Log.error("fail to read [\(file.path)] from fd [\(descriptor)], errno: \(error)")
@@ -262,7 +269,7 @@ extension StoreInstance {
   /// Decides whether the data can be loaded, falling back to the last confirmed size and checksum
   /// when the current ones do not match, and to the recovery policy when nothing matches
   /// (`checkDataValid`).
-  func checkDataValid(_ loadFromFile: inout Bool, _ needFullWriteback: inout Bool) {
+  mutating func checkDataValid(_ loadFromFile: inout Bool, _ needFullWriteback: inout Bool) {
     let fileSize = self.file.size
     if fileSize < fixed32Size {
       Log.error("check [\(self.id)] error: file size \(fileSize) is too small")
@@ -346,7 +353,7 @@ extension StoreInstance {
 
   /// Whether the first `actualSize` bytes of data have the checksum `crcDigest`, leaving the
   /// computed checksum in ``crcDigest``.
-  func checkFileCRCValid(_ actualSize: Int, _ crcDigest: UInt32) -> Bool {
+  mutating func checkFileCRCValid(_ actualSize: Int, _ crcDigest: UInt32) -> Bool {
     guard let memory = self.file.memory else { return false }
     self.crcDigest = CRC32.checksum(
       0,
