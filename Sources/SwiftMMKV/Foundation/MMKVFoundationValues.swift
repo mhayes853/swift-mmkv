@@ -19,6 +19,7 @@
   extension MMKVValueReader {
     /// Reads the key as a URL from its string. The result is `nil` if the string is not a valid
     /// URL.
+    @inlinable
     public func url() -> URL? {
       self.string().flatMap { URL(string: $0) }
     }
@@ -26,6 +27,7 @@
 
   extension MMKVValueWriter {
     /// Stores a URL as its absolute string.
+    @inlinable
     public mutating func set(_ value: URL) -> Bool {
       self.set(value.absoluteString)
     }
@@ -50,6 +52,7 @@
   extension MMKVValueReader {
     /// Reads the key as a UUID from its string, in uppercase or lowercase. The result is `nil`
     /// if the string is not a UUID.
+    @inlinable
     public func uuid() -> UUID? {
       self.string().flatMap { UUID(uuidString: $0) }
     }
@@ -57,6 +60,7 @@
 
   extension MMKVValueWriter {
     /// Stores a UUID as its string, in uppercase.
+    @inlinable
     public mutating func set(_ value: UUID) -> Bool {
       self.set(value.uuidString)
     }
@@ -135,6 +139,7 @@
   extension MMKVValueWriter {
     /// Stores a decimal as its string, such as `"12.5"`. A decimal that is not a number is not
     /// stored.
+    @inlinable
     public mutating func set(_ value: Decimal) -> Bool {
       guard !value.isNaN else { return false }
       return self.set(value.description)

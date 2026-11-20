@@ -16,6 +16,7 @@
     /// Reads the key as raw bytes, copied into a `Data`.
     ///
     /// A string value reads as its UTF-8 bytes, because MMKV stores the two the same way.
+    @inlinable
     public func data() -> Data? {
       self.withBytes { span in
         span.withUnsafeBytes { Data($0) }
@@ -25,6 +26,7 @@
 
   extension MMKVValueWriter {
     /// Stores the bytes of `value`, which JavaScript reads with `getBuffer`.
+    @inlinable
     public mutating func set(_ value: Data) -> Bool {
       value.withUnsafeBytes { self.set(bytes: $0.bytes) }
     }

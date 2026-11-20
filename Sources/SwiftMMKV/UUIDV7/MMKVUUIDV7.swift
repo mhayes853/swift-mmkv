@@ -19,6 +19,7 @@
   extension MMKVValueReader {
     /// Reads the key as a version 7 UUID from its string, in uppercase or lowercase. The result
     /// is `nil` if the string is not a version 7 UUID.
+    @inlinable
     public func uuidV7() -> UUIDV7? {
       self.string().flatMap { UUIDV7(uuidString: $0) }
     }
@@ -26,6 +27,7 @@
 
   extension MMKVValueWriter {
     /// Stores a version 7 UUID as its string, in uppercase.
+    @inlinable
     public mutating func set(_ value: UUIDV7) -> Bool {
       self.set(value.uuidString)
     }
