@@ -122,6 +122,7 @@ The defaults store values as JavaScript does, and `MMKVKeyCodingOptions` changes
 - An array is stored whole under one key, as a JSON string with the `Foundation` trait. Without
   it only arrays of strings can be stored, unless `arrays: .coded(encoder:decoder:)` names a coder.
   `[UInt8]` and `Data` are always stored as bytes.
+- `URL`, `UUID`, and `Decimal` are stored as strings, as they are under a key of their own.
 - Names are joined with `"."`, or with `separator`. An empty prefix makes the properties top-level
   keys. A name that contains the separator is not escaped.
 
@@ -590,7 +591,9 @@ identifier in different directories cannot be told apart.
 
 The library itself does not use Foundation. The `Foundation` trait, on by default, adds:
 
-- `Data` as an `MMKVValue`, and `URL` root directories.
+- `Data`, `URL`, `UUID`, and `Decimal` as `MMKVValue`s, and `URL` root directories. `Data` is
+  stored as bytes and the others as strings, which JavaScript reads with `getString`. A `Decimal`
+  can also be read from a number that JavaScript stored.
 - `JSONEncoder`, `JSONDecoder`, and the property list coders as coders for `encode` and
   `decode`, with JSON as the default when no coder is passed.
 

@@ -58,6 +58,9 @@ final class KeyDecodingContext {
     }
     #if Foundation
       if type == Data.self { return try self.stored(Data.self, key, codingPath) as? T }
+      if type == URL.self { return try self.stored(URL.self, key, codingPath) as? T }
+      if type == UUID.self { return try self.stored(UUID.self, key, codingPath) as? T }
+      if type == Decimal.self { return try self.stored(Decimal.self, key, codingPath) as? T }
     #endif
     return nil
   }
@@ -132,10 +135,14 @@ final class KeyDecodingContext {
     _ key: String,
     _ codingPath: [any CodingKey]
   ) throws -> V {
-    guard let value = self.store.value(forKey: key, as: type) else {
-      throw self.missing(key, codingPath)
-    }
-    return value
+    if let value = self.store.value(forKey: key, as: type) { return value }
+    guard self.store.contains(key) else { throw self.missing(key, codingPath) }
+    throw DecodingError.dataCorrupted(
+      DecodingError.Context(
+        codingPath: codingPath,
+        debugDescription: "The value stored for '\(key)' is not a valid \(type)."
+      )
+    )
   }
 
   /// The error for a key that has no value. A read that a suspended store turned away looks

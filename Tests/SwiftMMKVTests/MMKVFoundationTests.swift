@@ -9,6 +9,91 @@
       var fontSize: Double
     }
 
+    @Test func `A URL Is Stored As Its String`() throws {
+      let store = try makeStore()
+      let url = try #require(URL(string: "https://example.com/a?b=c#d"))
+
+      store.set(url, forKey: "url")
+      store.set("", forKey: "invalid")
+
+      #expect(store.value(forKey: "url", as: String.self) == "https://example.com/a?b=c#d")
+      #expect(store.value(forKey: "url", as: URL.self) == url)
+      #expect(store.value(forKey: "invalid", as: URL.self) == nil)
+      #expect(store.value(forKey: "missing", as: URL.self) == nil)
+    }
+
+    @Test func `A UUID Is Stored As Its String`() throws {
+      let store = try makeStore()
+      let uuid = UUID()
+
+      store.set(uuid, forKey: "uuid")
+      store.set(uuid.uuidString.lowercased(), forKey: "lowercase")
+      store.set("not a uuid", forKey: "invalid")
+
+      #expect(store.value(forKey: "uuid", as: String.self) == uuid.uuidString)
+      #expect(store.value(forKey: "uuid", as: UUID.self) == uuid)
+      #expect(store.value(forKey: "lowercase", as: UUID.self) == uuid)
+      #expect(store.value(forKey: "invalid", as: UUID.self) == nil)
+    }
+
+    @Test func `A Decimal Is Stored As Its String`() throws {
+      let store = try makeStore()
+      let decimal = try #require(Decimal(string: "-12345678901234567890.123456789"))
+
+      store.set(decimal, forKey: "decimal")
+      store.set(Decimal(string: "12.50")!, forKey: "price")
+
+      #expect(
+        store.value(forKey: "decimal", as: String.self) == "-12345678901234567890.123456789"
+      )
+      #expect(store.value(forKey: "decimal", as: Decimal.self) == decimal)
+      #expect(store.value(forKey: "price", as: Decimal.self) == Decimal(string: "12.5"))
+      #expect(store.value(forKey: "missing", as: Decimal.self) == nil)
+      #expect(!store.set(Decimal.nan, forKey: "nan"))
+    }
+
+    @Test(arguments: ["1e3", "+7", ".5", "0", "1234.56", "1E-7"])
+    func `A Decimal Reads Number Strings`(string: String) throws {
+      let store = try makeStore()
+
+      store.set(string, forKey: "decimal")
+
+      #expect(store.value(forKey: "decimal", as: Decimal.self) == Decimal(string: string))
+    }
+
+    /// `Decimal(string:)` reads the number a string starts with, which must not be taken for
+    /// the value of a key that holds something else.
+    @Test(arguments: ["12abc", "1.2.3", "1-2", "7 days"])
+    func `A Decimal Does Not Read The Start Of Another String`(string: String) throws {
+      let store = try makeStore()
+      let start = try #require(Decimal(string: string))
+
+      store.set(string, forKey: "decimal")
+
+      #expect(store.value(forKey: "decimal", as: Decimal.self) != start)
+    }
+
+    @Test(arguments: [0.1, 12.5, -3, 0, 1e-7, 1_234_567.25, 1234.56, 1e21])
+    func `A Decimal Reads A Double`(double: Double) throws {
+      let store = try makeStore()
+
+      store.set(double, forKey: "number")
+
+      #expect(store.value(forKey: "number", as: Decimal.self) == Decimal(string: "\(double)"))
+    }
+
+    @Test func `Typed Keys Hold Foundation Values`() throws {
+      let store = try makeStore()
+      let homepage = MMKVStore.Key<URL>("homepage")
+      let price = MMKVStore.DefaultedKey<Decimal>("price", default: 0)
+      let url = try #require(URL(string: "https://example.com"))
+
+      store.set(url, for: homepage)
+
+      #expect(store.value(for: homepage) == url)
+      #expect(store.value(for: price) == 0)
+    }
+
     @Test func `Data Round Trips As Raw Bytes`() throws {
       let store = try makeStore()
       let data = Data([0, 1, 2, 255])

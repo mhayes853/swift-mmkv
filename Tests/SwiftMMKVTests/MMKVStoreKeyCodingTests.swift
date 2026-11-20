@@ -364,6 +364,48 @@ private let settings = Settings(
       #expect(try store.decode([Int].self, fromKeysUnder: "list") == [1, 2, 3])
     }
 
+    @Test func `Stores Foundation Values As They Are Stored Alone`() throws {
+      struct Account: Codable, Equatable {
+        var id: UUID
+        var homepage: URL
+        var balance: Decimal
+        var backup: URL?
+      }
+      let store = try makeStore()
+      let account = Account(
+        id: UUID(),
+        homepage: URL(string: "https://example.com/me")!,
+        balance: Decimal(string: "12.50")!,
+        backup: nil
+      )
+
+      try store.encode(account, intoKeysUnder: "account")
+
+      #expect(store.keys == ["account.id", "account.homepage", "account.balance"])
+      #expect(store.value(forKey: "account.id", as: String.self) == account.id.uuidString)
+      #expect(store.value(forKey: "account.homepage", as: String.self) == "https://example.com/me")
+      #expect(store.value(forKey: "account.balance", as: String.self) == "12.5")
+      #expect(try store.decode(Account.self, fromKeysUnder: "account") == account)
+    }
+
+    @Test func `Reads A Decimal From A Number`() throws {
+      let store = try makeStore()
+      store.set(0.1, forKey: "price")
+
+      #expect(try store.decode(Decimal.self, fromKeysUnder: "price") == Decimal(string: "0.1"))
+    }
+
+    @Test func `Throws For A Value That Is Not Valid`() throws {
+      let store = try makeStore()
+      store.set("not a uuid", forKey: "id")
+
+      #expect {
+        try store.decode(UUID.self, fromKeysUnder: "id")
+      } throws: { error in
+        if case DecodingError.dataCorrupted = error { true } else { false }
+      }
+    }
+
     @Test func `Stores Data As Bytes`() throws {
       let store = try makeStore()
 

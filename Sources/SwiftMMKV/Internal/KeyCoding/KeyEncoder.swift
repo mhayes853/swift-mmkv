@@ -71,7 +71,23 @@ struct KeyEncodingContext {
       return try self.integerWrite(value, codingPath: codingPath)
     default:
       #if Foundation
+        // Stored as they are outside a coder. A URL and a decimal would otherwise encode
+        // themselves as several keys, which is no use to another reader of the store.
         if let value = value as? Data { return Self.write(value) }
+        if let value = value as? URL { return Self.write(value) }
+        if let value = value as? UUID { return Self.write(value) }
+        if let value = value as? Decimal {
+          guard !value.isNaN else {
+            throw EncodingError.invalidValue(
+              value,
+              EncodingError.Context(
+                codingPath: codingPath,
+                debugDescription: "A decimal that is not a number cannot be stored."
+              )
+            )
+          }
+          return Self.write(value)
+        }
       #endif
       return nil
     }
