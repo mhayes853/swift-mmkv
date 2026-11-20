@@ -230,6 +230,10 @@ struct SlotTable<Slot: HashTableSlot>: ~Copyable {
     // Sorting plain integers that pack each slot's place in the order above its index is much
     // faster than sorting with a comparison that reads the table, and the indices are read back
     // out of them rather than copied into an array of their own.
+    //
+    // An empty table skips the initializer: given no capacity, it writes the count into the
+    // standard library's shared empty-array storage, which two stores would race on.
+    guard self.count > 0 else { return [UInt64]().lazy.map { Int(truncatingIfNeeded: $0) } }
     let slots = self.slots
     let capacity = self.capacity
     var packed = [UInt64](unsafeUninitializedCapacity: self.count) { buffer, initialized in
