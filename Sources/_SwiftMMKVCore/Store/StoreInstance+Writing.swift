@@ -466,6 +466,14 @@ extension StoreState {
   /// Makes room for `newSize` more bytes, compacting the file, and growing it if that is not
   /// enough (`ensureMemorySize`).
   mutating func ensureMemorySize(_ newSize: Int) -> Bool {
+    if self.isMultiProcess, let output = self.output, newSize > 0 {
+      // The page holding the end of the data is part of the file however another process has
+      // resized it, so only a write that reaches a later page needs the file's size.
+      let start = fixed32Size + output.position
+      if (start + newSize - 1) / pageSize != (start - 1) / pageSize {
+        self.remapIfFileShrunk()
+      }
+    }
     guard self.checkFileValid(), self.checkWritable() else { return false }
     let maximumActualSize = Int(UInt32.max)
     if newSize > maximumActualSize {
@@ -826,7 +834,7 @@ extension StoreState {
     guard self.checkWritable() else { return }
     self.lockProcess(.exclusive)
     defer { self.unlockProcess(.exclusive) }
-    self.checkLoadData()
+    self.checkLoadData(checkingFileSize: true)
     guard self.checkFileValid() else { return }
     if self.actualSize == 0 {
       self.clearAll()
@@ -867,7 +875,7 @@ extension StoreState {
     guard self.checkWritable() else { return }
     self.lockProcess(.exclusive)
     defer { self.unlockProcess(.exclusive) }
-    self.checkLoadData()
+    self.checkLoadData(checkingFileSize: true)
     guard self.checkFileValid() else { return }
     if self.file.size == self.expectedCapacity && self.actualSize == 0 {
       return

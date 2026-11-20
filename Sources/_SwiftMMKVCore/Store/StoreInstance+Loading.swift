@@ -100,7 +100,11 @@ extension StoreState {
 
   /// Loads the files on first use, and in a multi-process store reloads them if another process
   /// changed them since (`checkLoadData`).
-  mutating func checkLoadData() {
+  ///
+  /// - Parameter checkingFileSize: Whether to also map the data file again if another process
+  ///   shrank it without starting a new sequence (see ``remapIfFileShrunk()``). Operations that
+  ///   rewrite or measure the whole file pass `true`.
+  mutating func checkLoadData(checkingFileSize: Bool = false) {
     if self.needLoadFromFile {
       self.sharedProcessLock.lock()
       defer { self.sharedProcessLock.unlock() }
@@ -117,13 +121,35 @@ extension StoreState {
       self.clearMemoryCache()
       self.loadFromFile()
       self.notifyContentChanged()
-    } else if self.metaInfo.crcDigest != metaInfo.crcDigest
+      return
+    }
+    if self.metaInfo.crcDigest != metaInfo.crcDigest
       || self.metaInfo.actualSize != metaInfo.actualSize
     {
       // Another process appended to it.
       self.partialLoadFromFile()
       self.notifyContentChanged()
     }
+    if checkingFileSize {
+      self.remapIfFileShrunk()
+    }
+  }
+
+  /// Maps a multi-process store's data file again if it is now smaller than its mapping.
+  ///
+  /// MMKV's `trim` starts no new sequence when the records are already written back, so another
+  /// instance can shrink the file with nothing in the metadata to say so. The records stay where
+  /// they were, but writing to the mapping past the new end of the file stops the process with
+  /// `SIGBUS`. Called with the exclusive file lock held, so the file cannot shrink again before
+  /// the write. No instance shrinks a file below one page, so a mapping of one page is never
+  /// checked.
+  mutating func remapIfFileShrunk() {
+    guard self.isMultiProcess, self.file.size > pageSize else { return }
+    let fileSize = self.file.actualFileSize
+    guard fileSize < self.file.size else { return }
+    Log.warning("[\(self.id)] file shrank from \(self.file.size) to \(fileSize) unannounced")
+    guard self.file.remapToFileSize(), let output = self.output else { return }
+    self.output = OutputState(position: output.position, size: self.file.size - fixed32Size)
   }
 
   /// Forgets the index and unmaps the data file, so that the next operation loads again

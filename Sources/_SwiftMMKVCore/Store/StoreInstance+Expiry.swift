@@ -33,7 +33,7 @@ extension StoreState {
     guard self.checkWritable() else { return false }
     self.lockProcess(.exclusive)
     defer { self.unlockProcess(.exclusive) }
-    self.checkLoadData()
+    self.checkLoadData(checkingFileSize: true)
     guard self.isFileValid, self.metaFile.isFileValid else {
       Log.warning("[\(self.id)] file not valid")
       return false

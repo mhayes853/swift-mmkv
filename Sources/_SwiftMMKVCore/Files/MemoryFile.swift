@@ -196,6 +196,24 @@ package struct MemoryFile: ~Copyable {
     fileLock.unlock(.shared)
   }
 
+  /// Maps the file again at its size on disk, which another process may have made smaller than
+  /// the mapping.
+  ///
+  /// - Returns: Whether the file is mapped.
+  @discardableResult
+  package mutating func remapToFileSize() -> Bool {
+    guard self.openIfNeeded() else { return false }
+    guard let size = self.fileSystem.fileSize(self.descriptor), size > 0 else {
+      self.clearMemoryCache()
+      return false
+    }
+    if let memory = self.memory {
+      _ = self.fileSystem.munmap(memory, self.size)
+    }
+    self.size = size
+    return self.mapOrCleanUp(fileLock: nil)
+  }
+
   /// Unmaps the file and closes its descriptor (`clearMemoryCache` and `doCleanMemoryCache`).
   package mutating func clearMemoryCache() {
     if let memory = self.memory {

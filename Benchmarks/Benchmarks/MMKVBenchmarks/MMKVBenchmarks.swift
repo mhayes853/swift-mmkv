@@ -94,6 +94,16 @@ private func registerValueBenchmarks(_ engine: MMKVConfiguration.Engine) {
     multiProcessReads.value = try openStore(engine: engine, mode: .multiProcess, fill: setString)
   }
 
+  let multiProcessWrites = Fixture<MMKVStore>()
+  Benchmark("write.string.multiProcess/\(engine)", configuration: perOperation) { benchmark in
+    for _ in benchmark.scaledIterations {
+      let index = multiProcessWrites.next()
+      multiProcessWrites.value.set(strings[index], forKey: keys[index])
+    }
+  } setup: {
+    multiProcessWrites.value = try openStore(engine: engine, mode: .multiProcess)
+  }
+
   // Overwriting a few keys over and over fills the file with stale values, so it is compacted
   // regularly.
   let overwrites = Fixture<MMKVStore>()

@@ -45,10 +45,19 @@ where that work stands.
   A third difference is a fix. When `trim` shrinks a file whose records are already written
   back, MMKV starts no new sequence, so another instance with the file open keeps mapping the
   old size and crashes with `SIGBUS` once it appends past the new end. With 4 KB pages, on
-  Linux, the differential test of both cores sharing one file hit this. In multi-process mode
-  the Swift core starts a new sequence after every shrink, which tells the C++ core to reload.
-  A single-process store is still identical byte for byte. The C++ core still trims without a
-  new sequence, so a Swift instance that shares a file with it can crash the same way.
+  Linux, the differential test of both cores sharing one file hit this. Upstream once compared
+  the file's size with its mapping in `checkLoadData`, and commented the check out on the
+  grounds that every resize starts a new sequence. The Swift core handles both directions in
+  multi-process mode:
+
+  - It starts a new sequence after every shrink of its own, which tells the C++ core to reload.
+    A single-process store is still identical byte for byte.
+  - It notices a shrink it was not told about, and maps the file again at its new size. Only a
+    write can fault, and only past the page that holds the end of the data, which is always part
+    of the file. So an append looks up the file's size (`stat`) only when it reaches a later
+    page, and operations that rewrite or measure the whole file always do. With 16 KB pages and
+    short strings that is about one write in 200, and writes to a multi-process store take about
+    10 ns (1%) longer at the median. Single-process stores are unaffected.
 - **Cryptography stays vendored C.** AES (with the ARMv8 instructions), CFB128, and MD5 come from
   the OpenSSL-derived sources MMKV already ships, moved into a C target of their own
   (`CSwiftMMKVCrypto`) with their symbols prefixed in source. The Swift core only holds the

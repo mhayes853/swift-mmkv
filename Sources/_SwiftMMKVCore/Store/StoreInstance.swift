@@ -543,7 +543,7 @@ extension StoreState {
   mutating func removeValues(forKeys keys: [String]) -> Bool {
     self.lockProcess(.exclusive)
     defer { self.unlockProcess(.exclusive) }
-    self.checkLoadData()
+    self.checkLoadData(checkingFileSize: true)
     var deleteCount = 0
     for key in keys {
       let removed = withKeyBytes(key) { key in
@@ -610,7 +610,7 @@ extension StoreInstance {
   /// The size of the data file.
   package var totalSize: Int {
     self.withState { state in
-      state.checkLoadData()
+      state.checkLoadData(checkingFileSize: true)
       return state.file.size
     }
   }
@@ -701,7 +701,7 @@ extension StoreInstance {
 extension StoreState {
   /// `importFrom`, with both stores' exclusive file locks held.
   static func importAll(into target: inout StoreState, from source: inout StoreState) -> Int {
-    target.checkLoadData()
+    target.checkLoadData(checkingFileSize: true)
     source.checkLoadData()
     guard target.isFileValid, source.isFileValid else {
       Log.warning("[\(target.id)] or [\(source.id)] file not valid")

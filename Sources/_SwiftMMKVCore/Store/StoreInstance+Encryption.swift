@@ -391,7 +391,7 @@ extension StoreState {
     guard self.checkWritable() else { return false }
     self.lockProcess(.exclusive)
     defer { self.unlockProcess(.exclusive) }
-    self.checkLoadData()
+    self.checkLoadData(checkingFileSize: true)
     guard self.checkFileValid() else { return false }
     // The store's cryptor once re-encrypted, or `nil` for plain text.
     let newCrypter: AESCryptor?

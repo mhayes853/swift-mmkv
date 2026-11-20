@@ -242,6 +242,37 @@ import Testing
     #expect(cxx.byteSize == swift.byteSize)
   }
 
+  // The other way around, the Swift core must notice the shrink itself. Without that, the large
+  // write below fits the old mapping and stops the process with SIGBUS.
+  @Test func `The Swift Core Survives The C++ Core Shrinking A Written Back File`() throws {
+    let directory = temporaryRootDirectory()
+    let cxx = try makeStore(
+      id: "shrink",
+      rootDirectory: directory,
+      mode: .multiProcess,
+      engine: .cxx
+    )
+    let swift = try makeStore(
+      id: "shrink",
+      rootDirectory: directory,
+      mode: .multiProcess,
+      engine: .swift
+    )
+    cxx.set(Int32(1), forKey: "kept")
+    cxx.set(2, forKey: "removed")
+    cxx.set([UInt8](repeating: 7, count: 200_000), forKey: "large")
+    cxx.removeValues(forKeys: ["large", "removed"])
+    #expect(swift.value(forKey: "kept", as: Int32.self) == 1)
+
+    cxx.trim()
+    // The write itself must notice the shrink, so nothing that measures the file comes first.
+    let value = [UInt8](repeating: 9, count: 100_000)
+    #expect(swift.set(value, forKey: "after"))
+    #expect(cxx.value(forKey: "after", as: [UInt8].self) == value)
+    #expect(cxx.value(forKey: "kept", as: Int32.self) == 1)
+    #expect(swift.byteSize == cxx.byteSize)
+  }
+
   @Test func `Each Core Reports The Other's Writes As External`() throws {
     let directory = temporaryRootDirectory()
     let cxx = try makeStore(
