@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>SwiftMMKV · Memory, core by core</title>
+<style>
+:root{
+  --bg:#0a0d13; --bg2:#0e131c; --panel:#121925; --panel2:#182133; --line:#232f45; --line2:#31415f;
+  --text:#e8edf5; --muted:#9aa5ba; --dim:#606c84;
+  /* Roles, the same in both cores. Validated on --panel (dark): entry↔keys ΔE 19.6 CVD. */
+  --entry:#3987e5;      /* one entry per key: a Swift slot, a C++ node */
+  --keys:#199e70;       /* keys and values kept apart from the entry: the Swift arena, C++ value buffers */
+  --other:#4a5672;      /* allocator slack and anything not broken down */
+  /* Series in the chart. Validated: ΔE 26.0 CVD, 27.0 normal. */
+  --swift:#9085e9; --cxx:#d95926;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "JetBrains Mono", "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;color:var(--text);font:15px/1.55 var(--sans);
+  background:radial-gradient(1100px 520px at 75% -8%, #172342 0%, rgba(23,35,66,0) 62%), var(--bg);}
+code{font-family:var(--mono);font-size:.9em;color:#e3e9f5;background:#19233a;border:1px solid #26334d;padding:0 .28em;border-radius:4px;overflow-wrap:anywhere}
+pre{font:12.5px/1.5 var(--mono);background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow-x:auto;margin:8px 0 0}
+a{color:#56c8ff}
+.hero{max-width:1140px;margin:0 auto;padding:44px 18px 18px}
+.eyebrow{font:600 12px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:#ffb454}
+h1{font-size:clamp(27px,4.4vw,42px);line-height:1.08;margin:.45em 0 .35em;letter-spacing:-.02em}
+.hero p{color:var(--muted);max-width:820px;font-size:16px;margin:.2em 0 .6em}
+.facts{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.fact{font:12px/1.35 var(--mono);padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:rgba(18,25,37,.8);color:var(--muted)}
+.fact b{color:var(--text);font-weight:600}
+nav.top{position:sticky;top:0;z-index:30;background:rgba(10,13,19,.84);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+nav.top .in{max-width:1140px;margin:0 auto;display:flex;gap:2px;overflow-x:auto;padding:8px 12px;scrollbar-width:none}
+nav.top .in::-webkit-scrollbar{display:none}
+nav.top a{flex:none;color:var(--muted);text-decoration:none;font-size:13px;padding:7px 8px;border-radius:8px;white-space:nowrap}
+nav.top a:hover{color:var(--text);background:var(--panel)}
+nav.top a .n{font-family:var(--mono);color:var(--dim);margin-right:6px;font-size:12px}
+main{max-width:1140px;margin:0 auto;padding:0 12px 70px}
+section.scene{margin-top:46px;scroll-margin-top:58px}
+.sh{display:flex;align-items:baseline;gap:12px;padding:0 4px}
+.sh .num{font:600 13px var(--mono);color:var(--dim)}
+h2{font-size:clamp(20px,2.7vw,27px);margin:0;letter-spacing:-.01em;line-height:1.2}
+.lede{color:var(--muted);max-width:860px;margin:.45em 4px 14px}
+.card{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:0 20px 50px -30px rgba(0,0,0,.8)}
+.card + .card{margin-top:14px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font:12px var(--mono);color:var(--muted);margin-bottom:16px}
+.legend span{white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+.sw{display:inline-block;width:12px;height:12px;border-radius:3px;flex:none}
+.sw.line{height:3px;border-radius:2px;width:18px}
+.sw.dash{background:repeating-linear-gradient(90deg,var(--c) 0 5px,transparent 5px 8px)!important}
+
+/* Fills by role */
+.r-entry{background:var(--entry)}
+.r-table{background:repeating-linear-gradient(135deg,rgba(57,135,229,.55) 0 3px,rgba(57,135,229,.16) 3px 7px)}
+.r-keys{background:var(--keys)}
+.r-other{background:var(--other)}
+.r-file{background:transparent;box-shadow:inset 0 0 0 1px var(--line2)}
+
+/* 01: one key */
+.keyrows{display:flex;flex-direction:column;gap:22px}
+.krow{display:grid;grid-template-columns:150px 1fr 92px;gap:6px 14px;align-items:center}
+.kname{font-weight:650;font-size:14px;line-height:1.3}
+.kname small{display:block;font:12px var(--mono);color:var(--dim);font-weight:400}
+.kbar{display:flex;gap:2px;height:22px}
+.kbar > div{height:100%;border-radius:2px}
+.kbar > div:first-child{border-radius:4px 2px 2px 4px}
+.kbar > div:last-child{border-radius:2px 4px 4px 2px}
+.ktotal{text-align:right;font:600 16px var(--mono);font-variant-numeric:tabular-nums}
+.ktotal small{display:block;font:11.5px var(--mono);color:var(--dim);font-weight:400}
+.parts{grid-column:2 / 4;display:flex;flex-wrap:wrap;gap:6px}
+.part{display:inline-flex;align-items:center;gap:6px;font:12px var(--mono);color:var(--muted);border:1px solid var(--line);border-radius:7px;padding:3px 7px;background:rgba(10,13,19,.35)}
+.part b{color:var(--text);font-weight:600}
+.part .sw{width:9px;height:9px;border-radius:2px}
+.fields{grid-column:2 / 4;font:12px/1.5 var(--mono);color:var(--dim)}
+.fields span{color:var(--muted)}
+
+/* 02: chart */
+.chartwrap{position:relative;height:330px}
+.chartwrap svg{display:block;width:100%;height:100%;overflow:visible}
+.axis text{fill:var(--dim);font:11px var(--mono)}
+.grid line{stroke:#1d2738;stroke-width:1}
+.tip{position:fixed;z-index:50;pointer-events:none;background:#0f1520;border:1px solid var(--line2);border-radius:10px;padding:8px 10px;font:12px/1.45 var(--mono);color:var(--text);box-shadow:0 12px 30px -12px rgba(0,0,0,.9);opacity:0;transition:opacity .08s;max-width:280px}
+.tip .h{color:var(--muted);margin-bottom:3px}
+.tip .row{display:flex;align-items:center;gap:7px;justify-content:space-between}
+.tip .row span:first-child{display:inline-flex;align-items:center;gap:6px}
+details.table{margin-top:12px}
+details.table summary{cursor:pointer;color:var(--muted);font:12.5px var(--mono)}
+table{border-collapse:collapse;width:100%;margin-top:8px;font:12.5px var(--mono);font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:5px 8px;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:600}
+.tablewrap{overflow-x:auto}
+
+/* 03: occupancy */
+.occ{display:flex;flex-wrap:wrap;gap:22px 40px}
+.occ-item{display:flex;flex-wrap:wrap;gap:16px;align-items:center}
+.cells{display:grid;grid-template-columns:repeat(16,10px);gap:3px}
+.cells i{width:10px;height:10px;border-radius:2px;box-shadow:inset 0 0 0 1px rgba(57,135,229,.5)}
+.cells i.on{background:var(--entry);box-shadow:none}
+.occ-text{font-size:13.5px;color:var(--muted);line-height:1.5}
+.occ-text b{display:block;font:650 22px var(--mono);color:var(--text)}
+
+/* 04, 05: heap bars */
+.scen{display:flex;flex-direction:column;gap:26px}
+.stitle{display:flex;justify-content:space-between;align-items:baseline;gap:6px 12px;flex-wrap:wrap;margin-bottom:8px}
+.stitle b{font-size:15px}
+.stitle span{font:12px var(--mono);color:var(--muted)}
+.brow{display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:center;margin-bottom:6px}
+.who{font:12px var(--mono);color:var(--muted)}
+.btrack{display:flex;align-items:center;gap:10px;min-width:0}
+.bar{display:flex;gap:2px;height:24px;flex:none;min-width:4px}
+.bar > div{height:100%;border-radius:2px;position:relative;display:flex;align-items:center;justify-content:center;font:11px var(--mono);color:#fff;white-space:nowrap;cursor:default}
+.bar > div:first-child{border-radius:4px 2px 2px 4px}
+.bar > div:last-child{border-radius:2px 4px 4px 2px}
+.bar > div:only-child{border-radius:4px}
+.bar > div.r-table, .bar > div.r-other{color:var(--text)}
+.bval{font:600 13px var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.bval small{font-weight:400;color:var(--dim);margin-left:6px}
+.filenote{font:12px var(--mono);color:var(--dim);margin:2px 0 0 64px}
+
+/* 06: file */
+.filemap{display:flex;gap:2px;height:26px;margin:10px 0 6px}
+.filemap div{height:100%;border-radius:3px}
+.filelabels{display:flex;justify-content:space-between;font:12px var(--mono);color:var(--muted);gap:10px;flex-wrap:wrap}
+.note{font-size:13.5px;color:var(--muted);max-width:860px;margin:10px 0 0}
+
+footer{max-width:1140px;margin:0 auto;padding:10px 18px 60px;color:var(--dim);font-size:13px}
+footer code{color:var(--muted)}
+@media (max-width:640px){
+  .krow{grid-template-columns:1fr 78px}
+  .krow .kname{grid-column:1 / 3}
+  .parts,.fields{grid-column:1 / 3}
+  .brow{grid-template-columns:40px 1fr;gap:8px}
+  .filenote{margin-left:48px}
+  .card{padding:14px}
+  .chartwrap{height:280px}
+}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="eyebrow">SwiftMMKV · Memory</div>
+  <h1>Where each core's memory goes, key by key</h1>
+  <p>The same stores, opened by the C++ core and by the Swift core, with each core's heap taken apart into what it is made of. The Swift core keeps one fixed-size slot per key in a hash table, plus an arena for an encrypted store's keys and small values. The C++ core allocates a node per key and, for an encrypted store, a buffer per value. Most of what the Swift core still spends is empty slots.</p>
+  <div class="facts">
+    <span class="fact">plain, 100,000 keys <b>9.0 MB → 4.0 MB</b></span>
+    <span class="fact">encrypted, 100,000 keys <b>16.6 MB → 10.7 MB</b></span>
+    <span class="fact">Swift table <b>38%</b> full at 100,000 keys</span>
+    <span class="fact">Linux x86_64 · Swift 6.3.3 · glibc 2.44 · libstdc++</span>
+  </div>
+</header>
+<nav class="top" aria-label="Sections"><div class="in">
+  <a href="#key"><span class="n">01</span>One key</a>
+  <a href="#curve"><span class="n">02</span>Per key, by size</a>
+  <a href="#occupancy"><span class="n">03</span>Empty slots</a>
+  <a href="#open"><span class="n">04</span>After opening</a>
+  <a href="#writes"><span class="n">05</span>During writes</a>
+  <a href="#file"><span class="n">06</span>The mapped file</a>
+  <a href="#platforms"><span class="n">07</span>Other platforms</a>
+</div></nav>
+<main>
+
+<section class="scene" id="key">
+  <div class="sh"><span class="num">01</span><h2>What one key costs</h2></div>
+  <p class="lede">Heap bytes for one key of the memory report's store, a key like <code>key-12345</code> holding a 50-character string (51 bytes stored), drawn to one scale. The C++ sizes come from compiling MMKV's <code>KeyValueHolder.h</code> against libstdc++ and asking glibc what each allocation really takes. The bucket and empty-slot shares are for 100,000 keys.</p>
+  <div class="card">
+    <div class="legend">
+      <span><i class="sw r-entry"></i>entry for the key</span>
+      <span><i class="sw r-table"></i>table overhead (empty slots, buckets)</span>
+      <span><i class="sw r-keys"></i>keys and values held apart</span>
+      <span><i class="sw r-other"></i>allocator header and slack</span>
+      <span><i class="sw r-file"></i>in the mapped file, not the heap</span>
+    </div>
+    <div class="keyrows" id="keyrows"></div>
+  </div>
+</section>
+
+<section class="scene" id="curve">
+  <div class="sh"><span class="num">02</span><h2>Bytes per key as a store grows</h2></div>
+  <p class="lede">Computed from the layouts in 01 for every store size from 2,000 to 200,000 keys; the dots are what <code>MemoryReport</code> measured. The Swift lines are a sawtooth: the table doubles at three-quarters full, so right after a doubling each key carries more than twice its slot. The C++ lines step too, at each bucket rehash, but the 80- or 160-byte base dwarfs it.</p>
+  <div class="card">
+    <div class="legend">
+      <span><i class="sw line" style="background:var(--swift)"></i>Swift, plain</span>
+      <span><i class="sw line dash" style="--c:var(--swift)"></i>Swift, encrypted</span>
+      <span><i class="sw line" style="background:var(--cxx)"></i>C++, plain</span>
+      <span><i class="sw line dash" style="--c:var(--cxx)"></i>C++, encrypted</span>
+      <span><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4" fill="var(--text)" stroke="var(--panel)" stroke-width="2"/></svg>measured</span>
+    </div>
+    <div class="chartwrap" id="chart" role="img" aria-label="Heap bytes per key against key count for both cores, plain and encrypted"></div>
+    <details class="table"><summary>Show as a table</summary><div class="tablewrap"><table id="curvetable"></table></div></details>
+  </div>
+</section>
+
+<section class="scene" id="occupancy">
+  <div class="sh"><span class="num">03</span><h2>How much of the Swift table is empty</h2></div>
+  <p class="lede">A table's capacity is a power of two and it doubles once it is three-quarters full, so it is between 37.5% and 75% full. Loading shrinks it to the smallest such capacity, which for the round numbers measured here happens to be a poor fit at 100,000 keys. Each grid is 64 cells standing for the whole table.</p>
+  <div class="card"><div class="occ" id="occ"></div></div>
+</section>
+
+<section class="scene" id="open">
+  <div class="sh"><span class="num">04</span><h2>Heap after opening a store</h2></div>
+  <p class="lede">What each core's heap holds once a store of short strings is open and loaded, as <code>MemoryReport</code> measures it. The totals are measured; the parts are the layouts in 01 multiplied out, and they account for every measured total to within 10 KB. Each pair of bars shares a scale.</p>
+  <div class="card">
+    <div class="legend">
+      <span><i class="sw r-entry"></i>entries</span>
+      <span><i class="sw r-table"></i>table overhead</span>
+      <span><i class="sw r-keys"></i>keys and values held apart</span>
+      <span><i class="sw r-other"></i>other</span>
+    </div>
+    <div class="scen" id="openbars"></div>
+    <details class="table"><summary>Show as a table</summary><div class="tablewrap"><table id="opentable"></table></div></details>
+  </div>
+</section>
+
+<section class="scene" id="writes">
+  <div class="sh"><span class="num">05</span><h2>Heap growth over 2,000,000 writes</h2></div>
+  <p class="lede">A store of 10,000 keys written 200 times over, which makes each core rewrite its file many times. Measured as the change in anonymous memory from before opening to the end of the loop. Neither core grows as the writes go on. "Other" holds what this measurement can't split: allocator slack, and in the Swift core's encrypted store, arena space waiting to be compacted (it compacts at half garbage).</p>
+  <div class="card">
+    <div class="scen" id="writebars"></div>
+    <details class="table"><summary>Show as a table</summary><div class="tablewrap"><table id="writetable"></table></div></details>
+  </div>
+</section>
+
+<section class="scene" id="file">
+  <div class="sh"><span class="num">06</span><h2>The mapped file, the same in both</h2></div>
+  <p class="lede">Outside the heap, both cores map the store's file, and they write identical bytes to it. Loading reads every record, so every page holding data is resident afterwards in either core.</p>
+  <div class="card">
+    <b>Plain, 100,000 keys: an 8 MB file</b>
+    <div class="filemap"><div class="r-file" style="flex:6080;background:rgba(57,135,229,.18)"></div><div class="r-file" style="flex:2112"></div></div>
+    <div class="filelabels"><span>6.0 MB of records, resident after loading</span><span>2.1 MB not yet written</span></div>
+    <p class="note">On a disk, these pages are clean once written back, so the system can drop them, and iOS does not count them against an app. On a tmpfs, such as <code>/tmp</code> on the Linux machine measured here, they are always dirty and show up in private dirty memory, which inflates <code>MemoryReport</code>'s Linux footprint column by about the file's size for both cores. The heap figures above don't include them.</p>
+  </div>
+</section>
+
+<section class="scene" id="platforms">
+  <div class="sh"><span class="num">07</span><h2>Other platforms</h2></div>
+  <p class="lede">From <code>Docs/swift-core-migration.md</code>, for comparison. On Apple platforms the C++ core is built against libc++, whose hash node is smaller (56 bytes for a plain store), so the gap is narrower there than on Linux.</p>
+  <div class="card"><div class="tablewrap"><table>
+    <tr><th>Store</th><th>C++ core</th><th>Swift core</th></tr>
+    <tr><td>Plain, 100,000 keys, heap per key (macOS)</td><td>72 B</td><td>41 B</td></tr>
+    <tr><td>Encrypted, 100,000 keys, heap per key (macOS)</td><td>152 B</td><td>112 B</td></tr>
+    <tr><td>Plain, 100,000 keys, private dirty (Android)</td><td>8.8 MB</td><td>4.1 MB</td></tr>
+    <tr><td>Encrypted, 100,000 keys, private dirty (Android)</td><td>18.1 MB</td><td>11.1 MB</td></tr>
+    <tr><td>Plain, 100,000 keys, heap per key (Linux, this page)</td><td>93 B</td><td>42 B</td></tr>
+    <tr><td>Encrypted, 100,000 keys, heap per key (Linux, this page)</td><td>173 B</td><td>112 B</td></tr>
+  </table></div></div>
+</section>
+</main>
+<footer>
+  <p>Measured on Linux x86_64 with Swift 6.3.3, glibc 2.44 and libstdc++, from the sources on branch <code>t3/assess-swift-mmkv-rewrite</code>: <code>Sources/_SwiftMMKVCore/Coding/SlotTable.swift</code>, <code>Coding/RecordIndex.swift</code> and <code>Store/CryptIndex.swift</code> for the Swift core, and <code>Sources/CSwiftMMKVCore/mmkv/KeyValueHolder.h</code> for the C++ core, whose node is 64 bytes requested and 80 allocated for a plain store, 80 and 96 for an encrypted one, with a 64-byte buffer per value of 28 to 256 bytes and 8 bytes per bucket. To measure again:</p>
+  <pre>cd Benchmarks
+swift run -c release MemoryReport              # sections 04 and 07
+swift run -c release MemoryReport 1000 50000   # other key counts</pre>
+  <p>Section 05 came from a loop of <code>store.set(_:forKey:)</code> over 10,000 keys, reading <code>RssAnon</code> from <code>/proc/self/status</code> before opening and after the last write; it is not yet one of the benchmarks.</p>
+</footer>
+<div class="tip" id="tip" role="tooltip"></div>
+<noscript><p style="text-align:center;color:#ff6b7d">The charts need JavaScript.</p></noscript>
+<script>
+'use strict';
+const KB = n => n >= 1000 ? (n / 1024).toFixed(1) + ' MB' : Math.round(n).toLocaleString('en-US') + ' KB';
+const tip = document.getElementById('tip');
+function showTip(html, x, y) {
+  tip.innerHTML = html; tip.style.opacity = 1;
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.max(8, Math.min(innerWidth - w - 8, x + 14)) + 'px';
+  tip.style.top = Math.max(8, Math.min(innerHeight - h - 8, y - h - 12)) + 'px';
+}
+function hideTip() { tip.style.opacity = 0; }
+function hoverable(el, html) {
+  el.addEventListener('pointermove', e => showTip(html, e.clientX, e.clientY));
+  el.addEventListener('pointerleave', hideTip);
+  el.addEventListener('pointerdown', e => showTip(html, e.clientX, e.clientY));
+}
+
+/* ---- The model: bytes per key for each core, from the layouts ---- */
+// libstdc++'s bucket counts as 2,000 to 200,000 keys are inserted, measured.
+const PRIMES = [2357, 5087, 10273, 20753, 42043, 85229, 172933, 351061];
+const buckets = n => PRIMES.find(p => p >= n);
+function slots(n) { let c = 16; while (n * 4 > c * 3) c *= 2; return c; }
+// Keys are "key-0" … "key-(n-1)"; values are 51 bytes stored.
+function meanKeyLength(n) {
+  let total = 0, digits = 1, start = 0, next = 10;
+  while (start < n) { const end = Math.min(n, next); total += (end - start) * (4 + digits); start = end; next *= 10; digits++; }
+  return total / n;
+}
+const model = {
+  swiftPlain: n => 16 * slots(n) / n,
+  swiftCrypt: n => 20 * slots(n) / n + meanKeyLength(n) + 51,
+  cxxPlain: n => 80 + 8 * buckets(n) / n,
+  cxxCrypt: n => 96 + 64 + 8 * buckets(n) / n,
+};
+const SERIES = [
+  { key: 'swiftPlain', name: 'Swift, plain', color: 'var(--swift)', dash: null, measured: [[10000, 27], [100000, 42]] },
+  { key: 'swiftCrypt', name: 'Swift, encrypted', color: 'var(--swift)', dash: '6 4', measured: [[10000, 91], [100000, 112]] },
+  { key: 'cxxPlain', name: 'C++, plain', color: 'var(--cxx)', dash: null, measured: [[10000, 88], [100000, 93]] },
+  { key: 'cxxCrypt', name: 'C++, encrypted', color: 'var(--cxx)', dash: '6 4', measured: [[10000, 168], [100000, 173]] },
+];
+
+/* ---- 01: one key ---- */
+const ROWS = [
+  { name: 'Swift, plain', sub: 'RecordIndex', total: 41.9, parts: [
+      { r: 'entry', b: 16, label: 'slot' },
+      { r: 'table', b: 25.9, label: 'empty slots, shared' },
+    ], file: 62, fields: 'slot: <span>hash 4 · sizes 2+2+4 · offset 4</span> → the record in the file: <span>length · key · length · value</span>' },
+  { name: 'Swift, encrypted', sub: 'CryptIndex', total: 112.4, parts: [
+      { r: 'entry', b: 20, label: 'slot' },
+      { r: 'table', b: 32.4, label: 'empty slots, shared' },
+      { r: 'keys', b: 60, label: 'key + value in the arena' },
+    ], fields: 'slot: <span>hash 4 · arena offset 4 · key size 2 · flags 2 · value size 4 · position 4</span>; values over 256 B keep a 20-byte cipher state in the arena instead' },
+  { name: 'C++, plain', sub: 'unordered_map node', total: 93.8, parts: [
+      { r: 'entry', b: 64, label: 'node' },
+      { r: 'other', b: 16, label: 'malloc header + slack' },
+      { r: 'table', b: 13.8, label: 'buckets' },
+    ], fields: 'node: <span>next 8 · std::string 32 (key inline up to 15 B) · KeyValueHolder 12 · padding 4 · cached hash 8</span>' },
+  { name: 'C++, encrypted', sub: 'node + value buffer', total: 173.8, parts: [
+      { r: 'entry', b: 80, label: 'node' },
+      { r: 'other', b: 16, label: 'malloc header + slack' },
+      { r: 'keys', b: 64, label: 'value buffer' },
+      { r: 'table', b: 13.8, label: 'buckets' },
+    ], fields: 'node: <span>next 8 · std::string 32 · KeyValueHolderCrypt 29 · padding 3 · cached hash 8</span>; a value of 28–256 B gets its own buffer' },
+];
+const MAXB = 174;
+document.getElementById('keyrows').innerHTML = ROWS.map(row => {
+  const segs = row.parts.map(p => `<div class="r-${p.r}" style="width:${(p.b / MAXB * 100).toFixed(2)}%" data-tip="${row.name} · ${p.label}: ${p.b.toFixed(p.b % 1 ? 1 : 0)} B"></div>`).join('')
+    + (row.file ? `<div class="r-file" style="width:${(row.file / MAXB * 100).toFixed(2)}%;margin-left:10px" data-tip="The record itself, ${row.file} B, is in the mapped file"></div>` : '');
+  const chips = row.parts.map(p => `<span class="part"><i class="sw r-${p.r}"></i>${p.label} <b>${p.b.toFixed(p.b % 1 ? 1 : 0)} B</b></span>`).join('')
+    + (row.file ? `<span class="part"><i class="sw r-file"></i>record in the file <b>${row.file} B</b></span>` : '');
+  return `<div class="krow"><div class="kname">${row.name}<small>${row.sub}</small></div>
+    <div class="kbar">${segs}</div>
+    <div class="ktotal">${Math.round(row.total)} B<small>per key</small></div>
+    <div class="parts">${chips}</div><div class="fields">${row.fields}</div></div>`;
+}).join('');
+document.querySelectorAll('#keyrows [data-tip]').forEach(el => hoverable(el, el.dataset.tip));
+
+/* ---- 02: the curve ---- */
+const NS = 'http://www.w3.org/2000/svg';
+const X0 = 2000, X1 = 200000;
+const xs = [];
+for (let i = 0; i <= 1200; i++) xs.push(Math.round(X0 * Math.pow(X1 / X0, i / 1200)));
+function drawChart() {
+  const box = document.getElementById('chart');
+  const W = box.clientWidth, H = box.clientHeight;
+  const m = { l: 44, r: W < 560 ? 12 : 120, t: 10, b: 30 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const YMAX = 200;
+  const x = n => m.l + Math.log(n / X0) / Math.log(X1 / X0) * iw;
+  const y = v => m.t + ih - v / YMAX * ih;
+  const el = (name, attrs, parent) => { const e = document.createElementNS(NS, name); for (const k in attrs) e.setAttribute(k, attrs[k]); (parent || svg).appendChild(e); return e; };
+  box.innerHTML = '';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  box.appendChild(svg);
+  const grid = el('g', { class: 'grid' }), axis = el('g', { class: 'axis' });
+  for (let v = 0; v <= YMAX; v += 40) {
+    el('line', { x1: m.l, x2: m.l + iw, y1: y(v), y2: y(v) }, grid);
+    el('text', { x: m.l - 8, y: y(v) + 4, 'text-anchor': 'end' }, axis).textContent = v + ' B';
+  }
+  for (const n of [2000, 5000, 10000, 20000, 50000, 100000, 200000]) {
+    if (W < 560 && (n === 5000 || n === 50000)) continue;
+    el('text', { x: x(n), y: H - 8, 'text-anchor': 'middle' }, axis).textContent = n >= 1000 ? (n / 1000) + 'K' : n;
+  }
+  el('text', { x: m.l + iw, y: H - 8, 'text-anchor': 'end', opacity: 0 }, axis);
+  for (const s of SERIES) {
+    let d = '';
+    xs.forEach((n, i) => { d += (i ? 'L' : 'M') + x(n).toFixed(1) + ' ' + y(model[s.key](n)).toFixed(1); });
+    const path = el('path', { d, fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
+    if (s.dash) path.setAttribute('stroke-dasharray', s.dash);
+  }
+  for (const s of SERIES) for (const [n, v] of s.measured)
+    el('circle', { cx: x(n), cy: y(v), r: 4.5, fill: s.color, stroke: 'var(--panel)', 'stroke-width': 2 });
+  if (m.r > 60) {
+    const ends = SERIES.map(s => ({ s, v: model[s.key](X1) })).sort((a, b) => a.v - b.v);
+    // Lowest value first, so each label sits at least 14px above the one placed before it.
+    let last = Infinity;
+    for (const e of ends) {
+      let ty = y(e.v) + 4; if (last - ty < 14) ty = last - 14; last = ty;
+      el('text', { x: m.l + iw + 8, y: ty, fill: 'var(--muted)', 'font-size': 11.5, 'font-family': 'var(--mono)' }).textContent = e.s.name;
+    }
+  }
+  // Hover: a crosshair and all four values at the key count under the pointer.
+  const cross = el('line', { y1: m.t, y2: m.t + ih, stroke: 'var(--line2)', 'stroke-width': 1, opacity: 0 });
+  const hit = el('rect', { x: m.l, y: m.t, width: iw, height: ih, fill: 'transparent' });
+  const move = e => {
+    const r = svg.getBoundingClientRect();
+    const px = Math.max(m.l, Math.min(m.l + iw, e.clientX - r.left));
+    let n = X0 * Math.pow(X1 / X0, (px - m.l) / iw);
+    n = n < 10000 ? Math.round(n / 100) * 100 : Math.round(n / 1000) * 1000;
+    cross.setAttribute('x1', px); cross.setAttribute('x2', px); cross.setAttribute('opacity', 1);
+    const rows = SERIES.map(s => `<div class="row"><span><i class="sw line${s.dash ? ' dash' : ''}" style="${s.dash ? '--c:' + s.color : 'background:' + s.color}"></i>${s.name}</span><b>${model[s.key](n).toFixed(0)} B</b></div>`).join('');
+    showTip(`<div class="h">${n.toLocaleString('en-US')} keys · Swift table ${Math.round(n / slots(n) * 100)}% full</div>${rows}`, e.clientX, e.clientY);
+  };
+  hit.addEventListener('pointermove', move);
+  hit.addEventListener('pointerdown', move);
+  hit.addEventListener('pointerleave', () => { cross.setAttribute('opacity', 0); hideTip(); });
+}
+drawChart();
+let resizeTimer; addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(drawChart, 80); });
+{
+  const counts = [2000, 5000, 10000, 12000, 20000, 25000, 50000, 100000, 110000, 200000];
+  document.getElementById('curvetable').innerHTML = '<tr><th>Keys</th>' + SERIES.map(s => `<th>${s.name}</th>`).join('') + '<th>Swift table full</th></tr>'
+    + counts.map(n => `<tr><td>${n.toLocaleString('en-US')}</td>${SERIES.map(s => `<td>${model[s.key](n).toFixed(0)} B</td>`).join('')}<td>${Math.round(n / slots(n) * 100)}%</td></tr>`).join('');
+}
+
+/* ---- 03: occupancy ---- */
+document.getElementById('occ').innerHTML = [[10000, 16384], [100000, 262144]].map(([n, c]) => {
+  const on = Math.round(64 * n / c);
+  return `<div class="occ-item"><div class="cells" aria-hidden="true">${Array.from({ length: 64 }, (_, i) => `<i${i < on ? ' class="on"' : ''}></i>`).join('')}</div>
+    <div class="occ-text"><b>${Math.round(n / c * 100)}% full</b>${n.toLocaleString('en-US')} keys in ${c.toLocaleString('en-US')} slots<br>${KB((c - n) * 16 / 1024)} of empty 16-byte slots</div></div>`;
+}).join('');
+
+/* ---- 04, 05: heap bars ---- */
+function bars(target, tableTarget, scenarios) {
+  const host = document.getElementById(target);
+  host.innerHTML = scenarios.map((sc, i) => {
+    const total = list => list.reduce((a, p) => a + p.kb, 0);
+    const tc = total(sc.cxx), ts = total(sc.swift), scale = Math.max(tc, ts);
+    const bar = (list, t, perKey) => `<div class="btrack" data-scale="${t / scale}"><div class="bar">${list.map(p => `<div class="r-${p.r}" style="flex:${p.kb}" data-kb="${p.kb}" data-tip="${p.label}: ${KB(p.kb)}"></div>`).join('')}</div><span class="bval">${KB(t)}${perKey ? `<small>${perKey} B/key</small>` : ''}</span></div>`;
+    return `<div><div class="stitle"><b>${sc.title}</b><span>Swift is ${Math.round(ts / tc * 100)}% of C++</span></div>
+      <div class="brow"><span class="who">C++</span>${bar(sc.cxx, tc, sc.perKey && sc.perKey[0])}</div>
+      <div class="brow"><span class="who">Swift</span>${bar(sc.swift, ts, sc.perKey && sc.perKey[1])}</div>
+      ${sc.file ? `<div class="filenote">${sc.file}</div>` : ''}</div>`;
+  }).join('');
+  host.querySelectorAll('[data-tip]').forEach(el => hoverable(el, el.dataset.tip));
+  const roles = [['entry', 'Entries'], ['table', 'Table overhead'], ['keys', 'Keys and values apart'], ['other', 'Other']];
+  document.getElementById(tableTarget).innerHTML = '<tr><th>Store</th><th>Core</th>' + roles.map(r => `<th>${r[1]}</th>`).join('') + '<th>Total</th></tr>'
+    + scenarios.flatMap(sc => [['C++', sc.cxx], ['Swift', sc.swift]].map(([who, list]) => {
+      const get = r => list.filter(p => p.r === r).reduce((a, p) => a + p.kb, 0);
+      return `<tr><td>${sc.title}</td><td>${who}</td>${roles.map(r => `<td>${get(r[0]) ? KB(get(r[0])) : '–'}</td>`).join('')}<td>${KB(list.reduce((a, p) => a + p.kb, 0))}</td></tr>`;
+    })).join('');
+}
+// Widths are set after layout so a bar's length is to scale within its pair, and a label sits
+// inside a segment only where it fits.
+function layoutBars() {
+  document.querySelectorAll('.btrack').forEach(track => {
+    const bar = track.firstElementChild, val = track.lastElementChild;
+    const room = track.clientWidth - val.offsetWidth - 12;
+    bar.style.width = Math.max(4, room * parseFloat(track.dataset.scale)) + 'px';
+    bar.querySelectorAll('div').forEach(seg => {
+      seg.textContent = '';
+      const label = KB(parseFloat(seg.dataset.kb));
+      if (seg.clientWidth > label.length * 7 + 16) seg.textContent = label;
+    });
+  });
+}
+bars('openbars', 'opentable', [
+  { title: 'Plain, 10,000 keys', perKey: [88, 27],
+    cxx: [{ r: 'entry', kb: 781, label: 'nodes' }, { r: 'table', kb: 80, label: 'buckets' }, { r: 'other', kb: 5, label: 'other' }],
+    swift: [{ r: 'entry', kb: 156, label: 'slots in use' }, { r: 'table', kb: 100, label: 'empty slots' }, { r: 'other', kb: 10, label: 'other' }] },
+  { title: 'Plain, 100,000 keys', perKey: [93, 42],
+    cxx: [{ r: 'entry', kb: 7813, label: 'nodes' }, { r: 'table', kb: 1351, label: 'buckets' }, { r: 'other', kb: 5, label: 'other' }],
+    swift: [{ r: 'entry', kb: 1563, label: 'slots in use' }, { r: 'table', kb: 2533, label: 'empty slots' }, { r: 'other', kb: 10, label: 'other' }] },
+  { title: 'Encrypted, 10,000 keys', perKey: [168, 91],
+    cxx: [{ r: 'entry', kb: 938, label: 'nodes' }, { r: 'table', kb: 80, label: 'buckets' }, { r: 'keys', kb: 625, label: 'value buffers' }, { r: 'other', kb: 5, label: 'other' }],
+    swift: [{ r: 'entry', kb: 195, label: 'slots in use' }, { r: 'table', kb: 125, label: 'empty slots' }, { r: 'keys', kb: 578, label: 'arena' }] },
+  { title: 'Encrypted, 100,000 keys', perKey: [173, 112],
+    cxx: [{ r: 'entry', kb: 9375, label: 'nodes' }, { r: 'table', kb: 1351, label: 'buckets' }, { r: 'keys', kb: 6250, label: 'value buffers' }, { r: 'other', kb: 6, label: 'other' }],
+    swift: [{ r: 'entry', kb: 1953, label: 'slots in use' }, { r: 'table', kb: 3167, label: 'empty slots' }, { r: 'keys', kb: 5850, label: 'arena' }] },
+]);
+bars('writebars', 'writetable', [
+  { title: 'Strings', file: 'file: a 1 MB mapping in both',
+    cxx: [{ r: 'entry', kb: 781, label: 'nodes' }, { r: 'table', kb: 80, label: 'buckets' }, { r: 'other', kb: 99, label: 'other' }],
+    swift: [{ r: 'entry', kb: 156, label: 'slots in use' }, { r: 'table', kb: 100, label: 'empty slots' }, { r: 'other', kb: 172, label: 'other' }] },
+  { title: 'Int32', file: 'file: a 256 KB mapping in both',
+    cxx: [{ r: 'entry', kb: 781, label: 'nodes' }, { r: 'table', kb: 80, label: 'buckets' }, { r: 'other', kb: 99, label: 'other' }],
+    swift: [{ r: 'entry', kb: 156, label: 'slots in use' }, { r: 'table', kb: 100, label: 'empty slots' }, { r: 'other', kb: 168, label: 'other' }] },
+  { title: 'Strings, encrypted', file: 'file: a 1 MB mapping in both',
+    cxx: [{ r: 'entry', kb: 938, label: 'nodes' }, { r: 'table', kb: 80, label: 'buckets' }, { r: 'keys', kb: 625, label: 'value buffers' }, { r: 'other', kb: 733, label: 'other' }],
+    swift: [{ r: 'entry', kb: 195, label: 'slots in use' }, { r: 'table', kb: 125, label: 'empty slots' }, { r: 'keys', kb: 590, label: 'arena, live' }, { r: 'other', kb: 684, label: 'arena garbage and slack' }] },
+]);
+layoutBars();
+addEventListener('resize', layoutBars);
+</script>
+</body>
+</html>

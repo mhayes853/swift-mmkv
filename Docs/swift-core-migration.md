@@ -234,6 +234,8 @@ None of these changes the file format: the differential tests still compare the 
 byte.
 
 `Visuals/IndexMemory/index.html` walks through both indexes, step by step, in a browser.
+`Visuals/MemoryComparison/index.html` takes each core's heap apart, scenario by scenario, as
+measured on Linux.
 
 ### Results
 
