@@ -350,6 +350,19 @@ for try await settings in store.values(forKey: "settings", as: Settings.self, wi
 }
 ```
 
+`changes` gives every change to the store as an `AsyncSequence`, the counterpart of
+`subscribe(_:)`. A consumer that falls behind misses no key, but receives a key that changed
+several times in the meantime once.
+
+```swift
+for await change in store.changes {
+  switch change {
+  case .key(let key): print("changed:", key)
+  case .external: print("changed elsewhere")
+  }
+}
+```
+
 A listener cannot throw, so one that decodes is given a `Result`. It carries on after a failure,
 whereas the sequence ends with the error:
 
