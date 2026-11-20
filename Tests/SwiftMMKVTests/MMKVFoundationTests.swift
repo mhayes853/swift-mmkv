@@ -9,6 +9,92 @@
       var fontSize: Double
     }
 
+    /// Writes one of the Foundation types through the writer directly.
+    struct Profile: MMKVValue {
+      enum Field { case data, url, uuid, decimal }
+
+      var field: Field
+      var data = Data()
+      var url = URL(string: "https://example.com")!
+      var uuid = UUID()
+      var decimal = Decimal(1)
+
+      init(field: Field) { self.field = field }
+
+      init?(from reader: borrowing MMKVValueReader) { nil }
+
+      func write(to writer: inout MMKVValueWriter) -> Bool {
+        switch self.field {
+        case .data: writer.set(self.data)
+        case .url: writer.set(self.url)
+        case .uuid: writer.set(self.uuid)
+        case .decimal: writer.set(self.decimal)
+        }
+      }
+    }
+
+    @Test func `A Writer Stores Foundation Values As They Are Stored Alone`() throws {
+      let store = try makeStore()
+      var profile = Profile(field: .data)
+      profile.data = Data([1, 2, 3])
+      store.set(profile, forKey: "data")
+      profile.field = .url
+      store.set(profile, forKey: "url")
+      profile.field = .uuid
+      store.set(profile, forKey: "uuid")
+      profile.field = .decimal
+      profile.decimal = Decimal(string: "12.50")!
+      store.set(profile, forKey: "decimal")
+      profile.decimal = .nan
+
+      #expect(store.value(forKey: "data", as: Data.self) == Data([1, 2, 3]))
+      #expect(store.value(forKey: "url", as: URL.self) == profile.url)
+      #expect(store.value(forKey: "uuid", as: UUID.self) == profile.uuid)
+      #expect(store.value(forKey: "decimal", as: Decimal.self) == Decimal(string: "12.5"))
+      #expect(!store.set(profile, forKey: "nan"))
+    }
+
+    @Test func `A Reader Reads Foundation Values As They Are Read Alone`() throws {
+      struct Read: MMKVValue {
+        var data: Data?
+        var url: URL?
+        var uuid: UUID?
+        var decimal: Decimal?
+
+        init?(from reader: borrowing MMKVValueReader) {
+          self.data = reader.data()
+          self.url = reader.url()
+          self.uuid = reader.uuid()
+          self.decimal = reader.decimal()
+        }
+
+        func write(to writer: inout MMKVValueWriter) -> Bool { false }
+      }
+      let store = try makeStore()
+      let uuid = UUID()
+      store.set(uuid.uuidString.lowercased(), forKey: "uuid")
+      store.set("https://example.com/a", forKey: "url")
+      store.set(0.1, forKey: "number")
+      store.set("12abc", forKey: "text")
+
+      let fromUUID = try #require(store.value(forKey: "uuid", as: Read.self))
+      let fromURL = try #require(store.value(forKey: "url", as: Read.self))
+      let fromNumber = try #require(store.value(forKey: "number", as: Read.self))
+      let fromText = try #require(store.value(forKey: "text", as: Read.self))
+      let missing = try #require(store.value(forKey: "missing", as: Read.self))
+
+      #expect(fromUUID.uuid == uuid)
+      #expect(fromUUID.data == Data(uuid.uuidString.lowercased().utf8))
+      #expect(fromURL.url == URL(string: "https://example.com/a"))
+      #expect(fromURL.uuid == nil)
+      #expect(fromNumber.decimal == Decimal(string: "0.1"))
+      #expect(fromText.decimal == nil)
+      #expect(missing.data == nil)
+      #expect(missing.url == nil)
+      #expect(missing.uuid == nil)
+      #expect(missing.decimal == nil)
+    }
+
     @Test func `A URL Is Stored As Its String`() throws {
       let store = try makeStore()
       let url = try #require(URL(string: "https://example.com/a?b=c#d"))

@@ -7,12 +7,27 @@
     /// Reads a UUID from its string, in uppercase or lowercase. The result is `nil` if the
     /// string is not a version 7 UUID.
     public init?(from reader: borrowing MMKVValueReader) {
-      guard let string = reader.string(), let uuid = UUIDV7(uuidString: string) else { return nil }
+      guard let uuid = reader.uuidV7() else { return nil }
       self = uuid
     }
 
     public func write(to writer: inout MMKVValueWriter) -> Bool {
-      writer.set(self.uuidString)
+      writer.set(self)
+    }
+  }
+
+  extension MMKVValueReader {
+    /// Reads the key as a version 7 UUID from its string, in uppercase or lowercase. The result
+    /// is `nil` if the string is not a version 7 UUID.
+    public func uuidV7() -> UUIDV7? {
+      self.string().flatMap { UUIDV7(uuidString: $0) }
+    }
+  }
+
+  extension MMKVValueWriter {
+    /// Stores a version 7 UUID as its string, in uppercase.
+    public mutating func set(_ value: UUIDV7) -> Bool {
+      self.set(value.uuidString)
     }
   }
 #endif

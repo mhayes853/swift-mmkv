@@ -7,12 +7,27 @@
   extension URL: MMKVValue {
     /// Reads a URL from its string. The result is `nil` if the string is not a valid URL.
     public init?(from reader: borrowing MMKVValueReader) {
-      guard let string = reader.string(), let url = URL(string: string) else { return nil }
+      guard let url = reader.url() else { return nil }
       self = url
     }
 
     public func write(to writer: inout MMKVValueWriter) -> Bool {
-      writer.set(self.absoluteString)
+      writer.set(self)
+    }
+  }
+
+  extension MMKVValueReader {
+    /// Reads the key as a URL from its string. The result is `nil` if the string is not a valid
+    /// URL.
+    public func url() -> URL? {
+      self.string().flatMap { URL(string: $0) }
+    }
+  }
+
+  extension MMKVValueWriter {
+    /// Stores a URL as its absolute string.
+    public mutating func set(_ value: URL) -> Bool {
+      self.set(value.absoluteString)
     }
   }
 
@@ -23,12 +38,27 @@
     /// Reads a UUID from its string, in uppercase or lowercase. The result is `nil` if the
     /// string is not a UUID.
     public init?(from reader: borrowing MMKVValueReader) {
-      guard let string = reader.string(), let uuid = UUID(uuidString: string) else { return nil }
+      guard let uuid = reader.uuid() else { return nil }
       self = uuid
     }
 
     public func write(to writer: inout MMKVValueWriter) -> Bool {
-      writer.set(self.uuidString)
+      writer.set(self)
+    }
+  }
+
+  extension MMKVValueReader {
+    /// Reads the key as a UUID from its string, in uppercase or lowercase. The result is `nil`
+    /// if the string is not a UUID.
+    public func uuid() -> UUID? {
+      self.string().flatMap { UUID(uuidString: $0) }
+    }
+  }
+
+  extension MMKVValueWriter {
+    /// Stores a UUID as its string, in uppercase.
+    public mutating func set(_ value: UUID) -> Bool {
+      self.set(value.uuidString)
     }
   }
 
@@ -43,27 +73,20 @@
     /// A decimal read from a `Double` has the digits that the `Double` prints with, so `0.1`
     /// reads as exactly `0.1`.
     public init?(from reader: borrowing MMKVValueReader) {
-      if let string = reader.string(), let decimal = Decimal(mmkvLiteral: string) {
-        self = decimal
-        return
-      }
-      guard let double = reader.double(), double.isFinite,
-        let decimal = Decimal(mmkvLiteral: "\(double)")
-      else { return nil }
+      guard let decimal = reader.decimal() else { return nil }
       self = decimal
     }
 
     /// Stores the decimal's string. A decimal that is not a number is not stored.
     public func write(to writer: inout MMKVValueWriter) -> Bool {
-      guard !self.isNaN else { return false }
-      return writer.set(self.description)
+      writer.set(self)
     }
 
     /// Parses a whole string as a decimal number, such as `-12.50` or `1e-7`.
     ///
     /// `Decimal(string:)` accepts a string that only starts with a number, which would read
     /// a value of another type as a decimal.
-    private init?(mmkvLiteral string: String) {
+    fileprivate init?(mmkvLiteral string: String) {
       var digits = 0
       var hasPoint = false
       var hasExponent = false
@@ -91,6 +114,30 @@
       guard digits > 0, let decimal = Decimal(string: string, locale: nil), !decimal.isNaN
       else { return nil }
       self = decimal
+    }
+  }
+
+  extension MMKVValueReader {
+    /// Reads the key as a decimal from its string, or from a `Double`, which is how JavaScript
+    /// stores a number.
+    ///
+    /// A decimal read from a `Double` has the digits that the `Double` prints with, so `0.1`
+    /// reads as exactly `0.1`.
+    public func decimal() -> Decimal? {
+      if let string = self.string(), let decimal = Decimal(mmkvLiteral: string) {
+        return decimal
+      }
+      guard let double = self.double(), double.isFinite else { return nil }
+      return Decimal(mmkvLiteral: "\(double)")
+    }
+  }
+
+  extension MMKVValueWriter {
+    /// Stores a decimal as its string, such as `"12.5"`. A decimal that is not a number is not
+    /// stored.
+    public mutating func set(_ value: Decimal) -> Bool {
+      guard !value.isNaN else { return false }
+      return self.set(value.description)
     }
   }
 #endif

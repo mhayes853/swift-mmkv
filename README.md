@@ -594,6 +594,8 @@ The library itself does not use Foundation. The `Foundation` trait, on by defaul
 - `Data`, `URL`, `UUID`, and `Decimal` as `MMKVValue`s, and `URL` root directories. `Data` is
   stored as bytes and the others as strings, which JavaScript reads with `getString`. A `Decimal`
   can also be read from a number that JavaScript stored.
+- `data()`, `url()`, `uuid()`, and `decimal()` on `MMKVValueReader`, and a `set` for each on
+  `MMKVValueWriter`, for a type of your own that stores one of them.
 - `JSONEncoder`, `JSONDecoder`, and the property list coders as coders for `encode` and
   `decode`, with JSON as the default when no coder is passed.
 
@@ -704,6 +706,9 @@ It is stored as its string, in uppercase, which JavaScript reads with `getString
 form a Foundation `UUID` is stored in, so either type reads what the other wrote, though a
 `UUIDV7` reads as `nil` when the stored UUID is of another version. The trait does not need the
 `Foundation` trait.
+
+A type of your own that stores one reads it with `uuidV7()` on `MMKVValueReader` and writes it
+with `set` on `MMKVValueWriter`.
 
 ## Platforms
 

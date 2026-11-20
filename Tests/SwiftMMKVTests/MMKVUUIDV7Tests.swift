@@ -53,6 +53,32 @@
       #expect(try store.decode(Account.self, fromKeysUnder: "account") == account)
     }
 
+    @Test func `A Reader And Writer Carry A UUIDV7`() throws {
+      struct SessionID: MMKVValue, Equatable {
+        var rawValue: UUIDV7
+
+        init(rawValue: UUIDV7) { self.rawValue = rawValue }
+
+        init?(from reader: borrowing MMKVValueReader) {
+          guard let rawValue = reader.uuidV7() else { return nil }
+          self.rawValue = rawValue
+        }
+
+        func write(to writer: inout MMKVValueWriter) -> Bool {
+          writer.set(self.rawValue)
+        }
+      }
+      let store = try makeStore()
+      let id = SessionID(rawValue: UUIDV7())
+
+      store.set(id, forKey: "session")
+      store.set("E621E1F8-C36C-495A-93FC-0C247A3E6E5F", forKey: "v4")
+
+      #expect(store.value(forKey: "session", as: String.self) == id.rawValue.uuidString)
+      #expect(store.value(forKey: "session", as: SessionID.self) == id)
+      #expect(store.value(forKey: "v4", as: SessionID.self) == nil)
+    }
+
     #if Foundation
       @Test func `Reads What A Foundation UUID Wrote`() throws {
         let store = try makeStore()
