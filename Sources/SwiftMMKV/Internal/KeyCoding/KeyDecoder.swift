@@ -13,16 +13,11 @@ final class KeyDecodingContext {
   /// under another.
   private(set) lazy var storeKeys = Array(self.store.keys)
 
-  init(
-    store: MMKVStore,
-    names: KeyNames,
-    numbers: MMKVKeyCodingOptions.Numbers,
-    arrays: KeyArrayCoding
-  ) {
+  init(store: MMKVStore, options: MMKVKeyCodingOptions) {
     self.store = store
-    self.names = names
-    self.numbers = numbers
-    self.arrays = arrays
+    self.names = KeyNames(separator: options.separator)
+    self.numbers = options.numbers
+    self.arrays = KeyArrayCoding(options.arrays)
   }
 
   /// Whether `key` has a value, or is the start of the key of one.

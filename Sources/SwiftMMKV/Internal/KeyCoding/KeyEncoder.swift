@@ -23,6 +23,12 @@ struct KeyEncodingContext {
   let numbers: MMKVKeyCodingOptions.Numbers
   let arrays: KeyArrayCoding
 
+  init(_ options: MMKVKeyCodingOptions) {
+    self.names = KeyNames(separator: options.separator)
+    self.numbers = options.numbers
+    self.arrays = KeyArrayCoding(options.arrays)
+  }
+
   /// Encodes `value` at `key`, adding its operations to `buffer`.
   func encode<T: Encodable>(
     _ value: T,

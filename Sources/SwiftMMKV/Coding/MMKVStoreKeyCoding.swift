@@ -54,15 +54,72 @@ extension MMKVStore {
     expiringIn: Duration? = nil,
     options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
   ) throws -> Bool {
-    let names = KeyNames(separator: options.separator)
-    let context = KeyEncodingContext(
-      names: names,
-      numbers: options.numbers,
-      arrays: KeyArrayCoding(options.arrays)
-    )
+    let context = KeyEncodingContext(options)
     let buffer = KeyEncodingBuffer()
     try context.encode(value, at: prefix, codingPath: [], into: buffer)
+    return try self.write(
+      buffer,
+      under: [prefix],
+      removingOtherKeys: removingOtherKeys,
+      expiringIn: expiringIn,
+      names: context.names
+    )
+  }
 
+  /// Stores each value over the keys under its prefix, as
+  /// ``encode(_:intoKeysUnder:removingOtherKeys:expiringIn:options:)`` does for one value.
+  ///
+  /// ```swift
+  /// try store.encode(intoKeysUnder: ("settings", settings), ("profile", profile))
+  /// ```
+  ///
+  /// Every value is encoded before anything is written, so nothing is stored if one of them
+  /// does not encode. They are then written under one exclusive lock, in the order given, so a
+  /// key that two values write keeps the later one, and listeners hear about each key once.
+  ///
+  /// `removingOtherKeys` removes, under every prefix, the keys that none of the values wrote.
+  /// The store's keys are read once for all of them.
+  ///
+  /// - Parameters:
+  ///   - values: Each prefix, paired with the value to store under it.
+  ///   - removingOtherKeys: Whether to remove the prefixes and the keys under them that the
+  ///     values did not write.
+  ///   - expiringIn: How long the keys live. `nil` keeps them until they are removed.
+  ///   - options: How the keys are named, and how numbers and arrays are stored.
+  /// - Returns: Whether every key was stored.
+  /// - Throws: An `EncodingError` if a value does not encode, in which case nothing is stored,
+  ///   or ``MMKVError/storeIsSuspended(id:)``.
+  @discardableResult
+  public func encode<each T: Encodable>(
+    intoKeysUnder values: repeat (String, each T),
+    removingOtherKeys: Bool = false,
+    expiringIn: Duration? = nil,
+    options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
+  ) throws -> Bool {
+    let context = KeyEncodingContext(options)
+    let buffer = KeyEncodingBuffer()
+    var prefixes = [String]()
+    func add<V: Encodable>(_ value: V, under prefix: String) throws {
+      try context.encode(value, at: prefix, codingPath: [], into: buffer)
+      prefixes.append(prefix)
+    }
+    repeat try add((each values).1, under: (each values).0)
+    return try self.write(
+      buffer,
+      under: prefixes,
+      removingOtherKeys: removingOtherKeys,
+      expiringIn: expiringIn,
+      names: context.names
+    )
+  }
+
+  private func write(
+    _ buffer: KeyEncodingBuffer,
+    under prefixes: [String],
+    removingOtherKeys: Bool,
+    expiringIn: Duration?,
+    names: KeyNames
+  ) throws -> Bool {
     let didStore = self.withExclusiveLock { store in
       var didStore = true
       var written = Set<String>()
@@ -76,8 +133,8 @@ extension MMKVStore {
         }
       }
       if removingOtherKeys {
-        store.removeAll(keepingCapacity: true) {
-          names.isAtOrUnder($0, prefix) && !written.contains($0)
+        store.removeAll(keepingCapacity: true) { key in
+          !written.contains(key) && prefixes.contains { names.isAtOrUnder(key, $0) }
         }
       }
       return didStore
@@ -118,13 +175,35 @@ extension MMKVStore {
     options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
   ) throws -> T {
     try self.withExclusiveLock { store in
-      let context = KeyDecodingContext(
-        store: store,
-        names: KeyNames(separator: options.separator),
-        numbers: options.numbers,
-        arrays: KeyArrayCoding(options.arrays)
-      )
-      return try context.decode(type, at: prefix, codingPath: [])
+      try KeyDecodingContext(store: store, options: options)
+        .decode(type, at: prefix, codingPath: [])
+    }
+  }
+
+  /// Reads each value from the keys under its prefix, as ``decode(_:fromKeysUnder:options:)``
+  /// does for one value.
+  ///
+  /// ```swift
+  /// let (settings, profile) = try store.decode(
+  ///   fromKeysUnder: ("settings", Settings.self), ("profile", Profile?.self)
+  /// )
+  /// ```
+  ///
+  /// The values are read under one exclusive lock, so they come from the same state of the
+  /// store, and the store's keys are read at most once for all of them.
+  ///
+  /// - Parameters:
+  ///   - values: Each prefix, paired with the type to decode from the keys under it.
+  ///   - options: How the keys are named, and how numbers and arrays are stored.
+  /// - Throws: `DecodingError.keyNotFound` if a key that a type needs has no value, another
+  ///   `DecodingError`, or ``MMKVError/storeIsSuspended(id:)``.
+  public func decode<each T: Decodable>(
+    fromKeysUnder values: repeat (String, (each T).Type),
+    options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
+  ) throws -> (repeat each T) {
+    try self.withExclusiveLock { store in
+      let context = KeyDecodingContext(store: store, options: options)
+      return (repeat try context.decode((each values).1, at: (each values).0, codingPath: []))
     }
   }
 }

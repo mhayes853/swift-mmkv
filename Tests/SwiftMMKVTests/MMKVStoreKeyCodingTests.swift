@@ -375,6 +375,114 @@ private let settings = Settings(
   }
 #endif
 
+@Suite struct MMKVStoreKeyCodingBatchTests {
+  private let sync = Sync(isEnabled: false, interval: 5)
+
+  @Test func `Stores And Reads Several Values`() throws {
+    let store = try makeStore()
+
+    #expect(try store.encode(intoKeysUnder: ("settings", settings), ("sync", self.sync)))
+
+    #expect(store.value(forKey: "settings.theme", as: String.self) == "dark")
+    #expect(store.value(forKey: "sync.interval", as: Double.self) == 5)
+    let (decodedSettings, decodedSync, missing) = try store.decode(
+      fromKeysUnder: ("settings", Settings.self),
+      ("sync", Sync.self),
+      ("missing", Sync?.self)
+    )
+    #expect(decodedSettings == settings)
+    #expect(decodedSync == self.sync)
+    #expect(missing == nil)
+  }
+
+  @Test func `Stores Nothing When One Value Does Not Encode`() throws {
+    let store = try makeStore()
+    let numbers = Numbers(int: 1, small: 1, unsigned: .max, float: 1)
+
+    #expect(throws: EncodingError.self) {
+      try store.encode(intoKeysUnder: ("settings", settings), ("numbers", numbers))
+    }
+    #expect(store.keys.isEmpty)
+  }
+
+  @Test func `A Later Value Wins A Key`() throws {
+    let store = try makeStore()
+
+    try store.encode(intoKeysUnder: ("settings.sync", self.sync), ("settings", settings))
+
+    #expect(try store.decode(Settings.self, fromKeysUnder: "settings") == settings)
+  }
+
+  @Test func `Removes Other Keys Under Every Prefix`() throws {
+    let store = try makeStore()
+    for key in ["settings.old", "settings.sync.old", "sync.old", "other.old"] {
+      store.set("stale", forKey: key)
+    }
+
+    try store.encode(
+      intoKeysUnder: ("settings", settings),
+      ("settings.sync", self.sync),
+      ("sync", self.sync),
+      removingOtherKeys: true
+    )
+
+    #expect(
+      store.keys == [
+        "settings.fontSize", "settings.theme", "settings.sync.isEnabled",
+        "settings.sync.interval", "sync.isEnabled", "sync.interval", "other.old"
+      ]
+    )
+    #expect(try store.decode(Sync.self, fromKeysUnder: "settings.sync") == self.sync)
+  }
+
+  @Test func `Uses The Options For Every Value`() throws {
+    let store = try makeStore()
+    let options = MMKVKeyCodingOptions(separator: "/", numbers: .native)
+
+    try store.encode(intoKeysUnder: ("a", self.sync), ("b", self.sync), options: options)
+
+    #expect(store.value(forKey: "a/interval", as: Int64.self) == 5)
+    let (a, b) = try store.decode(
+      fromKeysUnder: ("a", Sync.self),
+      ("b", Sync.self),
+      options: options
+    )
+    #expect(a == self.sync && b == self.sync)
+  }
+
+  @Test func `Tells Listeners About Each Key Once`() throws {
+    let store = try makeStore()
+    let recorder = ChangeRecorder()
+    let subscription = store.subscribe(recorder.record)
+
+    try store.encode(intoKeysUnder: ("a", self.sync), ("a", self.sync))
+
+    #expect(recorder.all == [.key("a.isEnabled"), .key("a.interval")])
+    subscription.cancel()
+  }
+
+  @Test func `Throws For A Missing Key Of Any Value`() throws {
+    let store = try makeStore()
+    try store.encode(settings, intoKeysUnder: "settings")
+
+    #expect(throws: DecodingError.self) {
+      try store.decode(fromKeysUnder: ("settings", Settings.self), ("sync", Sync.self))
+    }
+  }
+
+  @Test func `Throws While The Store Is Suspended`() throws {
+    let store = try makeStore(mode: .multiProcess)
+    store.suspend()
+
+    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+      try store.encode(intoKeysUnder: ("a", self.sync), ("b", self.sync))
+    }
+    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+      try store.decode(fromKeysUnder: ("a", Sync.self), ("b", Sync.self))
+    }
+  }
+}
+
 @Suite struct MMKVStoreKeyRemovalTests {
   @Test func `Removes A Key And The Keys Under It`() throws {
     let store = try makeStore()

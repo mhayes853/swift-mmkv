@@ -127,6 +127,17 @@ The defaults store values as JavaScript does, and `MMKVKeyCodingOptions` changes
 
 The value is encoded before anything is written, then written under one exclusive lock.
 
+Several values can be stored or read at once. All of them are encoded before any is written, and
+the store's keys are listed at most once for the whole batch:
+
+```swift
+try store.encode(intoKeysUnder: ("settings", settings), ("profile", profile))
+
+let (settings, profile) = try store.decode(
+  fromKeysUnder: ("settings", Settings.self), ("profile", Profile?.self)
+)
+```
+
 A compiler-written `Encodable` conformance skips a property that is `nil`, so its key keeps the
 value it had. `removingOtherKeys: true` removes the keys under the prefix that the value did not
 write, at the cost of reading every key in the store. `removeValues(underKey:)` removes a prefix
