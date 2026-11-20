@@ -1,0 +1,169 @@
+// MARK: - Coding into keys
+
+extension MMKVStore {
+  /// Stores each property of `value` under a key of its own, named by `prefix` and the names
+  /// along the path to the property.
+  ///
+  /// ```swift
+  /// struct Settings: Codable {
+  ///   var fontSize: Double
+  ///   var theme: String?
+  ///   var sync: Sync
+  /// }
+  ///
+  /// try store.encode(settings, intoKeysUnder: "settings")
+  /// // settings.fontSize = 16.0, settings.theme = "dark", settings.sync.isEnabled = true
+  /// ```
+  ///
+  /// This is how to read and write keys that a React Native app stores one by one, as one
+  /// value. With the default `options`, numbers are stored as `Double` and arrays as JSON
+  /// strings, as JavaScript stores them. To store a value whole under one key instead, see
+  /// ``encode(_:forKey:expiringIn:with:)``.
+  ///
+  /// An empty `prefix` names the keys by their paths alone, so the properties of `value` become
+  /// top-level keys. A `value` that encodes itself as a single value, such as a string, is
+  /// stored under `prefix` itself.
+  ///
+  /// The value is encoded before anything is written, and then written under one exclusive
+  /// lock, so listeners hear about each key once. The write is not atomic if the process is
+  /// killed part way.
+  ///
+  /// ## Keys that are not written
+  ///
+  /// An `Encodable` conformance that the compiler writes skips a property that is `nil`. Its
+  /// key is then left as it was, and still has the value it had before. Pass
+  /// `removingOtherKeys` to remove it, or write the conformance so that it calls
+  /// `encodeNil(forKey:)`, which removes the key. Encoding `nil` as the whole value removes
+  /// `prefix` and every key under it.
+  ///
+  /// - Parameters:
+  ///   - value: The value to store.
+  ///   - prefix: The start of every key.
+  ///   - removingOtherKeys: Whether to remove `prefix` and the keys under it that `value` did
+  ///     not write. This reads every key in the store.
+  ///   - expiringIn: How long the keys live. `nil` keeps them until they are removed.
+  ///   - options: How the keys are named, and how numbers and arrays are stored.
+  /// - Returns: Whether every key was stored.
+  /// - Throws: An `EncodingError` if `value` does not encode, in which case nothing is stored,
+  ///   or ``MMKVError/storeIsSuspended(id:)``.
+  @discardableResult
+  public func encode<T: Encodable>(
+    _ value: T,
+    intoKeysUnder prefix: String,
+    removingOtherKeys: Bool = false,
+    expiringIn: Duration? = nil,
+    options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
+  ) throws -> Bool {
+    let names = KeyNames(separator: options.separator)
+    let context = KeyEncodingContext(
+      names: names,
+      numbers: options.numbers,
+      arrays: KeyArrayCoding(options.arrays)
+    )
+    let buffer = KeyEncodingBuffer()
+    try context.encode(value, at: prefix, codingPath: [], into: buffer)
+
+    let didStore = self.withExclusiveLock { store in
+      var didStore = true
+      var written = Set<String>()
+      for operation in buffer.operations {
+        switch operation {
+        case .set(let key, let write):
+          didStore = write(store, key, expiringIn) && didStore
+          written.insert(key)
+        case .removeAtOrUnder(let key):
+          store.removeAll(keepingCapacity: true) { names.isAtOrUnder($0, key) }
+        }
+      }
+      if removingOtherKeys {
+        store.removeAll(keepingCapacity: true) {
+          names.isAtOrUnder($0, prefix) && !written.contains($0)
+        }
+      }
+      return didStore
+    }
+    if !didStore && self.isSuspended {
+      throw MMKVError.storeIsSuspended(id: self.id)
+    }
+    return didStore
+  }
+
+  /// Reads a `T` from keys named by `prefix` and the names along the path to each of its
+  /// properties, as ``encode(_:intoKeysUnder:removingOtherKeys:expiringIn:options:)`` stores
+  /// them.
+  ///
+  /// ```swift
+  /// let settings = try store.decode(Settings.self, fromKeysUnder: "settings")
+  /// let maybe = try store.decode(Settings?.self, fromKeysUnder: "settings")
+  /// ```
+  ///
+  /// Decoding an optional gives `nil` when the store has neither `prefix` nor any key under
+  /// it.
+  ///
+  /// MMKV does not record the type of a value, so a key that was written as a different type
+  /// than the property it is read into gives a wrong value, not an error.
+  ///
+  /// Finding out which keys exist under another reads every key in the store, once. That
+  /// happens for an optional that has no value, and for a dictionary.
+  ///
+  /// - Parameters:
+  ///   - type: The type to decode.
+  ///   - prefix: The start of every key.
+  ///   - options: How the keys are named, and how numbers and arrays are stored.
+  /// - Throws: `DecodingError.keyNotFound` if a key that `T` needs has no value, another
+  ///   `DecodingError`, or ``MMKVError/storeIsSuspended(id:)``.
+  public func decode<T: Decodable>(
+    _ type: T.Type = T.self,
+    fromKeysUnder prefix: String,
+    options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
+  ) throws -> T {
+    try self.withExclusiveLock { store in
+      let context = KeyDecodingContext(
+        store: store,
+        names: KeyNames(separator: options.separator),
+        numbers: options.numbers,
+        arrays: KeyArrayCoding(options.arrays)
+      )
+      return try context.decode(type, at: prefix, codingPath: [])
+    }
+  }
+}
+
+// MARK: - Removal
+
+extension MMKVStore {
+  /// Removes `prefix` and every key under it, which is every key that
+  /// ``encode(_:intoKeysUnder:removingOtherKeys:expiringIn:options:)`` could have written for
+  /// that prefix.
+  ///
+  /// ```swift
+  /// store.removeValues(underKey: "settings")  // settings, settings.theme, settings.sync.isEnabled
+  /// ```
+  ///
+  /// A key is under `prefix` when it starts with `prefix` and `separator`. An empty `prefix`
+  /// has every key under it. This reads every key in the store.
+  ///
+  /// - Parameters:
+  ///   - prefix: The start of the keys to remove.
+  ///   - separator: What joins a prefix and the rest of a key.
+  public func removeValues(underKey prefix: String, separator: String = ".") {
+    self.removeValues(underKeys: CollectionOfOne(prefix), separator: separator)
+  }
+
+  /// Removes each of `prefixes` and every key under one of them. See
+  /// ``removeValues(underKey:separator:)``.
+  ///
+  /// The store's keys are read once, however many prefixes there are.
+  ///
+  /// - Parameters:
+  ///   - prefixes: The starts of the keys to remove.
+  ///   - separator: What joins a prefix and the rest of a key.
+  public func removeValues(underKeys prefixes: some Sequence<String>, separator: String = ".") {
+    let names = KeyNames(separator: separator)
+    let prefixes = Array(prefixes)
+    guard !prefixes.isEmpty else { return }
+    self.removeAll(keepingCapacity: true) { key in
+      prefixes.contains { names.isAtOrUnder(key, $0) }
+    }
+  }
+}

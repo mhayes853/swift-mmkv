@@ -180,6 +180,20 @@
     }
   }
 
+  // MARK: - JSON arrays
+
+  extension MMKVKeyCodingOptions.Arrays {
+    /// Every array is stored as a JSON string, which is how React Native apps store arrays.
+    ///
+    /// ```swift
+    /// try store.encode(Search(recent: ["a", "b"]), intoKeysUnder: "search")
+    /// // JavaScript: JSON.parse(storage.getString('search.recent'))
+    /// ```
+    public static var json: Self {
+      .coded(encoder: JSONCoders.encoder, decoder: JSONCoders.decoder)
+    }
+  }
+
   /// The coders every JSON key shares, so that such keys compare by name.
   private enum JSONCoders {
     static let encoder = JSONEncoder()

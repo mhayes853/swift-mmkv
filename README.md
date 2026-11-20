@@ -96,6 +96,48 @@ objects. Any coder works if it conforms to `MMKVTopLevelEncoder` or `MMKVTopLeve
 its output is an `MMKVValue`, such as `Data`, `String`, or `[UInt8]`. Both methods throw the
 coder's errors, and `decode` returns `nil` only when the key has no value.
 
+### Spreading a value over keys
+
+A `Codable` value can also be stored with a key for each of its properties, named by a prefix and
+the path to the property. This is how to read and write keys that a React Native app stores one
+by one, as one value:
+
+```swift
+struct Settings: Codable {
+  var fontSize: Double
+  var theme: String?
+  var sync: Sync
+}
+
+try store.encode(settings, intoKeysUnder: "settings")
+// settings.fontSize = 16.0, settings.theme = "dark", settings.sync.isEnabled = true
+
+let settings = try store.decode(Settings.self, fromKeysUnder: "settings")
+let maybe = try store.decode(Settings?.self, fromKeysUnder: "settings")  // nil with no such keys
+```
+
+The defaults store values as JavaScript does, and `MMKVKeyCodingOptions` changes them:
+
+- Every number is a `Double`. `numbers: .native` stores each integer type in its own form.
+- An array is stored whole under one key, as a JSON string with the `Foundation` trait. Without
+  it only arrays of strings can be stored, unless `arrays: .coded(encoder:decoder:)` names a coder.
+  `[UInt8]` and `Data` are always stored as bytes.
+- Names are joined with `"."`, or with `separator`. An empty prefix makes the properties top-level
+  keys. A name that contains the separator is not escaped.
+
+The value is encoded before anything is written, then written under one exclusive lock.
+
+A compiler-written `Encodable` conformance skips a property that is `nil`, so its key keeps the
+value it had. `removingOtherKeys: true` removes the keys under the prefix that the value did not
+write, at the cost of reading every key in the store. `removeValues(underKey:)` removes a prefix
+and everything under it:
+
+```swift
+try store.encode(settings, intoKeysUnder: "settings", removingOtherKeys: true)
+store.removeValues(underKey: "settings")
+store.removeValues(underKeys: ["settings", "profile"])
+```
+
 ## Typed keys
 
 The string APIs above are the quickest to use. A typed key writes a key's name and the type of
@@ -413,6 +455,7 @@ single-process mode.
 | `string` | `String` |
 | `ArrayBuffer` | `[UInt8]`, `Data`, or `withBytes(forKey:)` |
 | `JSON.stringify(object)` | `decode(_:forKey:)` and `encode(_:forKey:)` |
+| Several keys such as `user.name` and `user.age` | `decode(_:fromKeysUnder:)` and `encode(_:intoKeysUnder:)` |
 
 Things to know while both sides are live:
 
@@ -636,8 +679,7 @@ handler that writes to logcat to keep MMKV's messages there.
 - On iOS the store's files keep the default file protection. Upstream's Objective-C++ build
   relaxes it to "until first user authentication" so a store can be read while the device is
   locked; this package builds the core's POSIX variant, which does not.
-- Backup and restore, and encoding an `Encodable` value into store keys, are not implemented
-  yet.
+- Backup and restore are not implemented yet.
 
 ## The vendored core
 
