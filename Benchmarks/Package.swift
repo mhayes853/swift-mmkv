@@ -28,11 +28,14 @@ let package = Package(
       name: "MemoryReport",
       dependencies: [
         .product(name: "SwiftMMKV", package: "swift-mmkv"),
-        .target(name: "AndroidLibcxxShim", condition: .when(platforms: [.android]))
+        .target(name: "AndroidLibcxxShim", condition: .when(platforms: [.android])),
+        .target(name: "GlibcMalloc", condition: .when(platforms: [.linux]))
       ],
       path: "Tools/MemoryReport"
     ),
-    .target(name: "AndroidLibcxxShim", path: "Tools/AndroidLibcxxShim")
+    .target(name: "AndroidLibcxxShim", path: "Tools/AndroidLibcxxShim"),
+    // Swift's Glibc module does not include <malloc.h>, which MemoryReport reads the heap from.
+    .target(name: "GlibcMalloc", path: "Tools/GlibcMalloc")
   ],
   swiftLanguageModes: [.v6]
 )

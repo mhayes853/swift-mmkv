@@ -5,6 +5,7 @@ import Foundation
   import Darwin
 #elseif canImport(Glibc)
   import Glibc
+  import GlibcMalloc
 #elseif canImport(Android)
   import Android
 #endif
@@ -277,9 +278,7 @@ struct Snapshot {
       self.peakFootprint = result == KERN_SUCCESS ? Int(info.ledger_phys_footprint_peak) : nil
     #else
       #if canImport(Glibc)
-        // glibc counts blocks it maps on their own separately from the rest of the heap.
-        let info = mallinfo2()
-        self.heapInUse = Int(info.uordblks) + Int(info.hblkhd)
+        self.heapInUse = swiftmmkv_glibc_heap_in_use()
       #else
         // Android's allocators count every allocated byte in `uordblks`, and every mapped one in
         // `hblkhd`.
