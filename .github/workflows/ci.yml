@@ -75,6 +75,12 @@ jobs:
       - name: Test with swift-log
         run: swift test --traits Logging,Foundation
 
+      - name: Test with swift-uuidv7
+        run: swift test --traits UUIDV7,Foundation
+
+      - name: Test with swift-uuidv7 and without Foundation
+        run: swift test --traits UUIDV7
+
       - name: Check core symbols are renamed
         run: Scripts/check-symbols.sh
 
@@ -105,10 +111,10 @@ jobs:
           swift-version: '6.4.0'
           build-tests: false
           run-tests: false
-      - name: Build Swift package for Android with the Sharing and Logging traits
+      - name: Build Swift package for Android with the Sharing, Logging and UUIDV7 traits
         uses: swift-android-sdk/swift-android-action@v2
         with:
           swift-version: '6.4.0'
-          swift-build-flags: --traits Sharing,Logging,Foundation
+          swift-build-flags: --traits Sharing,Logging,UUIDV7,Foundation
           build-tests: false
           run-tests: false

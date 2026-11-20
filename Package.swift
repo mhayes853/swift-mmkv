@@ -75,13 +75,15 @@ let libraryTarget: Target = .target(
       package: "swift-dependencies",
       condition: .when(traits: ["Sharing"])
     ),
-    .product(name: "Logging", package: "swift-log", condition: .when(traits: ["Logging"]))
+    .product(name: "Logging", package: "swift-log", condition: .when(traits: ["Logging"])),
+    .product(name: "UUIDV7", package: "swift-uuidv7", condition: .when(traits: ["UUIDV7"]))
   ],
   swiftSettings: [
     .enableExperimentalFeature("Lifetimes"),
     .define("Foundation", .when(traits: ["Foundation"])),
     .define("Sharing", .when(traits: ["Sharing"])),
-    .define("Logging", .when(traits: ["Logging"]))
+    .define("Logging", .when(traits: ["Logging"])),
+    .define("UUIDV7", .when(traits: ["UUIDV7"]))
   ]
 )
 
@@ -100,13 +102,15 @@ let testTarget: Target = .testTarget(
       package: "swift-dependencies",
       condition: .when(traits: ["Sharing"])
     ),
-    .product(name: "Logging", package: "swift-log", condition: .when(traits: ["Logging"]))
+    .product(name: "Logging", package: "swift-log", condition: .when(traits: ["Logging"])),
+    .product(name: "UUIDV7", package: "swift-uuidv7", condition: .when(traits: ["UUIDV7"]))
   ],
   swiftSettings: [
     .enableExperimentalFeature("Lifetimes"),
     .define("Foundation", .when(traits: ["Foundation"])),
     .define("Sharing", .when(traits: ["Sharing"])),
-    .define("Logging", .when(traits: ["Logging"]))
+    .define("Logging", .when(traits: ["Logging"])),
+    .define("UUIDV7", .when(traits: ["UUIDV7"]))
   ]
 )
 
@@ -140,12 +144,19 @@ let package = Package(
       name: "Logging",
       description:
         "Sends MMKV's log messages to swift-log, and adds `MMKVLog.logger` to choose the logger."
+    ),
+    .trait(
+      name: "UUIDV7",
+      description:
+        "Adds swift-uuidv7's `UUIDV7` as an `MMKVValue`, stored as its string. It does not need "
+        + "the `Foundation` trait."
     )
   ],
   dependencies: [
     .package(url: "https://github.com/pointfreeco/swift-sharing", from: "2.0.0"),
     .package(url: "https://github.com/pointfreeco/swift-dependencies", from: "1.5.1"),
-    .package(url: "https://github.com/apple/swift-log", from: "1.11.0")
+    .package(url: "https://github.com/apple/swift-log", from: "1.11.0"),
+    .package(url: "https://github.com/mhayes853/swift-uuidv7", from: "0.6.2")
   ],
   targets: [coreTarget, foundationTarget, libraryTarget, testTarget],
   swiftLanguageModes: [.v6],

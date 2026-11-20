@@ -679,6 +679,32 @@ over from the logger.
 On Android, swift-log's own handler writes to the console rather than to logcat. Bootstrap a
 handler that writes to logcat to keep MMKV's messages there.
 
+## The `UUIDV7` trait
+
+The `UUIDV7` trait, off by default, makes
+[swift-uuidv7](https://github.com/mhayes853/swift-uuidv7)'s `UUIDV7` an `MMKVValue`:
+
+```swift
+.package(
+  url: "https://github.com/mhayes853/swift-mmkv",
+  branch: "main",
+  traits: ["Foundation", "UUIDV7"]
+)
+```
+
+```swift
+extension MMKVStore.Key<UUIDV7> {
+  static let sessionID: Self = "sessionID"
+}
+
+store[.sessionID] = UUIDV7()
+```
+
+It is stored as its string, in uppercase, which JavaScript reads with `getString`. That is the
+form a Foundation `UUID` is stored in, so either type reads what the other wrote, though a
+`UUIDV7` reads as `nil` when the stored UUID is of another version. The trait does not need the
+`Foundation` trait.
+
 ## Platforms
 
 | Platform | Status |
