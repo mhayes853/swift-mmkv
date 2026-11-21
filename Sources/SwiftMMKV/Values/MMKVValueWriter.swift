@@ -51,6 +51,16 @@ public struct MMKVValueWriter: ~Copyable, ~Escapable {
     self.core.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
   }
 
+  /// Stores an integer as a `Double`, which is how JavaScript stores every number.
+  ///
+  /// - Returns: Whether the value was stored. An integer that a `Double` cannot hold exactly,
+  ///   which starts beyond 2 to the power of 53, is not stored.
+  @inlinable
+  public mutating func set<I: BinaryInteger>(number value: I) -> Bool {
+    guard let double = Double(exactly: value) else { return false }
+    return self.set(double)
+  }
+
   /// Stores a string as UTF-8.
   public mutating func set(_ value: String) -> Bool {
     self.core.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
