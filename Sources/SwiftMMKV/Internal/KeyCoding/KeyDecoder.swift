@@ -60,6 +60,16 @@ final class KeyDecodingContext {
       if type == Data.self { return try self.stored(Data.self, key, codingPath) as? T }
       if type == URL.self { return try self.stored(URL.self, key, codingPath) as? T }
       if type == UUID.self { return try self.stored(UUID.self, key, codingPath) as? T }
+      if type == Date.self { return try self.stored(Date.self, key, codingPath) as? T }
+      if type == Date.MMKVMillisecondsSince1970.self {
+        return try self.stored(Date.MMKVMillisecondsSince1970.self, key, codingPath) as? T
+      }
+      if type == Date.MMKVSecondsSince1970.self {
+        return try self.stored(Date.MMKVSecondsSince1970.self, key, codingPath) as? T
+      }
+      if type == Date.MMKVSecondsSinceReferenceDate.self {
+        return try self.stored(Date.MMKVSecondsSinceReferenceDate.self, key, codingPath) as? T
+      }
       if type == Decimal.self { return try self.stored(Decimal.self, key, codingPath) as? T }
     #endif
     return nil

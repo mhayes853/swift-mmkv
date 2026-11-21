@@ -122,7 +122,8 @@ The defaults store values as JavaScript does, and `MMKVKeyCodingOptions` changes
 - An array is stored whole under one key, as a JSON string with the `Foundation` trait. Without
   it only arrays of strings can be stored, unless `arrays: .coded(encoder:decoder:)` names a coder.
   `[UInt8]` and `Data` are always stored as bytes.
-- `URL`, `UUID`, and `Decimal` are stored as strings, as they are under a key of their own.
+- `URL`, `UUID`, `Decimal`, and `Date` are stored as strings, as they are under a key of their
+  own.
 - Names are joined with `"."`, or with `separator`. An empty prefix makes the properties top-level
   keys. A name that contains the separator is not escaped.
 
@@ -594,12 +595,60 @@ The library itself does not use Foundation. The `Foundation` trait, on by defaul
 - `Data`, `URL`, `UUID`, and `Decimal` as `MMKVValue`s, and `URL` root directories. `Data` is
   stored as bytes and the others as strings, which JavaScript reads with `getString`. A `Decimal`
   can also be read from a number that JavaScript stored.
-- `data()`, `url()`, `uuid()`, and `decimal()` on `MMKVValueReader`, and a `set` for each on
+- `Date` as an `MMKVValue`, and types for dates stored as numbers. See [Dates](#dates).
+- `data()`, `url()`, `uuid()`, `decimal()`, and `date()` on `MMKVValueReader`, and a `set` for each on
   `MMKVValueWriter`, for a type of your own that stores one of them.
 - `JSONEncoder`, `JSONDecoder`, and the property list coders as coders for `encode` and
   `decode`, with JSON as the default when no coder is passed.
 
 Turn it off with `traits: []` on the package dependency.
+
+### Dates
+
+A `Date` is stored as an ISO 8601 string with milliseconds, which is what JavaScript's
+`toISOString()` writes and `new Date(string)` reads:
+
+```swift
+store.set(Date(), forKey: "createdAt")   // "2026-11-21T08:30:00.000Z"
+let createdAt = store.value(forKey: "createdAt", as: Date.self)
+```
+
+The string keeps milliseconds, so a date read back can differ from the one stored by under a
+millisecond. Reading accepts a string with or without fractional seconds, and with `Z` or an
+offset such as `+02:00`.
+
+A store holds no type information, so a date kept as a number has to say which unit the number
+is in. Each unit has a type that wraps a `Date`:
+
+| Type | Stored as | Used by |
+| --- | --- | --- |
+| `Date.MMKVMillisecondsSince1970` | `Double` | JavaScript's `Date.now()` and `new Date(number)` |
+| `Date.MMKVSecondsSince1970` | `Double` | Upstream MMKV's Objective-C `setDate:` |
+| `Date.MMKVSecondsSinceReferenceDate` | `Double` | `Date`'s own `Codable` form |
+
+```swift
+extension MMKVStore.Key<Date.MMKVMillisecondsSince1970> {
+  static let lastSync: Self = "lastSync"
+}
+
+store[.lastSync] = .init(Date())
+let lastSync = store[.lastSync]?.date
+```
+
+Each of them also reads a date stored as an ISO 8601 string, while a plain `Date` reads `nil`
+from a number. They are `Codable` as the number alone, so a property of one of these types
+chooses its form in `encode(_:intoKeysUnder:)` and in any other coder:
+
+```swift
+struct Profile: Codable {
+  var createdAt: Date                             // an ISO 8601 string under "profile.createdAt"
+  var lastSync: Date.MMKVMillisecondsSince1970    // a number under "profile.lastSync"
+}
+
+try store.encode(profile, intoKeysUnder: "profile")
+```
+
+A coder such as `JSONEncoder` still encodes a plain `Date` with its own date strategy.
 
 ## The `Sharing` trait
 

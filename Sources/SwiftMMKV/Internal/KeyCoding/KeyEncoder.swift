@@ -72,10 +72,15 @@ struct KeyEncodingContext {
     default:
       #if Foundation
         // Stored as they are outside a coder. A URL and a decimal would otherwise encode
-        // themselves as several keys, which is no use to another reader of the store.
+        // themselves as several keys, which is no use to another reader of the store, and a
+        // date as seconds since 2001, which JavaScript does not use.
         if let value = value as? Data { return Self.write(value) }
         if let value = value as? URL { return Self.write(value) }
         if let value = value as? UUID { return Self.write(value) }
+        if let value = value as? Date { return Self.write(value) }
+        if let value = value as? Date.MMKVMillisecondsSince1970 { return Self.write(value) }
+        if let value = value as? Date.MMKVSecondsSince1970 { return Self.write(value) }
+        if let value = value as? Date.MMKVSecondsSinceReferenceDate { return Self.write(value) }
         if let value = value as? Decimal {
           guard !value.isNaN else {
             throw EncodingError.invalidValue(

@@ -131,7 +131,7 @@ let package = Package(
     .trait(
       name: "Foundation",
       description:
-        "Adds `Data`, `URL`, and the JSON and property list coders, using FoundationEssentials "
+        "Adds `Data`, `URL`, `Date`, and the JSON and property list coders, using FoundationEssentials "
         + "where the toolchain provides it."
     ),
     .trait(
