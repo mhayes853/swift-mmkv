@@ -96,6 +96,60 @@ objects. Any coder works if it conforms to `MMKVTopLevelEncoder` or `MMKVTopLeve
 its output is an `MMKVValue`, such as `Data`, `String`, or `[UInt8]`. Both methods throw the
 coder's errors, and `decode` returns `nil` only when the key has no value.
 
+### Spreading a value over keys
+
+A `Codable` value can also be stored with a key for each of its properties, named by a prefix and
+the path to the property. This is how to read and write keys that a React Native app stores one
+by one, as one value:
+
+```swift
+struct Settings: Codable {
+  var fontSize: Double
+  var theme: String?
+  var sync: Sync
+}
+
+try store.encode(settings, intoKeysUnder: "settings")
+// settings.fontSize = 16.0, settings.theme = "dark", settings.sync.isEnabled = true
+
+let settings = try store.decode(Settings.self, fromKeysUnder: "settings")
+let maybe = try store.decode(Settings?.self, fromKeysUnder: "settings")  // nil with no such keys
+```
+
+The defaults store values as JavaScript does, and `MMKVKeyCodingOptions` changes them:
+
+- Every number is a `Double`. `numbers: .native` stores each integer type in its own form.
+- An array is stored whole under one key, as a JSON string with the `Foundation` trait. Without
+  it only arrays of strings can be stored, unless `arrays: .coded(encoder:decoder:)` names a coder.
+  `[UInt8]` and `Data` are always stored as bytes.
+- `URL`, `UUID`, and `Decimal` are stored as strings, as they are under a key of their own.
+- Names are joined with `"."`, or with `separator`. An empty prefix makes the properties top-level
+  keys. A name that contains the separator is not escaped.
+
+The value is encoded before anything is written, then written under one exclusive lock.
+
+Several values can be stored or read at once. All of them are encoded before any is written, and
+the store's keys are listed at most once for the whole batch:
+
+```swift
+try store.encode(intoKeysUnder: ("settings", settings), ("profile", profile))
+
+let (settings, profile) = try store.decode(
+  fromKeysUnder: ("settings", Settings.self), ("profile", Profile?.self)
+)
+```
+
+A compiler-written `Encodable` conformance skips a property that is `nil`, so its key keeps the
+value it had. `removingOtherKeys: true` removes the keys under the prefix that the value did not
+write, at the cost of reading every key in the store. `removeValues(underKey:)` removes a prefix
+and everything under it:
+
+```swift
+try store.encode(settings, intoKeysUnder: "settings", removingOtherKeys: true)
+store.removeValues(underKey: "settings")
+store.removeValues(underKeys: ["settings", "profile"])
+```
+
 ## Typed keys
 
 The string APIs above are the quickest to use. A typed key writes a key's name and the type of
@@ -350,6 +404,19 @@ for try await settings in store.values(forKey: "settings", as: Settings.self, wi
 }
 ```
 
+`changes` gives every change to the store as an `AsyncSequence`, the counterpart of
+`subscribe(_:)`. A consumer that falls behind misses no key, but receives a key that changed
+several times in the meantime once.
+
+```swift
+for await change in store.changes {
+  switch change {
+  case .key(let key): print("changed:", key)
+  case .external: print("changed elsewhere")
+  }
+}
+```
+
 A listener cannot throw, so one that decodes is given a `Result`. It carries on after a failure,
 whereas the sequence ends with the error:
 
@@ -400,6 +467,7 @@ single-process mode.
 | `string` | `String` |
 | `ArrayBuffer` | `[UInt8]`, `Data`, or `withBytes(forKey:)` |
 | `JSON.stringify(object)` | `decode(_:forKey:)` and `encode(_:forKey:)` |
+| Several keys such as `user.name` and `user.age` | `decode(_:fromKeysUnder:)` and `encode(_:intoKeysUnder:)` |
 
 Things to know while both sides are live:
 
@@ -523,7 +591,11 @@ identifier in different directories cannot be told apart.
 
 The library itself does not use Foundation. The `Foundation` trait, on by default, adds:
 
-- `Data` as an `MMKVValue`, and `URL` root directories.
+- `Data`, `URL`, `UUID`, and `Decimal` as `MMKVValue`s, and `URL` root directories. `Data` is
+  stored as bytes and the others as strings, which JavaScript reads with `getString`. A `Decimal`
+  can also be read from a number that JavaScript stored.
+- `data()`, `url()`, `uuid()`, and `decimal()` on `MMKVValueReader`, and a `set` for each on
+  `MMKVValueWriter`, for a type of your own that stores one of them.
 - `JSONEncoder`, `JSONDecoder`, and the property list coders as coders for `encode` and
   `decode`, with JSON as the default when no coder is passed.
 
@@ -609,6 +681,35 @@ over from the logger.
 On Android, swift-log's own handler writes to the console rather than to logcat. Bootstrap a
 handler that writes to logcat to keep MMKV's messages there.
 
+## The `UUIDV7` trait
+
+The `UUIDV7` trait, off by default, makes
+[swift-uuidv7](https://github.com/mhayes853/swift-uuidv7)'s `UUIDV7` an `MMKVValue`:
+
+```swift
+.package(
+  url: "https://github.com/mhayes853/swift-mmkv",
+  branch: "main",
+  traits: ["Foundation", "UUIDV7"]
+)
+```
+
+```swift
+extension MMKVStore.Key<UUIDV7> {
+  static let sessionID: Self = "sessionID"
+}
+
+store[.sessionID] = UUIDV7()
+```
+
+It is stored as its string, in uppercase, which JavaScript reads with `getString`. That is the
+form a Foundation `UUID` is stored in, so either type reads what the other wrote, though a
+`UUIDV7` reads as `nil` when the stored UUID is of another version. The trait does not need the
+`Foundation` trait.
+
+A type of your own that stores one reads it with `uuidV7()` on `MMKVValueReader` and writes it
+with `set` on `MMKVValueWriter`.
+
 ## Platforms
 
 | Platform | Status |
@@ -623,8 +724,7 @@ handler that writes to logcat to keep MMKV's messages there.
 - On iOS the store's files keep the default file protection. Upstream's Objective-C++ build
   relaxes it to "until first user authentication" so a store can be read while the device is
   locked; this package builds the core's POSIX variant, which does not.
-- Backup and restore, and encoding an `Encodable` value into store keys, are not implemented
-  yet.
+- Backup and restore are not implemented yet.
 
 ## The vendored core
 

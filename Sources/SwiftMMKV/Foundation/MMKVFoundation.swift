@@ -3,15 +3,32 @@
 
   extension Data: MMKVValue {
     public init?(from reader: borrowing MMKVValueReader) {
-      let data = reader.withBytes { span in
-        span.withUnsafeBytes { Data($0) }
-      }
-      guard let data else { return nil }
+      guard let data = reader.data() else { return nil }
       self = data
     }
 
     public func write(to writer: inout MMKVValueWriter) -> Bool {
-      self.withUnsafeBytes { writer.set(bytes: $0.bytes) }
+      writer.set(self)
+    }
+  }
+
+  extension MMKVValueReader {
+    /// Reads the key as raw bytes, copied into a `Data`.
+    ///
+    /// A string value reads as its UTF-8 bytes, because MMKV stores the two the same way.
+    @inlinable
+    public func data() -> Data? {
+      self.withBytes { span in
+        span.withUnsafeBytes { Data($0) }
+      }
+    }
+  }
+
+  extension MMKVValueWriter {
+    /// Stores the bytes of `value`, which JavaScript reads with `getBuffer`.
+    @inlinable
+    public mutating func set(_ value: Data) -> Bool {
+      value.withUnsafeBytes { self.set(bytes: $0.bytes) }
     }
   }
 
@@ -175,6 +192,20 @@
     ///   - defaultValue: The value to read when the store has none.
     public init(_ name: String, default defaultValue: Value) {
       self.init(MMKVStore.CodedKey(name), default: defaultValue)
+    }
+  }
+
+  // MARK: - JSON arrays
+
+  extension MMKVKeyCodingOptions.Arrays {
+    /// Every array is stored as a JSON string, which is how React Native apps store arrays.
+    ///
+    /// ```swift
+    /// try store.encode(Search(recent: ["a", "b"]), intoKeysUnder: "search")
+    /// // JavaScript: JSON.parse(storage.getString('search.recent'))
+    /// ```
+    public static var json: Self {
+      .coded(encoder: JSONCoders.encoder, decoder: JSONCoders.decoder)
     }
   }
 
