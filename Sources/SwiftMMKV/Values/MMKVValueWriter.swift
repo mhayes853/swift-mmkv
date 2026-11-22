@@ -40,6 +40,18 @@ public struct MMKVValueWriter: ~Copyable, ~Escapable {
     self.core.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds)
   }
 
+  /// Stores an `Int` as a signed 64-bit integer.
+  @inlinable
+  public mutating func set(_ value: Int) -> Bool {
+    self.set(Int64(value))
+  }
+
+  /// Stores a `UInt` as an unsigned 64-bit integer.
+  @inlinable
+  public mutating func set(_ value: UInt) -> Bool {
+    self.set(UInt64(value))
+  }
+
   /// Stores a single-precision floating-point number.
   public mutating func set(_ value: Float) -> Bool {
     self.core.set(value, forKey: self.key, expiresInSeconds: self.expiresInSeconds)

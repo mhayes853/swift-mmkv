@@ -41,9 +41,9 @@ reached through a C interface.
 ## Values
 
 MMKV files record no types, so a value is read by naming the type it was written with. Types that
-can be stored conform to `MMKVValue`: `Bool`, `Int32`, `UInt32`, `Int64`, `UInt64`, `Float`,
-`Double`, `String`, `[UInt8]`, and `[String]`. `Int` deliberately does not conform, so that an
-integer literal is never stored in an encoding JavaScript cannot read.
+can be stored conform to `MMKVValue`: `Bool`, `Int`, `UInt`, `Int32`, `UInt32`, `Int64`, `UInt64`,
+`Float`, `Double`, `String`, `[UInt8]`, and `[String]`. `Int` and `UInt` are stored as 64-bit
+integers on every platform.
 
 A type backed by one of those conforms through its raw value, and any other type picks an encoding
 by reading and writing through `MMKVValueReader` and `MMKVValueWriter`:
@@ -70,13 +70,32 @@ store.set(Theme.dark, forKey: "theme")
 store["user"] = UserID(rawValue: 7)
 ```
 
-An integer is stored in its own encoding, which JavaScript cannot read. A type that shares its key
-with JavaScript stores the integer as a `Double` instead. A type with an integer raw value sets
+An integer is stored in its own encoding, which JavaScript cannot read. That includes an integer
+literal, which is an `Int`:
+
+```swift
+store.set(5, forKey: "count")    // A 64-bit integer, which JavaScript cannot read.
+store.set(5.0, forKey: "count")  // A `Double`, which it can.
+```
+
+An integer that shares its key with JavaScript is stored as a `Double` instead, through
+`MMKVNumber`, which is spelled from the integer type it holds:
+
+```swift
+extension MMKVStore.DefaultedKey where Value == Int.MMKVNumber {
+  static let launches = Self("launches", default: 0)
+}
+
+store[.launches] = Int.MMKVNumber(store[.launches].value + 1)
+store.set(Int.MMKVNumber(5), forKey: "count")
+```
+
+A type that holds an integer can store it the same way. A type with an integer raw value sets
 `integerEncoding`, and a type with its own conformance calls `set(number:)` on the writer and
 `number(as:)` on the reader:
 
 ```swift
-enum Priority: Int64, MMKVValue {
+enum Priority: Int, MMKVValue {
   case low, high
   static let integerEncoding = MMKVIntegerEncoding.number
 }
@@ -492,7 +511,7 @@ single-process mode.
 
 | JavaScript | Swift |
 | --- | --- |
-| `number` | `Double`, or an integer stored as a number (see below) |
+| `number` | `Double`, `Int.MMKVNumber`, or another integer stored as a number (see below) |
 | `boolean` | `Bool` |
 | `string` | `String` |
 | `ArrayBuffer` | `[UInt8]`, `Data`, or `withBytes(forKey:)` |
@@ -502,9 +521,10 @@ single-process mode.
 Things to know while both sides are live:
 
 - JavaScript reads every number as a `Double`, so it cannot read a key that Swift wrote as an
-  `Int32` or `Int64`, and Swift reads garbage from a number when it names an integer type. For an
-  integer that both sides use, store a `Double`, or use a type that stores its integer as one:
-  an integer-backed enum with `integerEncoding` set to `.number`, or a type that calls
+  integer, and Swift reads garbage from a number when it names an integer type. An integer
+  literal is an `Int`, so `store.set(5, forKey:)` is such a write. For an integer that both sides
+  use, store a `Double` or an `Int.MMKVNumber`, or use a type that stores its integer as a
+  number: an integer-backed enum with `integerEncoding` set to `.number`, or a type that calls
   `set(number:)` and `number(as:)`. See [Values](#values).
 - Neither side learns which key the other changed. Swift receives `.external`, and JavaScript
   listeners do not fire for native writes.

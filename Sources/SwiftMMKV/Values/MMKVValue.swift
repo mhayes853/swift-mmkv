@@ -28,8 +28,17 @@
 /// }
 /// ```
 ///
-/// `Int` and `UInt` deliberately do not conform. An integer literal would otherwise be stored as
-/// a 64-bit integer, which JavaScript, where every number is a `Double`, cannot read back.
+/// An integer is stored in its own encoding, which Kotlin and Objective-C read and JavaScript,
+/// where every number is a `Double`, cannot. That includes an integer literal, which is an
+/// `Int`:
+///
+/// ```swift
+/// store.set(5, forKey: "count")    // A 64-bit integer, which JavaScript cannot read.
+/// store.set(5.0, forKey: "count")  // A `Double`, which it can.
+/// ```
+///
+/// An integer that shares its key with JavaScript is stored as ``MMKVNumber``, spelled
+/// `Int.MMKVNumber`.
 ///
 /// A type that holds an integer and shares its key with JavaScript stores the integer as a
 /// `Double` instead. A type with an integer raw value does so by setting ``integerEncoding``,
@@ -37,7 +46,7 @@
 /// ``MMKVValueReader/number(as:)``:
 ///
 /// ```swift
-/// enum Priority: Int64, MMKVValue {
+/// enum Priority: Int, MMKVValue {
 ///   case low, high
 ///   static let integerEncoding = MMKVIntegerEncoding.number
 /// }
@@ -154,6 +163,36 @@ extension Int64: MMKVValue {
 extension UInt64: MMKVValue {
   public init?(from reader: borrowing MMKVValueReader) {
     guard let value = reader.uint64() else { return nil }
+    self = value
+  }
+
+  public func write(to writer: inout MMKVValueWriter) -> Bool {
+    writer.set(self)
+  }
+}
+
+/// Stored as a signed 64-bit integer on every platform, which JavaScript cannot read. Use
+/// ``MMKVNumber`` for an integer that shares its key with JavaScript.
+///
+/// Where `Int` is 32 bits wide, a stored integer that does not fit reads as `nil`.
+extension Int: MMKVValue {
+  public init?(from reader: borrowing MMKVValueReader) {
+    guard let value = reader.int() else { return nil }
+    self = value
+  }
+
+  public func write(to writer: inout MMKVValueWriter) -> Bool {
+    writer.set(self)
+  }
+}
+
+/// Stored as an unsigned 64-bit integer on every platform, which JavaScript cannot read. Use
+/// ``MMKVNumber`` for an integer that shares its key with JavaScript.
+///
+/// Where `UInt` is 32 bits wide, a stored integer that does not fit reads as `nil`.
+extension UInt: MMKVValue {
+  public init?(from reader: borrowing MMKVValueReader) {
+    guard let value = reader.uint() else { return nil }
     self = value
   }
 
