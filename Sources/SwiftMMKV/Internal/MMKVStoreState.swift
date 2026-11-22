@@ -19,11 +19,15 @@ final class MMKVStoreState: Sendable {
   /// Turns operations away while the store is suspended. A single-process store takes no file
   /// lock, so it has nothing to suspend.
   let suspensionGate: SuspensionGate?
+  /// A `SuspensionObservation`, which cannot be named here because it needs a newer OS than
+  /// this package supports.
+  let suspensionObservation: (any Sendable)?
   private let registrations = Lock(Registrations())
 
   private init(id: MMKVStore.ID, isMultiProcess: Bool) {
     self.id = id
     self.suspensionGate = isMultiProcess ? SuspensionGate() : nil
+    self.suspensionObservation = isMultiProcess ? Self.makeSuspensionObservation() : nil
   }
 
   var hasListeners: Bool {

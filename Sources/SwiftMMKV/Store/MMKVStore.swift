@@ -595,8 +595,20 @@ extension MMKVStore {
 
 extension MMKVStore {
   /// Whether the store is suspended.
+  ///
+  /// The Observation framework tracks this property, so a SwiftUI view that reads it is drawn
+  /// again when the store is suspended or resumed, and `withObservationTracking` reports the
+  /// change. That needs iOS 17, macOS 14, tvOS 17, watchOS 10 or visionOS 1. Observers are told
+  /// on the thread that suspends or resumes the store.
+  ///
+  /// ```swift
+  /// Text(store.isSuspended ? "Paused" : "Live")
+  /// ```
+  ///
+  /// None of the store's values are tracked. Use a subscription or ``changes`` for those.
   public var isSuspended: Bool {
-    self.core.isSuspended
+    self.core.state.accessSuspension()
+    return self.core.isSuspended
   }
 
   /// Stops the store from taking its file lock, so that the process can be suspended safely.

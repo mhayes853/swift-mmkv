@@ -554,7 +554,8 @@ store.resume()   // The app is running again.
 While a store is suspended:
 
 - Reads return `nil`, and `keys` and `count` are empty. `isSuspended` tells this apart from a
-  store that has no value.
+  store that has no value. The Observation framework tracks `isSuspended`, so a SwiftUI view that
+  reads it is drawn again when the store is suspended or resumed.
 - Writes and removals do nothing, and return `false` where they return a result.
 - Throwing operations, such as `decode(_:forKey:)`, throw `MMKVError.storeIsSuspended`.
 - Async sequences of a key's values produce nothing.
