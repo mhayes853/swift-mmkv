@@ -22,6 +22,13 @@
     }
 
     @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
+    @Test func `A Store Is Observable`() throws {
+      func isObservable(_ value: some Observable) -> Bool { true }
+
+      #expect(isObservable(try makeStore()))
+    }
+
+    @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
     @Test func `Suspending And Resuming A Store Are Observed`() throws {
       let store = try makeStore(mode: .multiProcess)
       let changes = Changes()

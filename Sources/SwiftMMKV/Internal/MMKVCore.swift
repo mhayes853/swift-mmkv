@@ -287,12 +287,12 @@ extension MMKVCore {
   }
 
   func suspend() {
-    self.state.suspend()
+    self.state.suspensionGate?.suspend()
   }
 
   /// - Returns: Whether the store was suspended.
   func resume() -> Bool {
-    self.state.resume()
+    self.state.suspensionGate?.resume() ?? false
   }
 }
 

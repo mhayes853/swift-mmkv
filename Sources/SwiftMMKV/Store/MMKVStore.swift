@@ -605,9 +605,11 @@ extension MMKVStore {
   /// Text(store.isSuspended ? "Paused" : "Live")
   /// ```
   ///
-  /// None of the store's values are tracked. Use a subscription or ``changes`` for those.
+  /// It is the only property the framework tracks. Use a subscription or ``changes`` for the
+  /// store's values.
   public var isSuspended: Bool {
-    self.core.state.isSuspended
+    self.core.state.observationRegistrar.access(self, keyPath: \.isSuspended)
+    return self.core.isSuspended
   }
 
   /// Stops the store from taking its file lock, so that the process can be suspended safely.
@@ -632,7 +634,11 @@ extension MMKVStore {
   /// Do not call this from inside ``withExclusiveLock(_:)``: the lock is then held until the
   /// body returns.
   public func suspend() {
-    self.core.suspend()
+    // Suspending a store that already is, or that has nothing to suspend, tells no observer.
+    guard self.core.state.suspensionGate != nil, !self.core.isSuspended else { return }
+    self.core.state.observationRegistrar.withMutation(of: self, keyPath: \.isSuspended) {
+      self.core.suspend()
+    }
   }
 
   /// Lets the store take its file lock again.
@@ -640,11 +646,23 @@ extension MMKVStore {
   /// Listeners are told with ``Change/external`` if the store was suspended, because reads
   /// were turned away in the meantime and another process may have changed the store.
   public func resume() {
-    if self.core.resume() {
+    guard self.core.isSuspended else { return }
+    let didResume = self.core.state.observationRegistrar
+      .withMutation(of: self, keyPath: \.isSuspended) { self.core.resume() }
+    if didResume {
       self.core.state.notify(.external)
     }
   }
 }
+
+// MARK: - Observable
+
+/// The Observation framework tracks ``MMKVStore/isSuspended``, and none of the store's values.
+///
+/// The conformance lets a store be passed where SwiftUI asks for an observable object, such as
+/// `environment(_:)` and `@Environment(MMKVStore.self)`.
+@available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
+extension MMKVStore: _Observable {}
 
 // MARK: - Maintenance
 

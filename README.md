@@ -555,7 +555,9 @@ While a store is suspended:
 
 - Reads return `nil`, and `keys` and `count` are empty. `isSuspended` tells this apart from a
   store that has no value. The Observation framework tracks `isSuspended`, so a SwiftUI view that
-  reads it is drawn again when the store is suspended or resumed.
+  reads it is drawn again when the store is suspended or resumed. It is the only property that
+  is tracked: `MMKVStore` is `Observable` so that it can be put in the SwiftUI environment, and
+  its values are not observed that way.
 - Writes and removals do nothing, and return `false` where they return a result.
 - Throwing operations, such as `decode(_:forKey:)`, throw `MMKVError.storeIsSuspended`.
 - Async sequences of a key's values produce nothing.
