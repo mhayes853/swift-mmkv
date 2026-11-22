@@ -819,6 +819,46 @@ form a Foundation `UUID` is stored in, so either type reads what the other wrote
 A type of your own that stores one reads it with `uuidV7()` on `MMKVValueReader` and writes it
 with `set` on `MMKVValueWriter`.
 
+## The `Tagged` trait
+
+The `Tagged` trait, off by default, makes
+[swift-tagged](https://github.com/pointfreeco/swift-tagged)'s `Tagged` an `MMKVValue` whenever
+its raw value is one:
+
+```swift
+.package(
+  url: "https://github.com/mhayes853/swift-mmkv",
+  branch: "main",
+  traits: ["Foundation", "Tagged"]
+)
+```
+
+```swift
+struct User {
+  typealias ID = Tagged<User, Int>
+}
+
+extension MMKVStore.Key<User.ID> {
+  static let currentUser: Self = "currentUser"
+}
+
+store[.currentUser] = 42
+```
+
+It is stored as its raw value, so the raw value's type decides the encoding, and a key reads back
+as either type. An integer id that JavaScript also reads has `Int.MMKVNumber` as its raw value,
+which stores a `Double`:
+
+```swift
+typealias ID = Tagged<User, Int.MMKVNumber>
+```
+
+Turning the trait on changes how `encode(_:intoKeysUnder:)` stores a `Tagged` property. Without
+it, the property is stored as any `Codable` value is, so an integer follows the `numbers` option
+and is a `Double` by default. With it, the property is an `MMKVValue` and is stored as itself, so
+a `Tagged<User, Int>` becomes a 64-bit integer. A `Tagged<User, Int.MMKVNumber>` is a `Double`
+either way. The trait does not need the `Foundation` trait.
+
 ## Platforms
 
 | Platform | Status |
