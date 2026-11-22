@@ -607,8 +607,7 @@ extension MMKVStore {
   ///
   /// None of the store's values are tracked. Use a subscription or ``changes`` for those.
   public var isSuspended: Bool {
-    self.core.state.accessSuspension()
-    return self.core.isSuspended
+    self.core.state.isSuspended
   }
 
   /// Stops the store from taking its file lock, so that the process can be suspended safely.

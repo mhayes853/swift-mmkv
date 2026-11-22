@@ -19,15 +19,37 @@ final class MMKVStoreState: Sendable {
   /// Turns operations away while the store is suspended. A single-process store takes no file
   /// lock, so it has nothing to suspend.
   let suspensionGate: SuspensionGate?
-  /// A `SuspensionObservation`, which cannot be named here because it needs a newer OS than
-  /// this package supports.
-  let suspensionObservation: (any Sendable)?
+  private let observationRegistrar = _ObservationRegistrar()
   private let registrations = Lock(Registrations())
 
   private init(id: MMKVStore.ID, isMultiProcess: Bool) {
     self.id = id
     self.suspensionGate = isMultiProcess ? SuspensionGate() : nil
-    self.suspensionObservation = isMultiProcess ? Self.makeSuspensionObservation() : nil
+  }
+
+  /// Whether the store is suspended, which the Observation framework tracks.
+  ///
+  /// The state is what is observed, and not the store, so that ``MMKVStore`` does not have to
+  /// be `Observable`, which would suggest that its values are tracked too.
+  var isSuspended: Bool {
+    self.observationRegistrar.access(self, keyPath: \.isSuspended)
+    return self.suspensionGate?.isSuspended ?? false
+  }
+
+  /// Suspends the store and tells its observers, unless it already is suspended.
+  func suspend() {
+    guard let gate = self.suspensionGate, !gate.isSuspended else { return }
+    self.observationRegistrar.withMutation(of: self, keyPath: \.isSuspended) { gate.suspend() }
+  }
+
+  /// Resumes the store and tells its observers, unless it is not suspended.
+  ///
+  /// - Returns: Whether the store was suspended.
+  func resume() -> Bool {
+    guard let gate = self.suspensionGate, gate.isSuspended else { return false }
+    return self.observationRegistrar.withMutation(of: self, keyPath: \.isSuspended) {
+      gate.resume()
+    }
   }
 
   var hasListeners: Bool {
@@ -146,3 +168,6 @@ extension MMKVStoreState {
     }
   }()
 }
+
+@available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
+extension MMKVStoreState: _Observable {}

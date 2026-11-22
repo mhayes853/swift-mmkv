@@ -286,16 +286,13 @@ extension MMKVCore {
     self.state.suspensionGate?.isSuspended ?? false
   }
 
-  /// Suspending or resuming a store that already is tells no observer.
   func suspend() {
-    guard let gate = self.state.suspensionGate, !gate.isSuspended else { return }
-    self.state.withSuspensionMutation { gate.suspend() }
+    self.state.suspend()
   }
 
   /// - Returns: Whether the store was suspended.
   func resume() -> Bool {
-    guard let gate = self.state.suspensionGate, gate.isSuspended else { return false }
-    return self.state.withSuspensionMutation { gate.resume() }
+    self.state.resume()
   }
 }
 
