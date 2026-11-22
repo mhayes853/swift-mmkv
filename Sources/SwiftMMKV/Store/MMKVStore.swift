@@ -634,6 +634,18 @@ extension MMKVStore {
       self.core.state.notify(.external)
     }
   }
+
+  /// Runs each operation that takes the file lock inside `activity` from now on, or directly if
+  /// it is `nil`. Every ``MMKVStore`` over the same files shares it. A single-process store takes
+  /// no file lock, so this does nothing to one.
+  package func setExpiringActivity(_ activity: ExpiringActivity?) {
+    self.core.state.suspensionGate?.setActivity(activity)
+  }
+
+  /// Stops running operations inside `activity`, unless the store has been given another one.
+  package func removeExpiringActivity(_ activity: ExpiringActivity) {
+    self.core.state.suspensionGate?.removeActivity(activity)
+  }
 }
 
 // MARK: - Maintenance

@@ -71,7 +71,43 @@
     }
 
     #if canImport(UIKit) && !os(watchOS)
-      @Test func `Follows The Application Entering And Leaving The Background`() throws {
+      @Test func `Keeps The App Running While It Uses The Stores In The Background`() throws {
+        let store = try makeStore(mode: .multiProcess)
+        let center = NotificationCenter()
+        let system = TestActivitySystem()
+        let controller = MMKVSuspensionController(
+          stores: [store],
+          observing: .application,
+          notificationCenter: center,
+          activityLinger: .milliseconds(100),
+          startActivity: { system.start($0, $1) }
+        )
+        center.post(name: UIApplication.willResignActiveNotification, object: nil)
+        #expect(store.set("foreground", forKey: "key"))
+        #expect(system.startCount == 0)
+
+        center.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        #expect(!store.isSuspended)
+        #expect(store.set("background", forKey: "key"))
+        #expect(store["key", as: String.self] == "background")
+        #expect(system.startCount == 1)
+
+        system.expire()
+        #expect(store.isSuspended)
+        system.waitUntilIdle()
+
+        center.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+        #expect(!store.isSuspended)
+        #expect(store.set("foreground", forKey: "key"))
+        #expect(system.startCount == 1)
+
+        controller.invalidate()
+        center.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        #expect(store.set("invalidated", forKey: "key"))
+        #expect(system.startCount == 1)
+      }
+
+      @Test func `Uses The Store In The Background Through The System's Activity`() throws {
         let store = try makeStore(mode: .multiProcess)
         let center = NotificationCenter()
         let controller = MMKVSuspensionController(
@@ -79,20 +115,29 @@
           observing: .application,
           notificationCenter: center
         )
-        #expect(!store.isSuspended)
-
-        center.post(name: UIApplication.willResignActiveNotification, object: nil)
-        #expect(!store.isSuspended)
-
         center.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
-        #expect(store.isSuspended)
-
-        center.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+        #expect(store.set("value", forKey: "key"))
+        #expect(store["key", as: String.self] == "value")
         #expect(!store.isSuspended)
-
         controller.invalidate()
+      }
+
+      @Test func `Stops Keeping The Application Running When It Is Released`() throws {
+        let store = try makeStore(mode: .multiProcess)
+        let center = NotificationCenter()
+        let system = TestActivitySystem()
+        var controller: MMKVSuspensionController? = MMKVSuspensionController(
+          stores: [store],
+          observing: .application,
+          notificationCenter: center,
+          startActivity: { system.start($0, $1) }
+        )
         center.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
-        #expect(!store.isSuspended)
+        _ = controller
+        controller = nil
+
+        #expect(store.set("value", forKey: "key"))
+        #expect(system.startCount == 0)
       }
 
       @Test func `Stops Observing When It Is Released`() throws {

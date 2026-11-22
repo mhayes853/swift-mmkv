@@ -27,16 +27,17 @@
       /// Observes the UIKit application entering the background and returning to the
       /// foreground.
       ///
-      /// The stores stay usable while the app is merely inactive, as it is under the app
-      /// switcher or an incoming call, because a suspended store turns reads away too.
+      /// The stores stay usable in the background. Each operation that takes a file lock there
+      /// keeps the app running until it finishes, so the app is never suspended holding the
+      /// lock, and the stores are suspended only when the app's background time runs out.
       public static var application: Self { Self(kind: .application) }
     #endif
   }
 
   // MARK: - Controller
 
-  /// Suspends stores when their app is about to stop running, and resumes them when it runs
-  /// again. See ``MMKVStore/suspend()``.
+  /// Keeps an app from being suspended while its stores hold their file locks. See
+  /// ``MMKVStore/suspend()``.
   ///
   /// Retain the controller for as long as it should observe the app:
   ///
@@ -44,17 +45,26 @@
   /// let suspension = MMKVSuspensionController(stores: [store], observing: .application)
   /// ```
   ///
-  /// The controller leaves the stores as they are until its first lifecycle event, so an app
-  /// launched in the background can use them. Such an app never enters the background, and
-  /// ends its work by calling ``setActive(_:)`` with `false` itself.
+  /// Observing the application, the controller leaves the stores usable in the background, and
+  /// runs each operation that takes a file lock there inside an expiring activity, which keeps
+  /// the app running until the operation finishes. Operations that follow one another closely
+  /// share one activity, which ends about a second after the last of them. When the app's
+  /// background time runs out, the controller suspends the stores, and it resumes them when the
+  /// app returns to the foreground. An operation the system will not keep the app running for
+  /// is turned away, as if the store were suspended.
   ///
-  /// A store suspended on entering the background turns away anything the app does afterwards,
-  /// including writes made by the app's own handling of that event. Save state before then, or
-  /// drive the controller manually and suspend once that work is done.
+  /// The controller leaves the stores as they are until its first lifecycle event. An app
+  /// launched in the background never enters the background, so its operations are not kept
+  /// running. Such an app ends its work by calling ``setActive(_:)`` with `false` itself.
+  ///
+  /// A manual controller suspends and resumes the stores when its owner calls ``setActive(_:)``.
   @MainActor
   public final class MMKVSuspensionController {
     private let stores: [MMKVStore]
     private let observation: Observation
+    /// Keeps the app running while the stores hold their file locks in the background, if the
+    /// controller observes the application.
+    private let activity: ExpiringActivity?
 
     /// Starts observing `scope` on behalf of `stores`.
     ///
@@ -63,22 +73,51 @@
     ///   - scope: What to observe.
     ///   - notificationCenter: The center the lifecycle notifications are posted to. Pass
     ///     another to test lifecycle handling in isolation, posting on the main thread.
-    public init(
+    public convenience init(
       stores: some Sequence<MMKVStore>,
       observing scope: MMKVSuspensionScope = .manual,
       notificationCenter: NotificationCenter = .default
     ) {
-      self.stores = Array(stores)
+      self.init(
+        stores: stores,
+        observing: scope,
+        notificationCenter: notificationCenter,
+        startActivity: Self.startActivity
+      )
+    }
+
+    /// - Parameter startActivity: Starts the activity that keeps the app running in the
+    ///   background, or `nil` if the app needs none.
+    package init(
+      stores: some Sequence<MMKVStore>,
+      observing scope: MMKVSuspensionScope = .manual,
+      notificationCenter: NotificationCenter = .default,
+      activityLinger: Duration = .seconds(1),
+      startActivity: ExpiringActivity.Starter?
+    ) {
+      let stores = Array(stores)
+      self.stores = stores
       self.observation = Observation(notificationCenter: notificationCenter)
       switch scope.kind {
       case .manual:
-        break
+        self.activity = nil
       case .application:
+        self.activity = startActivity.map { start in
+          ExpiringActivity(linger: activityLinger, start: start) {
+            for store in stores {
+              store.suspend()
+            }
+          }
+        }
         #if canImport(UIKit) && !os(watchOS)
-          self.observe(UIApplication.didEnterBackgroundNotification, isActive: false)
-          self.observe(UIApplication.willEnterForegroundNotification, isActive: true)
+          self.observe(UIApplication.didEnterBackgroundNotification) { $0.enterBackground() }
+          self.observe(UIApplication.willEnterForegroundNotification) { $0.enterForeground() }
         #endif
       }
+    }
+
+    deinit {
+      self.removeActivity()
     }
 
     /// Resumes the stores if `isActive`, and suspends them otherwise. Calling this again with
@@ -94,18 +133,59 @@
       }
     }
 
-    /// Stops observing, and stops ``setActive(_:)`` from having an effect. The stores stay as
-    /// they are.
+    /// Stops observing, and stops ``setActive(_:)`` from having an effect. Operations stop
+    /// keeping the app running, and the stores are otherwise left as they are.
     public func invalidate() {
       self.observation.invalidate()
+      self.removeActivity()
     }
 
-    private func observe(_ name: Notification.Name, isActive: Bool) {
+    private func enterBackground() {
+      guard !self.observation.isInvalidated else { return }
+      guard let activity = self.activity else {
+        // Nothing can keep the app running, so it must not hold a lock from here on.
+        return self.setActive(false)
+      }
+      for store in self.stores {
+        store.setExpiringActivity(activity)
+      }
+    }
+
+    private func enterForeground() {
+      guard !self.observation.isInvalidated else { return }
+      self.removeActivity()
+      self.setActive(true)
+    }
+
+    private nonisolated func removeActivity() {
+      guard let activity = self.activity else { return }
+      for store in self.stores {
+        store.removeExpiringActivity(activity)
+      }
+    }
+
+    private func observe(
+      _ name: Notification.Name,
+      _ handler: @escaping @MainActor (MMKVSuspensionController) -> Void
+    ) {
       self.observation.observe(name) { [weak self] in
         // Lifecycle notifications are posted on the main thread. They are handled before the
-        // post returns, so the stores are suspended before the app can be.
-        MainActor.assumeIsolated { self?.setActive(isActive) }
+        // post returns, so the stores are ready before the app can be suspended.
+        MainActor.assumeIsolated {
+          if let self { handler(self) }
+        }
       }
+    }
+
+    /// Starts an activity that keeps the app running, where the system offers one.
+    private static var startActivity: ExpiringActivity.Starter? {
+      #if (os(iOS) || os(tvOS) || os(visionOS)) && !targetEnvironment(macCatalyst)
+        return { reason, block in
+          ProcessInfo.processInfo.performExpiringActivity(withReason: reason, using: block)
+        }
+      #else
+        return nil
+      #endif
     }
   }
 
@@ -194,8 +274,8 @@
 
     #if (canImport(UIKit) && !os(watchOS)) || os(watchOS)
       extension View {
-        /// Suspends `stores` when the app enters the background, and resumes them when it
-        /// returns to the foreground. See ``MMKVStore/suspend()``.
+        /// Keeps the app from being suspended while `stores` hold their file locks, as an
+        /// ``MMKVSuspensionController`` observing the application does.
         ///
         /// ```swift
         /// WindowGroup {
@@ -209,8 +289,8 @@
           self.mmkvSuspension(stores)
         }
 
-        /// Suspends every store in `stores` when the app enters the background, and resumes
-        /// them when it returns to the foreground. See ``MMKVStore/suspend()``.
+        /// Keeps the app from being suspended while any store in `stores` holds its file lock,
+        /// as an ``MMKVSuspensionController`` observing the application does.
         ///
         /// ```swift
         /// WindowGroup {
