@@ -86,9 +86,12 @@ extension MMKVStore.DefaultedKey where Value == Int.MMKVNumber {
   static let launches = Self("launches", default: 0)
 }
 
-store[.launches] = Int.MMKVNumber(store[.launches].value + 1)
+store[.launches] += 1
 store.set(Int.MMKVNumber(5), forKey: "count")
 ```
+
+`MMKVNumber` is itself a `BinaryInteger`, so it does arithmetic, compares, and converts to and from
+other integers as the integer it holds does.
 
 A type that holds an integer can store it the same way. A type with an integer raw value sets
 `integerEncoding`, and a type with its own conformance calls `set(number:)` on the writer and

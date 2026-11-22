@@ -114,10 +114,28 @@ extension MMKVStore.DefaultedKey where Value == Int.MMKVNumber {
     let store = try makeStore()
 
     #expect(store[.launches] == 0)
-    store[.launches] = Int.MMKVNumber(store[.launches].value + 1)
+    store[.launches] += 1
 
-    #expect(store[.launches].value == 1)
+    #expect(store[.launches] == 1)
     #expect(store.value(forKey: "launches", as: Double.self) == 1)
+  }
+
+  @Test func `A Number Is A Binary Integer`() {
+    let number: Int.MMKVNumber = 7
+
+    #expect(number + 1 == 8)
+    #expect(number * 2 - 4 == 10)
+    #expect(number / 2 == 3 && number % 2 == 1)
+    #expect(-number == -7 && number.magnitude == 7)
+    #expect(number < 8 && number == 7)
+    #expect(Int(number) == 7 && Int.MMKVNumber(UInt8(7)) == number)
+    #expect(UInt8.MMKVNumber(exactly: 300) == nil)
+    #expect(UInt8.MMKVNumber(clamping: 300) == 255)
+    #expect(Int.MMKVNumber(exactly: 2.5) == nil)
+    #expect(number << 1 == 14 && number & 3 == 3)
+    #expect("\(number)" == "7")
+    #expect(Int.MMKVNumber.isSigned && !UInt.MMKVNumber.isSigned)
+    #expect((0..<number).count == 7)
   }
 
   @Test func `A Number Spread Over Keys Is A Double Whatever The Options`() throws {
