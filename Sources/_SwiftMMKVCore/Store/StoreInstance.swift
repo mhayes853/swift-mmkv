@@ -464,6 +464,11 @@ extension StoreState {
   mutating func allKeys() -> [String] {
     self.checkLoadData()
     self.filterExpiredKeysBeforeListing()
+    // A plain-text store's keys are read from the file, which another process must not rewrite
+    // or shrink meanwhile. The C++ core keeps copies of the keys, and so reads them unlocked.
+    self.lockProcess(.shared)
+    defer { self.unlockProcess(.shared) }
+    self.checkLoadData()
     if self.crypter != nil {
       var keys = [String]()
       keys.reserveCapacity(self.dicCrypt.count)
@@ -488,11 +493,16 @@ extension StoreState {
     } else {
       self.exclusiveProcessLock.lock()
       defer { self.exclusiveProcessLock.unlock() }
+      // The rewrite keeps only the records this instance knows of, so it must know of them all.
+      self.checkLoadData()
       self.fullWriteback(onlyWhileExpire: true)
     }
   }
 
   mutating func contains(_ key: UnsafeRawBufferPointer) -> Bool {
+    // Looking a key up compares it with the keys in the file, as ``allKeys()`` reads them.
+    self.lockProcess(.shared)
+    defer { self.unlockProcess(.shared) }
     self.checkLoadData()
     if !self.enableKeyExpire {
       return self.crypter == nil

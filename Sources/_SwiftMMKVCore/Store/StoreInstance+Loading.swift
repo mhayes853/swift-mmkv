@@ -40,12 +40,20 @@ extension StoreState {
           needFullWriteback = true
         }
         if needFullWriteback && !self.isReadOnly {
+          self.exclusiveProcessLock.lock()
+          defer { self.exclusiveProcessLock.unlock() }
+          if self.reloadIfChangedWhileUpgradingLock() {
+            return
+          }
           self.fullWriteback()
         }
       } else {
         // The file is empty or unreadable: discard everything.
         self.exclusiveProcessLock.lock()
         defer { self.exclusiveProcessLock.unlock() }
+        if self.reloadIfChangedWhileUpgradingLock() {
+          return
+        }
         let dataOffset = min(fileSize, fixed32Size)
         self.output = OutputState(position: 0, size: fileSize - dataOffset)
         if !self.isReadOnly {
@@ -58,6 +66,30 @@ extension StoreState {
       }
     }
     self.needLoadFromFile = false
+  }
+
+  /// Loads again if another process changed the store since this load read the metadata, with
+  /// the exclusive file lock held.
+  ///
+  /// A load runs under the shared lock and takes the exclusive one to write. Upgrading gives up
+  /// the shared lock if another process holds one too, and that process can then write before
+  /// this one gets the exclusive lock. Writing what this load decided before that, an empty store
+  /// or a rewrite of the records it read, would discard what the other process wrote. The C++
+  /// core does not check.
+  ///
+  /// - Returns: Whether it loaded again, which leaves nothing more for the caller to do.
+  private mutating func reloadIfChangedWhileUpgradingLock() -> Bool {
+    guard self.isMultiProcess, self.metaFile.isFileValid else { return false }
+    let metaInfo = MetaInfo.Summary(reading: self.metaFile.memory!)
+    if self.metaInfo.sequence == metaInfo.sequence && self.metaInfo.crcDigest == metaInfo.crcDigest
+      && self.metaInfo.actualSize == metaInfo.actualSize
+    {
+      return false
+    }
+    self.dic.removeAll()
+    self.dicCrypt.removeAll()
+    self.loadFromFile()
+    return true
   }
 
   /// Reads only what another process appended since the last load (`partialLoadFromFile`), or

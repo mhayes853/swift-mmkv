@@ -102,21 +102,34 @@ extension StoreState {
     defer { self.unlockProcess(.shared) }
     self.checkLoadData()
     let raw = self.getRawDataForKey(key)
+    guard self.hasExpired(raw) else { return Self.withoutExpirationTime(raw) }
+    guard self.checkWritable() else { return .empty }
+    self.lockProcess(.exclusive)
+    defer { self.unlockProcess(.exclusive) }
+    // Upgrading the lock can let another process write the key first, and its value must stay.
+    // The C++ core removes the key without looking again.
+    self.checkLoadData()
+    let current = self.getRawDataForKey(key)
+    guard self.hasExpired(current) else { return Self.withoutExpirationTime(current) }
+    _ = self.removeDataForKey(key)
+    return .empty
+  }
+
+  /// Whether `raw`, a value with an expiry time at its end, has expired.
+  private func hasExpired(_ raw: RawValue) -> Bool {
+    guard self.enableKeyExpire, raw.count >= fixed32Size else { return false }
+    let time = raw.withBytes { Self.expirationTime(of: $0) }
+    return time != 0 && time <= Self.currentTimeInSeconds()
+  }
+
+  private static func withoutExpirationTime(_ raw: RawValue) -> RawValue {
     if raw.count < fixed32Size {
       if raw.count != 0 {
         Log.warning("key has invalid value size \(raw.count)")
       }
       return raw
     }
-    let newLength = raw.count - fixed32Size
-    if self.enableKeyExpire {
-      let time = raw.withBytes { Self.expirationTime(of: $0) }
-      if time != 0 && time <= Self.currentTimeInSeconds() {
-        self.removeValue(forKey: key)
-        return .empty
-      }
-    }
-    return raw.prefix(newLength)
+    return raw.prefix(raw.count - fixed32Size)
   }
 
   /// Drops expired keys from the index, without writing anything (`filterExpiredKeys`).
