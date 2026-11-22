@@ -70,6 +70,34 @@ store.set(Theme.dark, forKey: "theme")
 store["user"] = UserID(rawValue: 7)
 ```
 
+An integer is stored in its own encoding, which JavaScript cannot read. A type that shares its key
+with JavaScript stores the integer as a `Double` instead. A type with an integer raw value sets
+`integerEncoding`, and a type with its own conformance calls `set(number:)` on the writer and
+`number(as:)` on the reader:
+
+```swift
+enum Priority: Int64, MMKVValue {
+  case low, high
+  static let integerEncoding = MMKVIntegerEncoding.number
+}
+
+struct UserID: MMKVValue {
+  var rawValue: Int64
+
+  init?(from reader: borrowing MMKVValueReader) {
+    guard let rawValue = reader.number(as: Int64.self) else { return nil }
+    self.rawValue = rawValue
+  }
+
+  func write(to writer: inout MMKVValueWriter) -> Bool {
+    writer.set(number: self.rawValue)
+  }
+}
+```
+
+An integer that a `Double` cannot hold exactly, which starts beyond 2 to the power of 53, is not
+stored, and a stored number that is not a whole number reads as `nil`.
+
 Raw bytes are read through a `RawSpan` without this package copying them:
 
 ```swift
@@ -119,10 +147,12 @@ let maybe = try store.decode(Settings?.self, fromKeysUnder: "settings")  // nil 
 The defaults store values as JavaScript does, and `MMKVKeyCodingOptions` changes them:
 
 - Every number is a `Double`. `numbers: .native` stores each integer type in its own form.
+- A property whose type is an `MMKVValue`, yours or the package's, is stored as it is under a key
+  of its own, so `store.value(forKey:as:)` reads it back with the same type. That includes a type
+  with an integer raw value, which follows its `integerEncoding` and not `numbers`.
 - An array is stored whole under one key, as a JSON string with the `Foundation` trait. Without
   it only arrays of strings can be stored, unless `arrays: .coded(encoder:decoder:)` names a coder.
   `[UInt8]` and `Data` are always stored as bytes.
-- `URL`, `UUID`, and `Decimal` are stored as strings, as they are under a key of their own.
 - Names are joined with `"."`, or with `separator`. An empty prefix makes the properties top-level
   keys. A name that contains the separator is not escaped.
 
@@ -462,7 +492,7 @@ single-process mode.
 
 | JavaScript | Swift |
 | --- | --- |
-| `number` | `Double` |
+| `number` | `Double`, or an integer stored as a number (see below) |
 | `boolean` | `Bool` |
 | `string` | `String` |
 | `ArrayBuffer` | `[UInt8]`, `Data`, or `withBytes(forKey:)` |
@@ -471,6 +501,11 @@ single-process mode.
 
 Things to know while both sides are live:
 
+- JavaScript reads every number as a `Double`, so it cannot read a key that Swift wrote as an
+  `Int32` or `Int64`, and Swift reads garbage from a number when it names an integer type. For an
+  integer that both sides use, store a `Double`, or use a type that stores its integer as one:
+  an integer-backed enum with `integerEncoding` set to `.number`, or a type that calls
+  `set(number:)` and `number(as:)`. See [Values](#values).
 - Neither side learns which key the other changed. Swift receives `.external`, and JavaScript
   listeners do not fire for native writes.
 - `MMKVDirectory.reactNative()` is only available on Apple platforms, and needs the `Foundation`
@@ -519,7 +554,10 @@ store.resume()   // The app is running again.
 While a store is suspended:
 
 - Reads return `nil`, and `keys` and `count` are empty. `isSuspended` tells this apart from a
-  store that has no value.
+  store that has no value. The Observation framework tracks `isSuspended`, so a SwiftUI view that
+  reads it is drawn again when the store is suspended or resumed. It is the only property that
+  is tracked: `MMKVStore` is `Observable` so that it can be put in the SwiftUI environment, and
+  its values are not observed that way.
 - Writes and removals do nothing, and return `false` where they return a result.
 - Throwing operations, such as `decode(_:forKey:)`, throw `MMKVError.storeIsSuspended`.
 - Async sequences of a key's values produce nothing.
@@ -600,12 +638,60 @@ The library itself does not use Foundation. The `Foundation` trait, on by defaul
 - `Data`, `URL`, `UUID`, and `Decimal` as `MMKVValue`s, and `URL` root directories. `Data` is
   stored as bytes and the others as strings, which JavaScript reads with `getString`. A `Decimal`
   can also be read from a number that JavaScript stored.
-- `data()`, `url()`, `uuid()`, and `decimal()` on `MMKVValueReader`, and a `set` for each on
+- `Date` as an `MMKVValue`, and types for dates stored as numbers. See [Dates](#dates).
+- `data()`, `url()`, `uuid()`, `decimal()`, and `date()` on `MMKVValueReader`, and a `set` for each on
   `MMKVValueWriter`, for a type of your own that stores one of them.
 - `JSONEncoder`, `JSONDecoder`, and the property list coders as coders for `encode` and
   `decode`, with JSON as the default when no coder is passed.
 
 Turn it off with `traits: []` on the package dependency.
+
+### Dates
+
+A `Date` is stored as an ISO 8601 string with milliseconds, which is what JavaScript's
+`toISOString()` writes and `new Date(string)` reads:
+
+```swift
+store.set(Date(), forKey: "createdAt")   // "2026-11-21T08:30:00.000Z"
+let createdAt = store.value(forKey: "createdAt", as: Date.self)
+```
+
+The string keeps milliseconds, so a date read back can differ from the one stored by under a
+millisecond. Reading accepts a string with or without fractional seconds, and with `Z` or an
+offset such as `+02:00`.
+
+A store holds no type information, so a date kept as a number has to say which unit the number
+is in. Each unit has a type that wraps a `Date`:
+
+| Type | Stored as | Used by |
+| --- | --- | --- |
+| `Date.MMKVMillisecondsSince1970` | `Double` | JavaScript's `Date.now()` and `new Date(number)` |
+| `Date.MMKVSecondsSince1970` | `Double` | Upstream MMKV's Objective-C `setDate:` |
+| `Date.MMKVSecondsSinceReferenceDate` | `Double` | `Date`'s own `Codable` form |
+
+```swift
+extension MMKVStore.Key<Date.MMKVMillisecondsSince1970> {
+  static let lastSync: Self = "lastSync"
+}
+
+store[.lastSync] = .init(Date())
+let lastSync = store[.lastSync]?.date
+```
+
+Each of them also reads a date stored as an ISO 8601 string, while a plain `Date` reads `nil`
+from a number. They are `Codable` as the number alone, so a property of one of these types
+chooses its form in `encode(_:intoKeysUnder:)` and in any other coder:
+
+```swift
+struct Profile: Codable {
+  var createdAt: Date                             // an ISO 8601 string under "profile.createdAt"
+  var lastSync: Date.MMKVMillisecondsSince1970    // a number under "profile.lastSync"
+}
+
+try store.encode(profile, intoKeysUnder: "profile")
+```
+
+A coder such as `JSONEncoder` still encodes a plain `Date` with its own date strategy.
 
 ## The `Sharing` trait
 

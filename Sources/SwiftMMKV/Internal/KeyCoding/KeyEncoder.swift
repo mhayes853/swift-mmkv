@@ -1,7 +1,3 @@
-#if Foundation
-  import _SwiftMMKVFoundation
-#endif
-
 /// What encoding a value into store keys asks of the store. Nothing is written until the whole
 /// value has encoded.
 enum KeyEncodingOperation {
@@ -69,27 +65,11 @@ struct KeyEncodingContext {
     case let value as [UInt8]: return Self.write(value)
     case let value as any FixedWidthInteger:
       return try self.integerWrite(value, codingPath: codingPath)
-    default:
-      #if Foundation
-        // Stored as they are outside a coder. A URL and a decimal would otherwise encode
-        // themselves as several keys, which is no use to another reader of the store.
-        if let value = value as? Data { return Self.write(value) }
-        if let value = value as? URL { return Self.write(value) }
-        if let value = value as? UUID { return Self.write(value) }
-        if let value = value as? Decimal {
-          guard !value.isNaN else {
-            throw EncodingError.invalidValue(
-              value,
-              EncodingError.Context(
-                codingPath: codingPath,
-                debugDescription: "A decimal that is not a number cannot be stored."
-              )
-            )
-          }
-          return Self.write(value)
-        }
-      #endif
-      return nil
+    // Left to `arrays`, like every other array.
+    case is [String]: return nil
+    // Stored as it is outside a coder, whichever package the type is from.
+    case let value as any MMKVValue: return Self.write(value)
+    default: return nil
     }
   }
 

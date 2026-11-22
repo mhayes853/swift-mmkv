@@ -596,8 +596,21 @@ extension MMKVStore {
 
 extension MMKVStore {
   /// Whether the store is suspended.
+  ///
+  /// The Observation framework tracks this property, so a SwiftUI view that reads it is drawn
+  /// again when the store is suspended or resumed, and `withObservationTracking` reports the
+  /// change. That needs iOS 17, macOS 14, tvOS 17, watchOS 10 or visionOS 1. Observers are told
+  /// on the thread that suspends or resumes the store.
+  ///
+  /// ```swift
+  /// Text(store.isSuspended ? "Paused" : "Live")
+  /// ```
+  ///
+  /// It is the only property the framework tracks. Use a subscription or ``changes`` for the
+  /// store's values.
   public var isSuspended: Bool {
-    self.core.isSuspended
+    self.core.state.observationRegistrar.access(self, keyPath: \.isSuspended)
+    return self.core.isSuspended
   }
 
   /// Stops the store from taking its file lock, so that the process can be suspended safely.
@@ -622,7 +635,11 @@ extension MMKVStore {
   /// Do not call this from inside ``withExclusiveLock(_:)``: the lock is then held until the
   /// body returns.
   public func suspend() {
-    self.core.suspend()
+    // Suspending a store that already is, or that has nothing to suspend, tells no observer.
+    guard self.core.state.suspensionGate != nil, !self.core.isSuspended else { return }
+    self.core.state.observationRegistrar.withMutation(of: self, keyPath: \.isSuspended) {
+      self.core.suspend()
+    }
   }
 
   /// Lets the store take its file lock again.
@@ -630,7 +647,10 @@ extension MMKVStore {
   /// Listeners are told with ``Change/external`` if the store was suspended, because reads
   /// were turned away in the meantime and another process may have changed the store.
   public func resume() {
-    if self.core.resume() {
+    guard self.core.isSuspended else { return }
+    let didResume = self.core.state.observationRegistrar
+      .withMutation(of: self, keyPath: \.isSuspended) { self.core.resume() }
+    if didResume {
       self.core.state.notify(.external)
     }
   }
@@ -647,6 +667,15 @@ extension MMKVStore {
     self.core.state.suspensionGate?.removeActivity(activity)
   }
 }
+
+// MARK: - Observable
+
+/// The Observation framework tracks ``MMKVStore/isSuspended``, and none of the store's values.
+///
+/// The conformance lets a store be passed where SwiftUI asks for an observable object, such as
+/// `environment(_:)` and `@Environment(MMKVStore.self)`.
+@available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
+extension MMKVStore: _Observable {}
 
 // MARK: - Maintenance
 

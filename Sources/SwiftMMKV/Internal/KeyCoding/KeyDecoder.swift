@@ -1,7 +1,3 @@
-#if Foundation
-  import _SwiftMMKVFoundation
-#endif
-
 /// Reads a value that is spread over several keys of a store.
 final class KeyDecodingContext {
   let store: MMKVStore
@@ -56,12 +52,12 @@ final class KeyDecodingContext {
     if let type = type as? any FixedWidthInteger.Type {
       return try self.integer(type, key, codingPath) as? T
     }
-    #if Foundation
-      if type == Data.self { return try self.stored(Data.self, key, codingPath) as? T }
-      if type == URL.self { return try self.stored(URL.self, key, codingPath) as? T }
-      if type == UUID.self { return try self.stored(UUID.self, key, codingPath) as? T }
-      if type == Decimal.self { return try self.stored(Decimal.self, key, codingPath) as? T }
-    #endif
+    // Left to `arrays`, like every other array.
+    if type == [String].self { return nil }
+    // Read as it is outside a coder, whichever package the type is from.
+    if let type = type as? any MMKVValue.Type {
+      return try self.stored(type, key, codingPath) as? T
+    }
     return nil
   }
 

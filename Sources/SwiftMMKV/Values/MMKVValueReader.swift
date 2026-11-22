@@ -49,6 +49,16 @@ public struct MMKVValueReader: ~Copyable, ~Escapable {
     self.core.read { $0.double(forKey: self.key) }
   }
 
+  /// Reads the key as an integer that was stored as a `Double`, which is how JavaScript stores
+  /// every number.
+  ///
+  /// - Returns: `nil` if the key has no value, or if its number is not a whole number that fits
+  ///   in `I`.
+  @inlinable
+  public func number<I: BinaryInteger>(as type: I.Type = I.self) -> I? {
+    self.double().flatMap { I(exactly: $0) }
+  }
+
   /// Reads the key as a UTF-8 string, repairing any invalid UTF-8.
   public func string() -> String? {
     self.core.read { $0.string(forKey: self.key) }

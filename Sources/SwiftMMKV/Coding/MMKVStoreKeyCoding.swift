@@ -43,7 +43,8 @@ extension MMKVStore {
   ///     not write. This reads every key in the store.
   ///   - expiringIn: How long the keys live. `nil` keeps them until they are removed.
   ///   - options: How the keys are named, and how numbers and arrays are stored.
-  /// - Returns: Whether every key was stored.
+  /// - Returns: Whether every key was stored. A value whose type refuses to store it, such as a
+  ///   `Decimal` that is not a number, is one that was not.
   /// - Throws: An `EncodingError` if `value` does not encode, in which case nothing is stored,
   ///   or ``MMKVError/storeIsSuspended(id:)``.
   @discardableResult
@@ -86,7 +87,8 @@ extension MMKVStore {
   ///     values did not write.
   ///   - expiringIn: How long the keys live. `nil` keeps them until they are removed.
   ///   - options: How the keys are named, and how numbers and arrays are stored.
-  /// - Returns: Whether every key was stored.
+  /// - Returns: Whether every key was stored. A value whose type refuses to store it, such as a
+  ///   `Decimal` that is not a number, is one that was not.
   /// - Throws: An `EncodingError` if a value does not encode, in which case nothing is stored,
   ///   or ``MMKVError/storeIsSuspended(id:)``.
   @discardableResult

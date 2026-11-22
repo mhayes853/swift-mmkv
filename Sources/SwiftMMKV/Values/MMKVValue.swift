@@ -30,6 +30,18 @@
 ///
 /// `Int` and `UInt` deliberately do not conform. An integer literal would otherwise be stored as
 /// a 64-bit integer, which JavaScript, where every number is a `Double`, cannot read back.
+///
+/// A type that holds an integer and shares its key with JavaScript stores the integer as a
+/// `Double` instead. A type with an integer raw value does so by setting ``integerEncoding``,
+/// and any other type by calling ``MMKVValueWriter/set(number:)`` and
+/// ``MMKVValueReader/number(as:)``:
+///
+/// ```swift
+/// enum Priority: Int64, MMKVValue {
+///   case low, high
+///   static let integerEncoding = MMKVIntegerEncoding.number
+/// }
+/// ```
 public protocol MMKVValue {
   /// Reads a value from the key the reader is bound to.
   ///
@@ -40,6 +52,48 @@ public protocol MMKVValue {
   ///
   /// - Returns: Whether the value was stored.
   func write(to writer: inout MMKVValueWriter) -> Bool
+
+  /// How a type with an integer raw value stores it. The default is
+  /// ``MMKVIntegerEncoding/native``.
+  ///
+  /// Only the conformance that a `RawRepresentable` type gets without any code reads this. A
+  /// type that implements ``init(from:)`` and ``write(to:)`` itself chooses an encoding by the
+  /// methods it calls.
+  static var integerEncoding: MMKVIntegerEncoding { get }
+}
+
+/// How an integer is stored.
+public enum MMKVIntegerEncoding: Sendable, Hashable {
+  /// The integer type's own encoding, which Kotlin and Objective-C read as that type and
+  /// JavaScript cannot read.
+  case native
+
+  /// A `Double`, which is how JavaScript stores every number. An integer that a `Double` cannot
+  /// hold exactly is not stored.
+  case number
+}
+
+extension MMKVValue {
+  public static var integerEncoding: MMKVIntegerEncoding { .native }
+}
+
+extension MMKVValue where Self: RawRepresentable, RawValue: MMKVValue & BinaryInteger {
+  public init?(from reader: borrowing MMKVValueReader) {
+    let rawValue =
+      switch Self.integerEncoding {
+      case .native: RawValue(from: reader)
+      case .number: reader.number(as: RawValue.self)
+      }
+    guard let rawValue else { return nil }
+    self.init(rawValue: rawValue)
+  }
+
+  public func write(to writer: inout MMKVValueWriter) -> Bool {
+    switch Self.integerEncoding {
+    case .native: self.rawValue.write(to: &writer)
+    case .number: writer.set(number: self.rawValue)
+    }
+  }
 }
 
 extension MMKVValue where Self: RawRepresentable, RawValue: MMKVValue {
