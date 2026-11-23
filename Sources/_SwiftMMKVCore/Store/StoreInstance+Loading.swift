@@ -5,14 +5,17 @@ extension StoreState {
   mutating func loadFromFile() {
     self.hasUndecodableData = false
     self.loadMetaInfoAndCheck()
-    if self.metaInfo.version >= MetaInfo.Version.randomIV {
-      self.crypter?.resetIV(self.metaInfo.vector)
-    }
     // Another process may have resized the file since this instance mapped it.
     if !self.file.isFileValid
       || (self.isMultiProcess && self.file.actualFileSize != self.file.size)
     {
       self.file.reloadFromFile(expectedCapacity: self.expectedCapacity)
+    }
+    if self.file.isFileValid && self.metaFile.isFileValid && self.recoverInterruptedRewrite() {
+      self.loadMetaInfoAndCheck()
+    }
+    if self.metaInfo.version >= MetaInfo.Version.randomIV {
+      self.crypter?.resetIV(self.metaInfo.vector)
     }
     if !self.file.isFileValid {
       Log.error("file [\(self.path)] not valid")
@@ -209,6 +212,7 @@ extension StoreState {
     if !keepSpace {
       self.file.clearMemoryCache()
     }
+    self.closeRewriteJournal()
     // The metadata file stays open, because a multi-process store's file lock is on it.
     self.actualSize = 0
     self.metaInfo.crcDigest = 0

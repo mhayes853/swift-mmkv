@@ -11,19 +11,19 @@ struct SwiftEngine: MMKVEngine {
       .opening(id: configuration.id) { () -> StoreInstance? in
         do throws(StoreRegistry.OpenError) {
           return try StoreRegistry.open(
-          StoreConfiguration(
-            id: configuration.id.rawValue,
-            rootDirectory: configuration.directory.path,
-            isMultiProcess: configuration.mode == .multiProcess,
-            isReadOnly: configuration.isReadOnly,
-            expectedCapacity: max(configuration.expectedCapacity, 0),
-            recoverOnError: configuration.recovery == .recover,
-            compareBeforeSet: configuration.compareBeforeSet,
-            itemSizeLimit: UInt32(clamping: configuration.itemSizeLimit ?? 0),
-            encryptionKey: configuration.encryption?.key,
-            isAES256: configuration.encryption?.isAES256 ?? false
+            StoreConfiguration(
+              id: configuration.id.rawValue,
+              rootDirectory: configuration.directory.path,
+              isMultiProcess: configuration.mode == .multiProcess,
+              isReadOnly: configuration.isReadOnly,
+              expectedCapacity: max(configuration.expectedCapacity, 0),
+              recoverOnError: configuration.recovery == .recover,
+              compareBeforeSet: configuration.compareBeforeSet,
+              itemSizeLimit: UInt32(clamping: configuration.itemSizeLimit ?? 0),
+              encryptionKey: configuration.encryption?.key,
+              isAES256: configuration.encryption?.isAES256 ?? false
+            )
           )
-        )
         } catch {
           hasWrongEncryptionKey = error == .wrongEncryptionKey
           return nil

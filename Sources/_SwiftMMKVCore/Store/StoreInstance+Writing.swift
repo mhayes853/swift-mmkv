@@ -435,6 +435,7 @@ extension StoreState {
     needSync: Bool = true
   ) -> Bool {
     let totalSize = prepared.totalSize
+    let journal = self.beginRewriteJournal()
     var encrypter: AESCryptor?
     switch encryption {
     case .current: encrypter = self.crypter
@@ -461,6 +462,9 @@ extension StoreState {
     }
     self.actualSize = totalSize
     self.recalculateCRCDigest(iv: newIV, increaseSequence: true)
+    if let journal {
+      self.endRewriteJournal(size: journal)
+    }
     self.hasFullWriteback = true
     // Make sure the last confirmed size and checksum reach the disk.
     if needSync {

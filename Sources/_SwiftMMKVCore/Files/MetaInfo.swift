@@ -71,22 +71,29 @@ package struct MetaInfo: Equatable, Sendable {
     self.flags & flag != 0
   }
 
-  /// Writes the whole struct, as `MMKVMetaInfo::write` does.
+  /// Writes the whole struct, as `MMKVMetaInfo::write` does, but in an order that suits a process
+  /// stopping part way: the size and checksum after everything they depend on, such as the IV
+  /// and the flags, and the sequence number last of all.
   package func write(to memory: UnsafeMutableRawPointer) {
     func store(_ value: UInt32, _ offset: Int) {
       memory.storeBytes(of: value.littleEndian, toByteOffset: offset, as: UInt32.self)
     }
-    store(self.crcDigest, 0)
     store(self.version, 4)
-    store(self.sequence, 8)
     self.vector.withUnsafeBytes { (memory + 12).copyMemory(from: $0.baseAddress!, byteCount: 16) }
-    store(self.actualSize, 28)
     store(self.lastActualSize, 32)
     store(self.lastCRCDigest, 36)
     for (index, word) in self.reserved.enumerated() {
       store(word, 40 + index * 4)
     }
     memory.storeBytes(of: self.flags.littleEndian, toByteOffset: 104, as: UInt64.self)
+    store(self.actualSize, 28)
+    store(self.crcDigest, 0)
+    store(self.sequence, 8)
+  }
+
+  /// Writes only the sequence number.
+  package func writeSequence(to memory: UnsafeMutableRawPointer) {
+    memory.storeBytes(of: self.sequence.littleEndian, toByteOffset: 8, as: UInt32.self)
   }
 
   /// Writes only the last confirmed size and checksum.

@@ -74,6 +74,10 @@ struct StoreState: ~Copyable {
   let id: String
   let path: String
   let crcPath: String
+  /// Where the store's data is kept while it is rewritten. See StoreInstance+RewriteJournal.swift.
+  let journalPath: String
+  /// The journal's descriptor, open from the store's first rewrite until its memory is given up.
+  var journalDescriptor: Int32 = -1
   let isMultiProcess: Bool
   let isReadOnly: Bool
   let expectedCapacity: Int
@@ -148,6 +152,7 @@ struct StoreState: ~Copyable {
     self.path = path
     let crcPath = StorePaths.metaPath(dataPath: path)
     self.crcPath = crcPath
+    self.journalPath = StorePaths.journalPath(dataPath: path)
     let expectedCapacity = max(
       pageSize,
       roundUp(max(configuration.expectedCapacity, 0), toMultipleOf: pageSize)
@@ -205,6 +210,12 @@ struct StoreState: ~Copyable {
     // Compare-before-set does nothing in an encrypted store.
     if configuration.compareBeforeSet && self.crypter == nil {
       self.enableCompareBeforeSet = true
+    }
+  }
+
+  deinit {
+    if self.journalDescriptor >= 0 {
+      _ = self.fileSystem.close(self.journalDescriptor)
     }
   }
 

@@ -23,10 +23,14 @@ where that work stands.
   write MMKV's data and `.crc` files, take the same file locks (`flock`, and on Android the OFD
   byte-range locks), and follow the same reload rules. Nothing may be added to the files.
 - **The first pass is a translation, not a redesign.** It ports MMKV's algorithms as they are,
-  including the thresholds that decide when the file grows or is compacted. A plain-text store
-  written by the Swift core must therefore be byte-for-byte identical to the one the C++ core
-  writes for the same operations. That is the strongest compatibility check available, and it is
-  a hard requirement. Optimization comes after.
+  including the thresholds that decide when the file grows or is compacted. Each core must read
+  and go on writing the files the other wrote, which the differential tests check.
+
+  The translation was first held to more: a plain-text store written by the Swift core was
+  byte-for-byte identical to the one the C++ core writes for the same operations. That caught
+  many mistakes while the port was written, and stopped being required once the Swift core
+  began to differ on purpose, to keep data the C++ core loses (see "Where the Swift core
+  differs" below). The paragraphs that follow describe the comparison as it was.
 
   There is one exception. Whenever MMKV rewrites a file from the start, it writes a random
   4-byte varint where the data begins (`AESCrypt::randomItemSizeHolder`, seeded from the time), a
@@ -96,9 +100,40 @@ plus the operations that do not open a store:
 - **Process-wide reports**: the core's log messages at or above `MMKVLog`'s minimum level, which
   the C++ core hands to `mmkv_set_log_callback`, and files that fail their integrity check as they
   load, which it reports through `mmkv_set_integrity_failure_callback` with the checksum or
-  file-length kind. The Swift core has neither yet, so the tests for them are skipped against it.
+  file-length kind. The Swift core reports integrity failures the same way; it does not have the
+  log messages yet, so the tests for them are skipped against it.
 
 Suspension (`SuspensionGate`) lives above the engine and needs nothing from it.
+
+## Where the Swift core differs
+
+The Swift core reads and writes the same two files in the same format, and the C++ core reads
+whatever it writes. It differs where the C++ core loses data. Each difference has tests in
+`Tests/SwiftMMKVCoreTests/StoreDurabilityTests.swift` or `RewriteJournalTests.swift`.
+
+- **Rewrites are journaled.** A full write-back moves records in place, and until the metadata
+  describes the result the file matches no checksum, so a process that stops part way leaves a
+  store whose every key is discarded. The Swift core first copies the metadata and data to
+  `<store>.journal`, and deletes it when the rewrite ends. A load that finds the journal of a
+  rewrite that did not end puts the store back as it was. See
+  `StoreInstance+RewriteJournal.swift`. The C++ core ignores the journal, and treats a store
+  stopped mid-rewrite as it always has.
+- **A store's only key is appended, not rewritten in place.** The C++ core rewrites a
+  single-process store from the start when its only key is set again, which loses the key if
+  the process stops between the data and the metadata.
+- **A synchronous `sync` is a checkpoint.** It has the drive write out the data (`F_FULLFSYNC`
+  on Apple platforms), then records the data's size and checksum as the last confirmed ones,
+  which the C++ core only does when it rewrites the file. Without that, a loss of power that
+  leaves the metadata ahead of the data rolls the store back to its last rewrite.
+- **A wrong encryption key is noticed.** Data that matches its checksum but cannot be decoded
+  was encrypted with another key. The C++ core treats it as an empty store, and its next write
+  replaces the file. The Swift core refuses to open the store, or to write to one it has
+  already opened.
+- **Lock upgrades look again.** Upgrading a shared file lock to an exclusive one can let
+  another process write in between. Where the C++ core then writes what it decided beforehand,
+  the Swift core first loads what changed.
+- **`clearAll` records the empty store before it shrinks the file**, and `keys` and `contains`
+  hold the shared file lock while they read keys out of the mapping.
 
 ## Phases
 
@@ -196,7 +231,7 @@ differential tests and the benchmarks, so they keep running in CI. The README is
 | 1. `CSwiftMMKVCrypto` | Done: tested against NIST and RFC 1321 vectors, the assembly against the portable code |
 | 2. Format primitives | Done: in `Sources/_SwiftMMKVCore`, checked against files the C++ core writes |
 | 3. `MemoryFile` | Done: with `FileLock` and `ThreadLock`; the lock is checked against the C++ core's |
-| 4. Single-process core | Done: every test for unencrypted stores passes against it, and it writes the same bytes as the C++ core |
+| 4. Single-process core | Done: every test for unencrypted stores passes against it, and each core reads what the other writes |
 | 5. Multi-process | Done in one process: both cores share files, report each other's changes, and exclude each other under concurrent writers. Android's migration lock and legacy file names are ported but only built, not run, on Android. A test across real processes is still to do |
 | 6. Encryption | Done: every encryption test passes against the Swift core, and each core reads what the other encrypts, appends, and re-encrypts |
 | 7. Cutover | Not started. The Swift core's `checkExist` and `removeStorage` (`StoreStorage`) are ready for `MMKVStorage` to switch to |

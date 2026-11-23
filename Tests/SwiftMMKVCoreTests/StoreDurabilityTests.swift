@@ -74,7 +74,7 @@ import Testing
     #expect(removed.allSatisfy { !store.contains($0) })
   }
 
-  @Test func `Overwriting A Store's Only Key Keeps The Old Value Until The Metadata Says Otherwise`()
+  @Test func `Overwriting A Store's Only Key Keeps Its Old Value Until The Metadata Changes`()
     throws
   {
     let root = temporaryDirectory()

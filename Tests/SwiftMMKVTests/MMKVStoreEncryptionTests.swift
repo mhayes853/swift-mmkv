@@ -77,10 +77,13 @@ import Testing
   // MMKV keeps a store open for the rest of the process, so each of these opens a copy of an
   // encrypted store's files, as a later launch of the app would.
 
-  @Test(.requires(.encryptionKeyCheck), arguments: [
-    MMKVConfiguration.Encryption.aes128(key: "another key"),
-    .aes256(key: "the right key")
-  ])
+  @Test(
+    .requires(.encryptionKeyCheck),
+    arguments: [
+      MMKVConfiguration.Encryption.aes128(key: "another key"),
+      .aes256(key: "the right key")
+    ]
+  )
   func `Opening With The Wrong Key Throws And Leaves The Store As It Was`(
     wrong: MMKVConfiguration.Encryption
   ) throws {
@@ -155,6 +158,7 @@ import Testing
   }
 
   private func storeFiles(rootDirectory: String, id: MMKVStore.ID) throws -> [Data] {
-    try ["", ".crc"].map { try Data(contentsOf: URL(fileURLWithPath: "\(rootDirectory)/\(id)\($0)")) }
+    try ["", ".crc"]
+      .map { try Data(contentsOf: URL(fileURLWithPath: "\(rootDirectory)/\(id)\($0)")) }
   }
 }

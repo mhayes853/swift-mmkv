@@ -707,7 +707,9 @@ extension MMKVStore {
   /// Blocks until the store's contents are flushed to disk.
   ///
   /// The operating system flushes a memory-mapped file by itself, even if the process crashes,
-  /// so this only matters when the device may lose power.
+  /// so this only matters when the device may lose power. Everything written before a sync
+  /// survives that, whatever is written afterwards. Having the drive write out its cache takes
+  /// milliseconds, so sync after writes that must not be lost rather than after every write.
   public func sync() {
     self.core.sync()
     self.core.operationDidFinish()

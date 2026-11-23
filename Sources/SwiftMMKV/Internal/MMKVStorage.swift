@@ -16,6 +16,7 @@ extension MMKVStorage {
   /// file names.
   private static let hashedDirectoryName = "specialCharacter"
   private static let crcSuffix = ".crc"
+  private static let journalSuffix = ".journal"
 
   /// The path the data file of the store with this identifier has relative to its directory.
   ///
@@ -165,9 +166,14 @@ extension MMKVStorage {
       if Self.openID(forDataPaths: dataPaths, in: openStores) != nil {
         throw .storeIsOpen(id: id, directory: self.directory)
       }
-      return id.rawValue.withMMKVBytes { id in
+      let didRemove = id.rawValue.withMMKVBytes { id in
         self.path.withMMKVBytes { mmkv_remove_storage(id, $0) }
       }
+      // The Swift core's journal of a rewrite that a process stopped in the middle of.
+      for dataPath in dataPaths {
+        removeFile(atPath: dataPath + Self.journalSuffix)
+      }
+      return didRemove
     }
   }
 
@@ -195,6 +201,7 @@ extension MMKVStorage {
       if didLock == nil {
         removeFile(atPath: dataPath)
       }
+      removeFile(atPath: dataPath + Self.journalSuffix)
       return true
     }
   }

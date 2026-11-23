@@ -29,6 +29,12 @@ package enum StoreStorage {
       else {
         return false
       }
+      // A journal is only left behind by a process that stopped while rewriting the data.
+      defer {
+        if let dataPath = paths.data {
+          _ = fileSystem.unlink(StorePaths.journalPath(dataPath: dataPath))
+        }
+      }
       guard let metaPath = paths.meta else {
         _ = fileSystem.unlink(paths.data!)
         return true

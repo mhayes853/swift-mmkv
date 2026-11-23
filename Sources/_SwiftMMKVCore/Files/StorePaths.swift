@@ -29,6 +29,11 @@ package enum StorePaths {
     dataPath + ".crc"
   }
 
+  /// The path of the journal the Swift core keeps while it rewrites a store's data file.
+  package static func journalPath(dataPath: String) -> String {
+    dataPath + ".journal"
+  }
+
   /// The key MMKV registers an instance under, so that every open of the same files in a process
   /// shares one instance.
   package static func instanceKey(id: String, root: String) -> String {
