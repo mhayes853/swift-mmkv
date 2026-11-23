@@ -664,9 +664,17 @@ extension StoreInstance {
     self.withState { $0.checkLoadData() }
   }
 
-  /// Writes the files' mapped memory to disk.
+  /// Writes the files' mapped memory to disk (`sync`). A synchronous sync does not return until
+  /// the drive has it, and then everything written so far survives a loss of power, whatever is
+  /// written afterwards.
   package func sync(synchronously: Bool = true) {
-    self.withState { $0.sync(synchronously: synchronously) }
+    self.withState {
+      if synchronously {
+        $0.checkpoint()
+      } else {
+        $0.sync(synchronously: false)
+      }
+    }
   }
 
   /// Compacts the file and shrinks it by halves while it is more than twice its data, but not below
@@ -694,6 +702,34 @@ extension StoreState {
     defer { self.unlockProcess(.exclusive) }
     self.file.msync(synchronously: synchronously)
     self.metaFile.msync(synchronously: synchronously)
+  }
+
+  /// Makes the data as it is now what a load falls back to, once the drive has it.
+  ///
+  /// The C++ core records a fallback only when it rewrites the file, and never has the drive
+  /// write anything out. The system writes the two files' pages out in its own time and order, so
+  /// after a loss of power the metadata on the drive can describe data that is not there. A load
+  /// then falls back to the last rewrite, however much was synced since.
+  ///
+  /// The data goes to the drive first, so the fallback never describes data the drive lacks. Any
+  /// size and checksum the data once had stay valid until the next rewrite, which records its
+  /// own, because records are only ever appended in between.
+  mutating func checkpoint() {
+    guard !self.needLoadFromFile, self.isFileValid else { return }
+    self.lockProcess(.exclusive)
+    defer { self.unlockProcess(.exclusive) }
+    // What another process appended is part of what the drive is given.
+    self.checkLoadData()
+    guard self.isFileValid, self.file.syncToDrive(), self.metaFile.isFileValid else { return }
+    let size = UInt32(truncatingIfNeeded: self.actualSize)
+    if !self.isReadOnly && !self.hasUndecodableData
+      && (self.metaInfo.lastActualSize != size || self.metaInfo.lastCRCDigest != self.crcDigest)
+    {
+      self.metaInfo.lastActualSize = size
+      self.metaInfo.lastCRCDigest = self.crcDigest
+      self.metaInfo.writeLastConfirmed(to: self.metaFile.memory!)
+    }
+    self.metaFile.syncToDrive()
   }
 }
 

@@ -20,6 +20,10 @@ package struct FileSystem: Sendable {
   package var munmap: @Sendable (_ address: UnsafeMutableRawPointer, _ size: Int) -> Int32
   package var msync:
     @Sendable (_ address: UnsafeMutableRawPointer, _ size: Int, _ flags: Int32) -> Int32
+  /// Has the drive write out what it holds of a file that has been synced to it. Apple's drives
+  /// keep synced data in a cache of their own until asked; elsewhere syncing already waits for
+  /// the drive, and this does nothing.
+  package var flushToDrive: @Sendable (_ descriptor: Int32) -> Int32
   package var flock: @Sendable (_ descriptor: Int32, _ operation: Int32) -> Int32
   package var unlink: @Sendable (_ path: String) -> Int32
   package var rename: @Sendable (_ source: String, _ destination: String) -> Int32
@@ -42,6 +46,14 @@ package struct FileSystem: Sendable {
     mmap: systemMmap,
     munmap: systemMunmap,
     msync: systemMsync,
+    flushToDrive: { descriptor in
+      #if canImport(Darwin)
+        // Not every file system can do a full sync.
+        return fcntl(descriptor, F_FULLFSYNC) == -1 ? fsync(descriptor) : 0
+      #else
+        return 0
+      #endif
+    },
     flock: systemFlock,
     unlink: systemUnlink,
     rename: systemRename

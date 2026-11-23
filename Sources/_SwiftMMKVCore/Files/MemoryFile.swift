@@ -151,6 +151,19 @@ package struct MemoryFile: ~Copyable {
     return self.fileSystem.msync(memory, self.size, synchronously ? MS_SYNC : MS_ASYNC) == 0
   }
 
+  /// Writes the mapped memory to the file and has the drive write it out, so that it survives a
+  /// loss of power.
+  @discardableResult
+  package mutating func syncToDrive() -> Bool {
+    guard self.msync(synchronously: true) else { return false }
+    if self.isReadOnly {
+      return true
+    }
+    let descriptor = self.fileDescriptor
+    defer { self.cleanMayflyFD() }
+    return descriptor >= 0 && self.fileSystem.flushToDrive(descriptor) == 0
+  }
+
   private mutating func mapOrCleanUp(fileLock: FileLock?) -> Bool {
     let protection = self.isReadOnly ? PROT_READ : PROT_READ | PROT_WRITE
     // The old address is a hint, so a remapped file tends to stay where it was.

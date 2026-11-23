@@ -95,6 +95,62 @@ import Testing
     #expect(makeStore(root: stopped, isMultiProcess: false).int32(forKey: "key") == 1)
   }
 
+  @Test func `What Was Synced Survives Losing What Was Written Afterwards`() throws {
+    let root = temporaryDirectory()
+    let store = makeStore(root: root, isMultiProcess: false)
+    _ = store.set(.int32(1), forKey: "first", expiresInSeconds: 0)
+    _ = store.set(.int32(2), forKey: "second", expiresInSeconds: 0)
+    store.sync()
+    let syncedData = try readFile(atPath: "\(root)/store")
+
+    _ = store.set(.int32(3), forKey: "third", expiresInSeconds: 0)
+
+    // Power is lost with the metadata on the drive ahead of the data it describes.
+    let lost = temporaryDirectory()
+    try writeFile(syncedData, atPath: "\(lost)/store")
+    try writeFile(try readFile(atPath: "\(root)/store.crc"), atPath: "\(lost)/store.crc")
+    let reopened = makeStore(root: lost, isMultiProcess: false)
+    #expect(reopened.int32(forKey: "first") == 1)
+    #expect(reopened.int32(forKey: "second") == 2)
+    #expect(reopened.int32(forKey: "third") == nil)
+  }
+
+  @Test(arguments: [false, true])
+  func `Syncing Gives The Drive The Data Before The Metadata That Confirms It`(
+    isMultiProcess: Bool
+  ) throws {
+    let root = temporaryDirectory()
+    // The size the metadata file recorded as confirmed each time a file was given to the drive.
+    let confirmedSizes = LockedValue([UInt32]())
+    var fileSystem = FileSystem.live
+    fileSystem.flushToDrive = { descriptor in
+      if let meta = try? readFile(atPath: "\(root)/store.crc"), meta.count >= MetaInfo.size {
+        let info = meta.withUnsafeBytes { MetaInfo(reading: $0.baseAddress!) }
+        confirmedSizes.set(confirmedSizes.get() + [info.lastActualSize])
+      }
+      return FileSystem.live.flushToDrive(descriptor)
+    }
+    let store = makeStore(root: root, isMultiProcess: isMultiProcess, fileSystem: fileSystem)
+    _ = store.set(.int32(1), forKey: "first", expiresInSeconds: 0)
+    _ = store.set(.int32(2), forKey: "second", expiresInSeconds: 0)
+    #expect(confirmedSizes.get().isEmpty)
+
+    store.sync()
+    let sizes = confirmedSizes.get()
+    try #require(sizes.count == 2)
+    #expect(sizes[0] < sizes[1])
+    #expect(sizes[1] == UInt32(store.dataSize))
+
+    // Another process's appends are confirmed too.
+    if isMultiProcess {
+      let other = makeStore(root: root, isMultiProcess: true)
+      _ = other.set(.int32(3), forKey: "third", expiresInSeconds: 0)
+      store.sync()
+      #expect(confirmedSizes.get().last == UInt32(other.dataSize))
+      #expect(confirmedSizes.get().last! > sizes[1])
+    }
+  }
+
   @Test func `Clearing Records The Empty Store Before The File Shrinks`() throws {
     let root = temporaryDirectory()
     // The size of the data that the metadata recorded each time the data file was resized.

@@ -89,6 +89,12 @@ package struct MetaInfo: Equatable, Sendable {
     memory.storeBytes(of: self.flags.littleEndian, toByteOffset: 104, as: UInt64.self)
   }
 
+  /// Writes only the last confirmed size and checksum.
+  package func writeLastConfirmed(to memory: UnsafeMutableRawPointer) {
+    memory.storeBytes(of: self.lastActualSize.littleEndian, toByteOffset: 32, as: UInt32.self)
+    memory.storeBytes(of: self.lastCRCDigest.littleEndian, toByteOffset: 36, as: UInt32.self)
+  }
+
   /// Writes only the checksum and the size, as `writeCRCAndActualSizeOnly` does.
   package func writeCRCAndActualSize(to memory: UnsafeMutableRawPointer) {
     memory.storeBytes(of: self.crcDigest.littleEndian, toByteOffset: 0, as: UInt32.self)
