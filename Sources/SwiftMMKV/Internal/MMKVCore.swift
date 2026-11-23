@@ -22,6 +22,13 @@ struct MMKVCore: Sendable {
     guard let handle else {
       throw .openFailed(id: configuration.id, directory: configuration.directory)
     }
+    if !configuration.isReadOnly, let protectionClass = configuration.fileProtection.cValue {
+      let failures = MMKVStorage(path: configuration.directory.path)
+        .setProtectionClass(protectionClass, forID: configuration.id)
+      for (path, error) in failures {
+        LogSink.log(.warning, "failed to set the file protection of [\(path)], errno \(error)")
+      }
+    }
     self.handle = handle
     self.state = MMKVStoreState.shared(
       for: handle,
@@ -384,6 +391,17 @@ extension MMKVConfiguration.Encryption? {
     case nil: Int32(MMKV_ENCRYPTION_NONE)
     case .aes128: Int32(MMKV_ENCRYPTION_AES128)
     case .aes256: Int32(MMKV_ENCRYPTION_AES256)
+    }
+  }
+}
+
+extension MMKVConfiguration.FileProtection {
+  /// The number Darwin gives the class, or `nil` to leave a file's class alone.
+  fileprivate var cValue: Int32? {
+    switch self {
+    case .completeUntilFirstUserAuthentication: 3
+    case .none: 4
+    case .unchanged: nil
     }
   }
 }

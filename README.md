@@ -660,6 +660,32 @@ Things to know:
   background. Suspend the stores when that work is done.
 - On macOS there is nothing to observe, so only the manual forms are available.
 
+## File protection
+
+On Apple's platforms a file's data protection class decides when it can be read. A store's file
+is mapped into memory, and iOS ends a process that touches a mapped file the device's lock has
+made unreadable. That happens to a store whose files are in the `complete` class, which is the
+class of every file of an app with the data protection entitlement set to `complete`.
+
+So each time a writable store is opened, its two files are moved to "complete until first user
+authentication", as MMKV itself does on iOS and as react-native-mmkv's copy of it does to any
+store the two share. That is also the class iOS gives an app's files by default, so for most
+apps nothing changes.
+
+```swift
+var configuration = MMKVConfiguration(directory: directory, mode: .singleProcess)
+configuration.fileProtection = .unchanged  // Leave the files' protection alone.
+configuration.fileProtection = .none       // Readable before the device is first unlocked.
+```
+
+- The classes that lock a file while the device is locked are not offered, because a store
+  cannot yet be unmapped before the device locks.
+- A read-only store's files are left as they are.
+- Only the store's files are changed, not their directory. A new store's files have the
+  directory's class for the moment between being created and being opened.
+- A file that cannot be given the class is logged as a warning, and the store still opens.
+- Nothing happens on platforms without data protection.
+
 ## Logging and integrity failures
 
 MMKV logs when something goes wrong with a store's files. Warnings and errors are printed to
@@ -909,9 +935,8 @@ either way. The trait does not need the `Foundation` trait.
 
 ## Known gaps
 
-- On iOS the store's files keep the default file protection. Upstream's Objective-C++ build
-  relaxes it to "until first user authentication" so a store can be read while the device is
-  locked; this package builds the core's POSIX variant, which does not.
+- File protection is tested by reading the class of a store's files back, on macOS and the iOS
+  simulator. What a locked device does with those files has not been checked on one.
 
 ## The vendored core
 
