@@ -74,6 +74,27 @@ import Testing
     #expect(removed.allSatisfy { !store.contains($0) })
   }
 
+  @Test func `Overwriting A Store's Only Key Keeps The Old Value Until The Metadata Says Otherwise`()
+    throws
+  {
+    let root = temporaryDirectory()
+    let store = makeStore(root: root, isMultiProcess: false)
+    _ = store.set(.int32(1), forKey: "key", expiresInSeconds: 0)
+    store.sync()
+    let metadataBefore = try readFile(atPath: "\(root)/store.crc")
+
+    _ = store.set(.int32(2), forKey: "key", expiresInSeconds: 0)
+    store.sync()
+    #expect(store.int32(forKey: "key") == 2)
+
+    // A process that stops after writing the record and before updating the metadata leaves the
+    // new data with the old metadata.
+    let stopped = temporaryDirectory()
+    try writeFile(try readFile(atPath: "\(root)/store"), atPath: "\(stopped)/store")
+    try writeFile(metadataBefore, atPath: "\(stopped)/store.crc")
+    #expect(makeStore(root: stopped, isMultiProcess: false).int32(forKey: "key") == 1)
+  }
+
   @Test func `Clearing Records The Empty Store Before The File Shrinks`() throws {
     let root = temporaryDirectory()
     // The size of the data that the metadata recorded each time the data file was resized.

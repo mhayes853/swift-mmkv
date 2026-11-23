@@ -7,14 +7,17 @@ import Testing
 // Every test here uses both cores explicitly, whatever `SWIFTMMKV_TEST_ENGINE` says.
 
 @Suite struct DifferentialTests {
-  // MARK: - Same operations, same bytes
+  // MARK: - Same operations, same contents
 
   /// Applies the same random operations to a store of each core, and after every operation
-  /// checks that both returned the same, hold what a model says they should, and wrote the same
-  /// bytes, apart from the random placeholder MMKV writes at the start of the data and the
-  /// checksums that cover it.
+  /// checks that both returned the same and hold what a model says they should. At the end each
+  /// core reads the files the other wrote.
+  ///
+  /// The files are not compared byte for byte: the Swift core writes some records elsewhere than
+  /// the C++ core does, to keep the file readable if the process stops part way (see "Where the
+  /// Swift core differs" in Docs/swift-core-migration.md).
   @Test(arguments: Array(0..<24))
-  func `Both Cores Write The Same Files`(seed: Int) throws {
+  func `Both Cores Behave The Same And Read Each Other's Files`(seed: Int) throws {
     var generator = SplitMix64(seed: UInt64(seed))
     let configuration = RandomConfiguration(using: &generator)
     let pair = try StorePair(configuration: configuration)
@@ -30,13 +33,23 @@ import Testing
 
       try expectContents(of: pair.cxx, match: model, context + " (C++)")
       try expectContents(of: pair.swift, match: model, context + " (Swift)")
-      let cxxFiles = try NormalizedStoreFiles(directory: pair.cxxDirectory)
-      let swiftFiles = try NormalizedStoreFiles(directory: pair.swiftDirectory)
-      try #require(
-        cxxFiles == swiftFiles,
-        "files differ: \(context)\n\(cxxFiles.difference(from: swiftFiles))"
-      )
     }
+
+    pair.cxx.sync()
+    pair.swift.sync()
+    // A copy under another identifier gets an instance of its own.
+    try copyStoreFiles(id: "store", to: "copy", in: pair.cxxDirectory)
+    try copyStoreFiles(id: "store", to: "copy", in: pair.swiftDirectory)
+    try expectContents(
+      of: makeStore(id: "copy", rootDirectory: pair.cxxDirectory, engine: .swift),
+      match: model,
+      "seed \(seed), Swift reading what C++ wrote"
+    )
+    try expectContents(
+      of: makeStore(id: "copy", rootDirectory: pair.swiftDirectory, engine: .cxx),
+      match: model,
+      "seed \(seed), C++ reading what Swift wrote"
+    )
   }
 
   // MARK: - Reading each other's files
@@ -567,41 +580,5 @@ private func expectContents(
       "\(key): \(context)",
       sourceLocation: sourceLocation
     )
-  }
-}
-
-/// A store's two files, with the bytes that may legitimately differ between the cores cleared:
-/// the random placeholder at the start of the data, and the checksums that cover it.
-private struct NormalizedStoreFiles: Equatable {
-  var data: [UInt8]
-  var metadata: [UInt8]
-
-  init(directory: String) throws {
-    self.data = try readFile(atPath: "\(directory)/store")
-    self.metadata = try readFile(atPath: "\(directory)/store.crc")
-    if self.data.count >= 8 {
-      self.data.replaceSubrange(4..<8, with: [0, 0, 0, 0])
-    }
-    // The checksum and the last confirmed checksum.
-    for offset in [0, 36] where self.metadata.count >= offset + 4 {
-      self.metadata.replaceSubrange(offset..<(offset + 4), with: [0, 0, 0, 0])
-    }
-  }
-
-  func difference(from other: NormalizedStoreFiles) -> String {
-    func describe(_ name: String, _ left: [UInt8], _ right: [UInt8]) -> String {
-      if left.count != right.count {
-        return "\(name): \(left.count) bytes vs \(right.count) bytes"
-      }
-      guard let first = left.indices.first(where: { left[$0] != right[$0] }) else { return "" }
-      let window = first..<min(first + 16, left.count)
-      return
-        "\(name): first difference at \(first): \(Array(left[window])) vs \(Array(right[window]))"
-    }
-    return [
-      describe("data", self.data, other.data), describe("metadata", self.metadata, other.metadata)
-    ]
-    .filter { !$0.isEmpty }
-    .joined(separator: "\n")
   }
 }

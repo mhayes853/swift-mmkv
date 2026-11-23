@@ -86,25 +86,16 @@ extension StoreState {
           return true
         }
       }
-      // A single-process store whose only key this is rewrites the file from the start.
-      let onlyOneKey = !self.isMultiProcess && self.dic.count == 1
-      if !self.enableKeyExpire {
-        location =
-          onlyOneKey
-          ? self.overrideDataWithKey(data, holderOf: key, isDataHolder: isDataHolder)
-          : self.appendDataWithKey(data, holderOf: key, isDataHolder: isDataHolder)
-      } else {
-        location =
-          onlyOneKey
-          ? self.overrideDataWithKey(data, key: key, isDataHolder: isDataHolder)
-          : self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder)
-      }
-    } else {
-      let needOverride = !self.isMultiProcess && self.dic.isEmpty && self.actualSize > 0
+      // The C++ core rewrites a single-process store from the start when this is its only key.
+      // That destroys the record the metadata describes before the metadata describes the new
+      // one, so a process that stops in between loses the key. Appending leaves the old record
+      // in place until the metadata is updated.
       location =
-        needOverride
-        ? self.overrideDataWithKey(data, key: key, isDataHolder: isDataHolder)
-        : self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder)
+        self.enableKeyExpire
+        ? self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder)
+        : self.appendDataWithKey(data, holderOf: key, isDataHolder: isDataHolder)
+    } else {
+      location = self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder)
     }
     guard let location else { return false }
     self.setLocation(location, for: key, hash: hash, probe: probe, version: version)
@@ -260,69 +251,6 @@ extension StoreState {
     return self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder)
   }
 
-  /// Rewrites the data from the start as a single record for `key` (`overrideDataWithKey(data, key)`
-  /// and `doOverrideDataWithKey`).
-  mutating func overrideDataWithKey(
-    _ data: UnsafeRawBufferPointer,
-    key: UnsafeRawBufferPointer,
-    isDataHolder: Bool
-  ) -> RecordLocation? {
-    guard self.checkDecodable(),
-      let entry = self.checkedEntrySize(data, key: key, isDataHolder: isDataHolder)
-    else {
-      return nil
-    }
-    // Rewriting encrypted data in place would reuse the IV, so an encrypted store appends.
-    if self.crypter != nil || !self.checkSizeForOverride(entry.totalSize) {
-      return self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder)
-    }
-    do throws(CodingError) {
-      try self.withOutput { (output) throws(CodingError) in
-        try output.setPosition(0)
-        try output.writeUInt32(Self.randomItemSizeHolder(size: itemSizeHolderSize))
-      }
-      self.actualSize = itemSizeHolderSize
-      try self.withOutput { (output) throws(CodingError) in
-        try Self.writeRecord(
-          to: &output,
-          key: key,
-          data: data,
-          isDataHolder: isDataHolder,
-          valueLength: entry.valueLength
-        )
-      }
-    } catch {
-      Log.error("\(error)")
-      return nil
-    }
-    let offset = self.actualSize
-    self.actualSize += entry.totalSize
-    self.recalculateCRCDigest(iv: nil, increaseSequence: false)
-    return RecordLocation(keySize: key.count, valueSize: entry.valueLength, offset: offset)
-  }
-
-  /// Rewrites the data from the start as a single record for `key`, which the index holds
-  /// (`overrideDataWithKey(data, kvHolder)`). Writes `key` rather than copying it from its
-  /// record, as ``appendDataWithKey(_:holderOf:isDataHolder:)`` does.
-  mutating func overrideDataWithKey(
-    _ data: UnsafeRawBufferPointer,
-    holderOf key: UnsafeRawBufferPointer,
-    isDataHolder: Bool
-  ) -> RecordLocation? {
-    guard
-      let entry = Self.encodedEntrySize(
-        keyLength: key.count,
-        dataLength: data.count,
-        isDataHolder: isDataHolder,
-        needsPlainHolder: true
-      )
-    else { return nil }
-    if !self.checkSizeForOverride(entry.totalSize) {
-      return self.appendDataWithKey(data, holderOf: key, isDataHolder: isDataHolder)
-    }
-    return self.overrideDataWithKey(data, key: key, isDataHolder: isDataHolder)
-  }
-
   private static func writeRecord(
     to output: inout CodedOutput,
     key: UnsafeRawBufferPointer,
@@ -335,13 +263,6 @@ extension StoreState {
       try output.writeRawVarint32(UInt32(valueLength))
     }
     try output.writeData(data)
-  }
-
-  /// Whether a record of `size` fits in the file without growing it (`checkSizeForOverride`).
-  func checkSizeForOverride(_ size: Int) -> Bool {
-    guard self.checkFileValid() else { return false }
-    let spaceNeededForOverride = size + fixed32Size + itemSizeHolderSize
-    return spaceNeededForOverride <= self.file.size
   }
 
   /// Whether a record of `size` is within the item size limit (`checkSizeLimit`).

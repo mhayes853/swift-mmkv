@@ -39,6 +39,17 @@ private func registerValueBenchmarks(_ engine: MMKVConfiguration.Engine) {
     int32Writes.value = try openStore(engine: engine)
   }
 
+  // A store with one key. The C++ core rewrites it in place; the Swift core appends, and compacts
+  // the file each time it fills.
+  let singleKeyWrites = Fixture<MMKVStore>()
+  Benchmark("write.int32.singleKey/\(engine)", configuration: perOperation) { benchmark in
+    for _ in benchmark.scaledIterations {
+      singleKeyWrites.value.set(Int32(singleKeyWrites.next()), forKey: keys[0])
+    }
+  } setup: {
+    singleKeyWrites.value = try openStore(engine: engine)
+  }
+
   let int32Reads = Fixture<MMKVStore>()
   Benchmark("read.int32/\(engine)", configuration: perOperation) { benchmark in
     for _ in benchmark.scaledIterations {

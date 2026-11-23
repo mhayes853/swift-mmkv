@@ -14,6 +14,10 @@ func readFile(atPath path: String) throws -> [UInt8] {
   Array(try Data(contentsOf: URL(fileURLWithPath: path)))
 }
 
+func writeFile(_ bytes: [UInt8], atPath path: String) throws {
+  try Data(bytes).write(to: URL(fileURLWithPath: path))
+}
+
 /// Opens a store with the C++ core, whatever the tests' engine.
 func makeCxxStore(
   id: MMKVStore.ID,
