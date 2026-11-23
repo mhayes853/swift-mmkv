@@ -56,10 +56,11 @@ public func swiftmmkv_directory_back_up_store(
   _ outBackedUp: UnsafeMutablePointer<Bool>?
 ) -> swiftmmkv_status {
   status { () throws(MMKVError) in
-    let didBackUp = try makeDirectory(directory).backUpStore(
-      id: makeID(id),
-      to: makeDirectory(backup)
-    )
+    let didBackUp = try makeDirectory(directory)
+      .backUpStore(
+        id: makeID(id),
+        to: makeDirectory(backup)
+      )
     outBackedUp?.pointee = didBackUp
   }
 }
@@ -84,10 +85,11 @@ public func swiftmmkv_directory_restore_store(
   _ outRestored: UnsafeMutablePointer<Bool>?
 ) -> swiftmmkv_status {
   status { () throws(MMKVError) in
-    let didRestore = try makeDirectory(directory).restoreStore(
-      id: makeID(id),
-      from: makeDirectory(backup)
-    )
+    let didRestore = try makeDirectory(directory)
+      .restoreStore(
+        id: makeID(id),
+        from: makeDirectory(backup)
+      )
     outRestored?.pointee = didRestore
   }
 }

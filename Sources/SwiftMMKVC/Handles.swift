@@ -45,9 +45,10 @@ func makeCString(_ string: String) -> (pointer: UnsafeMutablePointer<CChar>, len
   var string = string
   return string.withUTF8 { utf8 in
     let pointer = UnsafeMutablePointer<CChar>.allocate(capacity: utf8.count + 1)
-    UnsafeMutableRawBufferPointer(start: pointer, count: utf8.count).copyMemory(
-      from: UnsafeRawBufferPointer(utf8)
-    )
+    UnsafeMutableRawBufferPointer(start: pointer, count: utf8.count)
+      .copyMemory(
+        from: UnsafeRawBufferPointer(utf8)
+      )
     pointer[utf8.count] = 0
     return (pointer, utf8.count)
   }
