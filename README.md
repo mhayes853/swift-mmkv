@@ -35,7 +35,7 @@ targets: [
 ]
 ```
 
-The package needs Swift 6.2 or later. Consumers do not need C++ interoperability: the core is
+The package needs Swift 6.3 or later. Consumers do not need C++ interoperability: the core is
 reached through a C interface.
 
 ## Values
