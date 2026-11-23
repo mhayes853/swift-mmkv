@@ -19,8 +19,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Nullability annotations are a Clang extension.
-#if !defined(__clang__)
+// Nullability annotations are a Clang extension, which Clang itself warns about when it is
+// asked to be pedantic.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnullability-extension"
+#else
 #if !defined(_Nullable)
 #define _Nullable
 #endif
@@ -531,6 +535,10 @@ swiftmmkv_subscription *_Nonnull swiftmmkv_subscribe_to_integrity_failures(
 
 #ifdef __cplusplus
 }
+#endif
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
 #endif
 
 #endif

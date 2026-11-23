@@ -41,15 +41,21 @@ jobs:
       - name: Check core symbols are renamed
         run: Scripts/check-symbols.sh
 
+      # The compiler checks what the C interface implements against its header, but not that
+      # everything the header declares is implemented.
+      - name: Check the C interface is implemented
+        run: Scripts/check-c-interface.sh
+
       # The compiler's dependency files list every module the library's sources loaded, which is
       # what shows the trait kept Foundation out.
       - name: Check loaded Foundation modules
         if: matrix.forbidden-modules
         run: |
-          loaded=$(cat .build/debug/SwiftMMKV.build/*.d | tr ' ' '\n' \
+          loaded=$(cat .build/debug/SwiftMMKV.build/*.d .build/debug/SwiftMMKVC.build/*.d \
+            | tr ' ' '\n' \
             | grep -oE '[A-Za-z_]+\.swiftmodule' | sed 's/\.swiftmodule$//' | sort -u)
           if echo "$loaded" | grep -xE '${{ matrix.forbidden-modules }}'; then
-            echo "SwiftMMKV loaded a Foundation module this configuration must not use." >&2
+            echo "The library loaded a Foundation module this configuration must not use." >&2
             exit 1
           fi
 
@@ -89,6 +95,9 @@ jobs:
 
       - name: Check core symbols are renamed
         run: Scripts/check-symbols.sh
+
+      - name: Check the C interface is implemented
+        run: Scripts/check-c-interface.sh
 
   test-ios:
     name: iOS
