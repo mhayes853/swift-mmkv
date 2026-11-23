@@ -4,7 +4,6 @@
 package struct MetaInfo: Equatable, Sendable {
   /// The versions of the layout. Each adds to what the file records.
   package enum Version {
-    package static let `default`: UInt32 = 0
     /// Records how many full write-backs there have been.
     package static let sequence: UInt32 = 1
     /// Records a random IV for encryption.

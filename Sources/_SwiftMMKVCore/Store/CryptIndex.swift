@@ -6,14 +6,6 @@
 // of bytes, compacted when enough of it belongs to entries since replaced or removed. Each key
 // takes one 20-byte slot of a ``SlotTable`` besides its bytes in the arena.
 
-#if canImport(Darwin)
-  import Darwin
-#elseif canImport(Glibc)
-  import Glibc
-#elseif canImport(Android)
-  import Android
-#endif
-
 /// An encrypted store's index entry (`KeyValueHolderCrypt`).
 enum CryptEntry {
   /// A value of up to 256 bytes, decrypted, in the index's arena: valid until the index next

@@ -241,6 +241,7 @@ struct StoreState: ~Copyable {
   }
 
   /// Takes the file lock of `type`. A single-process store's is turned off.
+  @inline(__always)
   func lockProcess(_ type: LockType) {
     switch type {
     case .shared: self.sharedProcessLock.lock()
@@ -248,6 +249,7 @@ struct StoreState: ~Copyable {
     }
   }
 
+  @inline(__always)
   func unlockProcess(_ type: LockType) {
     switch type {
     case .shared: self.sharedProcessLock.unlock()
@@ -372,18 +374,16 @@ extension StoreState {
     case .bytes(let bytes):
       return self.setDataForKey(bytes, key, expireDuration: expiresInSeconds, isDataHolder: true)
     case .strings:
-      guard let data = try? value.encode(expiry: nil) else { return false }
-      return data.withUnsafeBytes {
-        self.setDataForKey($0, key, expireDuration: expiresInSeconds, isDataHolder: false)
-      }
+      return value.withEncoded(expiry: nil) { data in
+        self.setDataForKey(data, key, expireDuration: expiresInSeconds, isDataHolder: false)
+      } ?? false
     default:
       self.lockProcess(.exclusive)
       defer { self.unlockProcess(.exclusive) }
       self.checkLoadData()
       let expiry: UInt32? =
         self.enableKeyExpire
-        ? (expiresInSeconds != 0 ? Self.safeExpirationPlusCurrentTime(expiresInSeconds) : 0)
-        : nil
+        ? Self.expirationTime(after: expiresInSeconds) : nil
       return value.withEncoded(expiry: expiry) { data in
         self.setDataForKey(data, key, isDataHolder: false)
       } ?? false
@@ -417,7 +417,7 @@ extension StoreState {
       Log.error("[\(self.id)] reject expiring value too large to encode: \(data.count)")
       return false
     }
-    let time = expireDuration != 0 ? Self.safeExpirationPlusCurrentTime(expireDuration) : 0
+    let time = Self.expirationTime(after: expireDuration)
     // On the stack unless the value is large.
     return withUnsafeTemporaryAllocation(byteCount: encodedLength, alignment: 1) { buffer in
       var output = CodedOutput(buffer)
@@ -491,8 +491,8 @@ extension StoreState {
     if self.isReadOnly {
       self.filterExpiredKeys()
     } else {
-      self.exclusiveProcessLock.lock()
-      defer { self.exclusiveProcessLock.unlock() }
+      self.lockProcess(.exclusive)
+      defer { self.unlockProcess(.exclusive) }
       // The rewrite keeps only the records this instance knows of, so it must know of them all.
       self.checkLoadData()
       self.fullWriteback(onlyWhileExpire: true)
@@ -609,11 +609,11 @@ extension StoreInstance {
   /// on the thread that holds it (the shim's `mmkv_lock`).
   package func lockExclusively() {
     self.state.lock()
-    self.withState { $0.exclusiveProcessLock.lock() }
+    self.withState { $0.lockProcess(.exclusive) }
   }
 
   package func unlockExclusively() {
-    self.withState { $0.exclusiveProcessLock.unlock() }
+    self.withState { $0.unlockProcess(.exclusive) }
     self.state.unlock()
   }
 
@@ -663,8 +663,8 @@ extension StoreInstance {
 extension StoreState {
   mutating func sync(synchronously: Bool = true) {
     guard !self.needLoadFromFile, self.isFileValid else { return }
-    self.exclusiveProcessLock.lock()
-    defer { self.exclusiveProcessLock.unlock() }
+    self.lockProcess(.exclusive)
+    defer { self.unlockProcess(.exclusive) }
     self.file.msync(synchronously: synchronously)
     self.metaFile.msync(synchronously: synchronously)
   }
@@ -717,9 +717,7 @@ extension StoreState {
       Log.warning("[\(target.id)] or [\(source.id)] file not valid")
       return 0
     }
-    let time =
-      target.expiredInSeconds != 0
-      ? Self.safeExpirationPlusCurrentTime(target.expiredInSeconds) : 0
+    let time = Self.expirationTime(after: target.expiredInSeconds)
     var count = 0
     for key in source.keysInRecordOrder() {
       // Copied, because the source may move its records while this store is written.

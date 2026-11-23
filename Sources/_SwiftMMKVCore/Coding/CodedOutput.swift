@@ -21,19 +21,10 @@ package struct CodedOutput {
     )
   }
 
-  package var spaceLeft: Int {
-    self.size <= self.position ? 0 : self.size - self.position
-  }
-
   private func requireSpace(_ length: Int) throws(CodingError) {
     if self.position > self.size || length > self.size - self.position {
       throw .outOfSpace
     }
-  }
-
-  package mutating func seek(_ addedSize: Int) throws(CodingError) {
-    try self.requireSpace(addedSize)
-    self.position += addedSize
   }
 
   package mutating func setPosition(_ position: Int) throws(CodingError) {

@@ -6,8 +6,10 @@ extension StoreState {
     UInt32(truncatingIfNeeded: time(nil))
   }
 
-  /// The time `duration` seconds from now, capped at `UInt32.max`.
-  static func safeExpirationPlusCurrentTime(_ duration: UInt32) -> UInt32 {
+  /// The expiry time of a value written now to last `duration` seconds, capped at `UInt32.max`,
+  /// or 0, which is never, for a duration of 0 (`safeExpirationPlusCurrentTime`).
+  static func expirationTime(after duration: UInt32) -> UInt32 {
+    guard duration != 0 else { return 0 }
     let time = UInt64(Self.currentTimeInSeconds()) + UInt64(duration)
     return time > UInt64(UInt32.max) ? UInt32.max : UInt32(time)
   }
@@ -41,8 +43,7 @@ extension StoreState {
     let hasExpireFlag = self.metaInfo.hasFlag(MetaInfo.Flag.enableKeyExpire)
     var records = [(key: StoreKey, value: [UInt8])]()
     if !hasExpireFlag {
-      let time =
-        expiredInSeconds != 0 ? Self.safeExpirationPlusCurrentTime(expiredInSeconds) : 0
+      let time = Self.expirationTime(after: expiredInSeconds)
       let maximumMigrationSize = min(
         Int(UInt32.max),
         Int(UInt32.max) - pbRawVarint32Size(UInt32.max) + itemSizeHolderSize
@@ -53,8 +54,7 @@ extension StoreState {
         let dataLength = value.count + fixed32Size
         guard
           let entry = Self.encodedEntrySize(
-            keyDataLength: key.bytes.count,
-            originKeyLength: key.bytes.count,
+            keyLength: key.bytes.count,
             dataLength: dataLength,
             isDataHolder: false,
             needsPlainHolder: self.crypter == nil
@@ -140,8 +140,8 @@ extension StoreState {
     guard self.enableKeyExpire, self.indexCount != 0, let memory = self.file.memory else {
       return 0
     }
-    self.sharedProcessLock.lock()
-    defer { self.sharedProcessLock.unlock() }
+    self.lockProcess(.shared)
+    defer { self.unlockProcess(.shared) }
     let now = Self.currentTimeInSeconds()
     if let crypter = self.crypter {
       return self.dicCrypt.removeAll { entry in
@@ -160,11 +160,7 @@ extension StoreState {
         Log.warning("key has invalid value size \(location.valueSize)")
         return false
       }
-      let value = UnsafeRawBufferPointer(
-        start: base + location.valueOffset,
-        count: Int(location.valueSize)
-      )
-      let time = Self.expirationTime(of: value)
+      let time = Self.expirationTime(of: RecordIndex.value(at: location, in: base))
       return time != 0 && time <= now
     }
   }

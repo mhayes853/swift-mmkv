@@ -9,10 +9,6 @@ package let keySizeLimit = Int(UInt16.max) - 4
 package struct StoreKey: Hashable, Sendable {
   package var bytes: [UInt8]
 
-  package init(_ bytes: [UInt8]) {
-    self.bytes = bytes
-  }
-
   package init(_ string: String) {
     self.bytes = Array(string.utf8)
   }

@@ -108,10 +108,7 @@ package struct MemoryFile: ~Copyable {
       return false
     }
     let oldSize = self.size
-    var size = newSize
-    if size < pageSize || size % pageSize != 0 {
-      size = (size / pageSize + 1) * pageSize
-    }
+    let size = max(pageSize, roundUp(newSize, toMultipleOf: pageSize))
     self.size = size
     guard self.fileSystem.ftruncate(self.descriptor, off_t(size)) == 0 else {
       self.size = oldSize

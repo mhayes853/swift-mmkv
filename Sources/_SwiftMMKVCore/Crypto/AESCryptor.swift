@@ -23,10 +23,6 @@ package struct CipherState: Equatable, Sendable {
     }
   }
 
-  package var vector: [UInt8] {
-    withUnsafeBytes(of: self.register) { Array($0) }
-  }
-
   package static func == (lhs: CipherState, rhs: CipherState) -> Bool {
     lhs.register == rhs.register && lhs.number == rhs.number
   }

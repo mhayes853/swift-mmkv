@@ -59,6 +59,13 @@ package struct RecordIndex: ~Copyable {
     return UnsafeRawBufferPointer(start: base + start, count: Int(location.keySize))
   }
 
+  /// The bytes of the value of the record at `location`.
+  package static func value(at location: RecordLocation, in base: UnsafeRawPointer)
+    -> UnsafeRawBufferPointer
+  {
+    UnsafeRawBufferPointer(start: base + location.valueOffset, count: Int(location.valueSize))
+  }
+
   private static func matches(
     _ key: UnsafeRawBufferPointer,
     _ location: RecordLocation,

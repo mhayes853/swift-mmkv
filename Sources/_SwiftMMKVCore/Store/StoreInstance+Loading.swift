@@ -40,8 +40,8 @@ extension StoreState {
           needFullWriteback = true
         }
         if needFullWriteback && !self.isReadOnly {
-          self.exclusiveProcessLock.lock()
-          defer { self.exclusiveProcessLock.unlock() }
+          self.lockProcess(.exclusive)
+          defer { self.unlockProcess(.exclusive) }
           if self.reloadIfChangedWhileUpgradingLock() {
             return
           }
@@ -49,8 +49,8 @@ extension StoreState {
         }
       } else {
         // The file is empty or unreadable: discard everything.
-        self.exclusiveProcessLock.lock()
-        defer { self.exclusiveProcessLock.unlock() }
+        self.lockProcess(.exclusive)
+        defer { self.unlockProcess(.exclusive) }
         if self.reloadIfChangedWhileUpgradingLock() {
           return
         }
@@ -100,9 +100,7 @@ extension StoreState {
     let oldActualSize = self.actualSize
     self.actualSize = self.readActualSize()
     let fileSize = self.file.size
-    if self.actualSize > 0 && self.actualSize < fileSize
-      && self.actualSize + fixed32Size <= fileSize && self.actualSize > oldActualSize
-    {
+    if self.actualSize > oldActualSize && self.actualSize + fixed32Size <= fileSize {
       let position = oldActualSize
       let addedSize = self.actualSize - position
       let base = UnsafeRawPointer(self.file.memory! + fixed32Size)
@@ -138,15 +136,15 @@ extension StoreState {
   ///   rewrite or measure the whole file pass `true`.
   mutating func checkLoadData(checkingFileSize: Bool = false) {
     if self.needLoadFromFile {
-      self.sharedProcessLock.lock()
-      defer { self.sharedProcessLock.unlock() }
+      self.lockProcess(.shared)
+      defer { self.unlockProcess(.shared) }
       self.needLoadFromFile = false
       self.loadFromFile()
       return
     }
     guard self.isMultiProcess, self.metaFile.isFileValid else { return }
-    self.sharedProcessLock.lock()
-    defer { self.sharedProcessLock.unlock() }
+    self.lockProcess(.shared)
+    defer { self.unlockProcess(.shared) }
     let metaInfo = MetaInfo.Summary(reading: self.metaFile.memory!)
     if self.metaInfo.sequence != metaInfo.sequence {
       // Another process rewrote the file.
@@ -210,11 +208,9 @@ extension StoreState {
     if !self.metaFile.isFileValid {
       self.metaFile.reloadFromFile()
     }
-    guard self.metaFile.isFileValid else {
-      Log.error("file [\(self.crcPath)] not valid")
-      return
+    if self.metaFile.isFileValid {
+      self.checkFileHasDiskError()
     }
-    self.checkFileHasDiskError()
     guard self.metaFile.isFileValid else {
       Log.error("file [\(self.crcPath)] not valid")
       return
@@ -247,20 +243,12 @@ extension StoreState {
 
   /// Deletes a file that cannot even be read, so that it is created again (`checkFileHasDiskError`).
   /// Only done the first time the instance loads.
-  ///
-  /// - Returns: Whether reading either file failed.
-  @discardableResult
-  mutating func checkFileHasDiskError() -> Bool {
+  mutating func checkFileHasDiskError() {
     if self.isSecondLoad {
-      return false
+      return
     }
     self.isSecondLoad = true
-    var needReportReadFail = false
-    if Self.isDiskOfMMAPFileCorrupted(
-      &self.metaFile,
-      &needReportReadFail,
-      fileSystem: self.fileSystem
-    ) {
+    if Self.isDiskOfMMAPFileCorrupted(&self.metaFile, fileSystem: self.fileSystem) {
       self.metaFile.clearMemoryCache()
       self.deleteOrRenameFile(self.metaFile.path)
       self.metaFile.reloadFromFile()
@@ -270,20 +258,17 @@ extension StoreState {
     }
     guard self.file.isFileValid else {
       Log.error("file [\(self.path)] not valid")
-      return false
+      return
     }
-    if Self.isDiskOfMMAPFileCorrupted(&self.file, &needReportReadFail, fileSystem: self.fileSystem)
-    {
+    if Self.isDiskOfMMAPFileCorrupted(&self.file, fileSystem: self.fileSystem) {
       self.file.clearMemoryCache()
       self.deleteOrRenameFile(self.file.path)
       self.file.reloadFromFile(expectedCapacity: self.expectedCapacity)
     }
-    return needReportReadFail
   }
 
   private static func isDiskOfMMAPFileCorrupted(
     _ file: inout MemoryFile,
-    _ needReportReadFail: inout Bool,
     fileSystem: FileSystem
   ) -> Bool {
     let descriptor = file.fileDescriptor
@@ -296,7 +281,6 @@ extension StoreState {
     let error = errno
     _ = fileSystem.lseek(descriptor, oldPosition, SEEK_SET)
     if size <= 0 {
-      needReportReadFail = true
       Log.error("fail to read [\(file.path)] from fd [\(descriptor)], errno: \(error)")
       if error == EIO || error == EILSEQ || error == EINVAL || error == ENXIO {
         Log.warning("file fail to read, consider it illegal, delete now: [\(file.path)]")
@@ -343,7 +327,7 @@ extension StoreState {
         Log.warning(
           "oldStyleActualSize \(oldStyleActualSize) not equal to meta actual size \(self.actualSize)"
         )
-        if oldStyleActualSize < fileSize && oldStyleActualSize + fixed32Size <= fileSize {
+        if oldStyleActualSize + fixed32Size <= fileSize {
           if loadIfValid(oldStyleActualSize, self.metaInfo.crcDigest) {
             return
           }
@@ -352,7 +336,7 @@ extension StoreState {
         }
       }
       let lastActualSize = Int(self.metaInfo.lastActualSize)
-      if lastActualSize < fileSize && lastActualSize + fixed32Size <= fileSize {
+      if lastActualSize + fixed32Size <= fileSize {
         let lastCRCDigest = self.metaInfo.lastCRCDigest
         if !loadIfValid(lastActualSize, lastCRCDigest) {
           Log.error(
@@ -367,7 +351,7 @@ extension StoreState {
     }
 
     self.actualSize = self.readActualSize()
-    if self.actualSize < fileSize && self.actualSize + fixed32Size <= fileSize {
+    if self.actualSize + fixed32Size <= fileSize {
       if self.checkFileCRCValid(self.actualSize, self.metaInfo.crcDigest) {
         loadFromFile = true
       } else {

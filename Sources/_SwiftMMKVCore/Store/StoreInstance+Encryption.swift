@@ -133,26 +133,21 @@ extension StoreState {
   /// `CodedInputDataCrypt` does, rather than all at once into memory of its own.
   ///
   /// - Parameter greedy: Whether to keep what was decoded before an error.
-  /// - Returns: Whether everything decoded.
-  @discardableResult
-  mutating func decodeCrypt(from position: Int, size: Int, greedy: Bool) -> Bool {
-    guard let memory = self.file.memory, let crypter = self.crypter else { return false }
+  mutating func decodeCrypt(from position: Int, size: Int, greedy: Bool) {
+    guard let memory = self.file.memory, let crypter = self.crypter else { return }
     let ciphertext = UnsafeRawBufferPointer(start: memory + fixed32Size, count: size)
     var reader = DecryptingReader(ciphertext: ciphertext, position: position, decrypter: crypter)
-    let succeeded: Bool
     if greedy {
-      succeeded = Self.decodeCryptRecords(&reader, into: &self.dicCrypt)
+      _ = Self.decodeCryptRecords(&reader, into: &self.dicCrypt)
     } else {
       var decoded = CryptIndex()
-      succeeded = Self.decodeCryptRecords(&reader, into: &decoded)
-      if succeeded {
+      if Self.decodeCryptRecords(&reader, into: &decoded) {
         self.dicCrypt = decoded
       }
     }
     self.dicCrypt.shrinkArenaToFit()
     // The store goes on appending where the data ends, whether or not all of it decoded.
     self.crypter = reader.decrypterAtEnd()
-    return succeeded
   }
 
   private static func decodeCryptRecords(
@@ -285,13 +280,9 @@ extension StoreState {
       containerSize += pbRawVarint32Size(UInt32(keySize)) + keySize
       containerSize += pbRawVarint32Size(UInt32(value.count)) + value.count
     }
-    var encoded = [UInt8](
-      repeating: 0,
-      count: pbRawVarint32Size(UInt32(containerSize)) + containerSize
-    )
+    var encoded = [UInt8](repeating: 0, count: containerSize)
     encoded.withUnsafeMutableBytes { buffer in
       var output = CodedOutput(buffer)
-      try? output.writeUInt32(UInt32(containerSize))
       for slot in order {
         guard case .memory(let value, _) = self.dicCrypt.entry(at: slot) else { continue }
         try? output.writeData(self.dicCrypt.key(at: slot))
@@ -363,15 +354,12 @@ extension StoreState {
     }
     if let encoded = prepared.encoded, !encoded.isEmpty {
       encoded.withUnsafeBytes { buffer in
-        var input = CodedInput(buffer)
-        guard let dataSize = try? Int(input.readUInt32()), dataSize > 0 else { return }
-        let source = buffer.baseAddress! + pbRawVarint32Size(UInt32(dataSize))
         if encrypter != nil {
-          encrypter!.encrypt(source, base + writePosition, count: dataSize)
+          encrypter!.encrypt(buffer.baseAddress!, base + writePosition, count: buffer.count)
         } else {
-          (base + writePosition).copyMemory(from: source, byteCount: dataSize)
+          (base + writePosition).copyMemory(from: buffer.baseAddress!, byteCount: buffer.count)
         }
-        writePosition += dataSize
+        writePosition += buffer.count
       }
     }
     self.output!.position = writePosition
@@ -380,8 +368,7 @@ extension StoreState {
   /// A random varint value that takes exactly `size` bytes, from 1 to 5
   /// (`AESCrypt::randomItemSizeHolder`).
   static func randomItemSizeHolder(size: Int) -> UInt32 {
-    let holders: [UInt64] = [0, 0x80, 0x4000, 0x20_0000, 0x1000_0000, 0x1_0000_0000]
-    return UInt32(UInt64.random(in: holders[size - 1]..<holders[size]))
+    UInt32(UInt64.random(in: itemSizeHolderBounds[size - 1]..<itemSizeHolderBounds[size]))
   }
 
   // MARK: - Re-encrypting
@@ -410,8 +397,7 @@ extension StoreState {
           fitsPlainIndex =
             fitsPlainIndex
             && Self.encodedEntrySize(
-              keyDataLength: keySize,
-              originKeyLength: keySize,
+              keyLength: keySize,
               dataLength: entry.realValueSize,
               isDataHolder: false,
               needsPlainHolder: true
@@ -559,3 +545,9 @@ struct DecryptingReader: ~Copyable {
     self.windowEnd = target
   }
 }
+
+/// The smallest value whose varint takes each number of bytes from 1 to 5, then the end of the
+/// values that take 5.
+private let itemSizeHolderBounds: [UInt64] = [
+  0, 0x80, 0x4000, 0x20_0000, 0x1000_0000, 0x1_0000_0000
+]

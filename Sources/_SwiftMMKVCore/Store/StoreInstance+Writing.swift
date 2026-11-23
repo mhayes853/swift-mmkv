@@ -4,10 +4,11 @@
 /// The size of the placeholder at the start of the data, a varint that readers skip.
 let itemSizeHolderSize = 4
 
-/// A full rewrite's data: either the records already in the file, to be moved into place, or an
-/// encoded container of records (`std::pair<MMBuffer, size_t>` from `prepareEncode`).
+/// A full rewrite's data: either the records already in the file, to be moved into place, or
+/// encoded records (`std::pair<MMBuffer, size_t>` from `prepareEncode`).
 struct PreparedData {
-  /// An encoded container, or `nil` to move the records already in the file.
+  /// Encoded records, without the size the C++ core's container starts with, or `nil` to move
+  /// the records already in the file.
   var encoded: [UInt8]?
   /// The size of the rewritten data, including the placeholder.
   var totalSize: Int
@@ -28,9 +29,7 @@ extension StoreState {
     guard let base = self.dataBase, let location = self.dic.location(of: key, base: base) else {
       return .empty
     }
-    return .mapped(
-      UnsafeRawBufferPointer(start: base + location.valueOffset, count: Int(location.valueSize))
-    )
+    return .mapped(RecordIndex.value(at: location, in: base))
   }
 
   /// The bytes of `key`'s value without its expiry time, after loading any changes
@@ -75,10 +74,7 @@ extension StoreState {
     if case .found(let slot) = probe {
       let existing = self.dic.location(at: slot)
       if self.isCompareBeforeSetEnabled, let base = self.dataBase {
-        let old = UnsafeRawBufferPointer(
-          start: base + existing.valueOffset,
-          count: Int(existing.valueSize)
-        )
+        let old = RecordIndex.value(at: existing, in: base)
         if isDataHolder {
           var input = CodedInput(old)
           if let range = try? input.readLengthDelimited(exactly: true),
@@ -146,83 +142,54 @@ extension StoreState {
   }
 
   struct EncodedEntrySize {
-    var keyAlreadyEncoded: Bool
     var valueLength: Int
     var totalSize: Int
   }
 
-  /// The size of a record (`encodedEntrySize`). `keyDataLength` is longer than `originKeyLength`
-  /// when the key is already length-delimited.
+  /// The size of a record, or `nil` if it cannot be represented (`encodedEntrySize`).
+  ///
+  /// - Parameter needsPlainHolder: Whether the record must fit the plain-text index, which keeps
+  ///   the size of the key and the two length prefixes in 16 bits.
   static func encodedEntrySize(
-    keyDataLength: Int,
-    originKeyLength: Int,
+    keyLength: Int,
     dataLength: Int,
     isDataHolder: Bool,
     needsPlainHolder: Bool
   ) -> EncodedEntrySize? {
-    let maxEncodedLength = Int(UInt32.max)
-    if originKeyLength > keySizeLimit || keyDataLength < originKeyLength
-      || keyDataLength > maxEncodedLength
-    {
+    guard keyLength <= keySizeLimit,
+      let valueLength = Self.encodedValueLength(dataLength, isDataHolder: isDataHolder)
+    else {
       return nil
     }
-    let keyAlreadyEncoded = originKeyLength < keyDataLength
-    guard let valueLength = Self.encodedValueLength(dataLength, isDataHolder: isDataHolder) else {
-      return nil
-    }
-    var keyValueSize = keyDataLength + pbRawVarint32Size(UInt32(valueLength))
-    if !keyAlreadyEncoded {
-      keyValueSize += pbRawVarint32Size(UInt32(keyDataLength))
-    }
+    let keyValueSize =
+      pbRawVarint32Size(UInt32(keyLength)) + keyLength + pbRawVarint32Size(UInt32(valueLength))
     if needsPlainHolder && keyValueSize > Int(UInt16.max) {
       return nil
     }
     let totalSize = keyValueSize + valueLength
-    guard totalSize <= maxEncodedLength else { return nil }
-    return EncodedEntrySize(
-      keyAlreadyEncoded: keyAlreadyEncoded,
-      valueLength: valueLength,
-      totalSize: totalSize
-    )
+    guard totalSize <= Int(UInt32.max) else { return nil }
+    return EncodedEntrySize(valueLength: valueLength, totalSize: totalSize)
   }
 
-  /// The size of a record for `key`, which the index holds, whose current record has the key's
-  /// length before it (the `encodedEntrySize` of the `kvHolder` overloads).
-  private static func encodedEntrySize(
-    holderOf key: UnsafeRawBufferPointer,
-    dataLength: Int,
-    isDataHolder: Bool
-  ) -> EncodedEntrySize? {
-    Self.encodedEntrySize(
-      keyDataLength: key.count + pbRawVarint32Size(UInt32(key.count)),
-      originKeyLength: key.count,
-      dataLength: dataLength,
-      isDataHolder: isDataHolder,
-      needsPlainHolder: true
-    )
-  }
-
-  /// The size of a record of `data` for `keyData`, or `nil`, with an error logged, if it cannot be
+  /// The size of a record of `data` for `key`, or `nil`, with an error logged, if it cannot be
   /// written: the checks that `doAppendDataWithKey` and `doOverrideDataWithKey` start with.
   @inline(__always)
   private func checkedEntrySize(
     _ data: UnsafeRawBufferPointer,
-    keyData: UnsafeRawBufferPointer,
+    key: UnsafeRawBufferPointer,
     isDataHolder: Bool,
-    originKeyLength: Int,
     function: StaticString = #function
   ) -> EncodedEntrySize? {
     guard
       let entry = Self.encodedEntrySize(
-        keyDataLength: keyData.count,
-        originKeyLength: originKeyLength,
+        keyLength: key.count,
         dataLength: data.count,
         isDataHolder: isDataHolder,
         needsPlainHolder: self.crypter == nil
       )
     else {
       Log.error(
-        "[\(self.id)] reject unrepresentable key/value lengths, key=\(originKeyLength), value=\(data.count)",
+        "[\(self.id)] reject unrepresentable key/value lengths, key=\(key.count), value=\(data.count)",
         function: function
       )
       return nil
@@ -230,66 +197,17 @@ extension StoreState {
     return self.checkSizeLimit(entry.totalSize) ? entry : nil
   }
 
-  /// Appends a record for `key` (`appendDataWithKey(data, key)`).
+  /// Appends a record for `key` (`appendDataWithKey(data, key)` and `doAppendDataWithKey`).
   mutating func appendDataWithKey(
     _ data: UnsafeRawBufferPointer,
     key: UnsafeRawBufferPointer,
     isDataHolder: Bool
   ) -> RecordLocation? {
-    self.doAppendDataWithKey(
-      data,
-      keyData: key,
-      isDataHolder: isDataHolder,
-      originKeyLength: key.count
-    )
-  }
-
-  /// Appends a record for `key`, which the index holds (`appendDataWithKey(data, kvHolder)`).
-  ///
-  /// The C++ core copies the length-delimited key from the key's current record. The record holds
-  /// the same bytes as `key`, so this writes `key` instead, but makes space before checking the
-  /// size limit, as the C++ core does.
-  mutating func appendDataWithKey(
-    _ data: UnsafeRawBufferPointer,
-    holderOf key: UnsafeRawBufferPointer,
-    isDataHolder: Bool
-  ) -> RecordLocation? {
-    self.exclusiveProcessLock.lock()
-    defer { self.exclusiveProcessLock.unlock() }
-    guard
-      let entry = Self.encodedEntrySize(
-        holderOf: key,
-        dataLength: data.count,
-        isDataHolder: isDataHolder
-      ),
-      self.ensureMemorySize(entry.totalSize)
-    else {
+    guard let entry = self.checkedEntrySize(data, key: key, isDataHolder: isDataHolder) else {
       return nil
     }
-    return self.doAppendDataWithKey(
-      data,
-      keyData: key,
-      isDataHolder: isDataHolder,
-      originKeyLength: key.count
-    )
-  }
-
-  mutating func doAppendDataWithKey(
-    _ data: UnsafeRawBufferPointer,
-    keyData: UnsafeRawBufferPointer,
-    isDataHolder: Bool,
-    originKeyLength: Int
-  ) -> RecordLocation? {
-    guard
-      let entry = self.checkedEntrySize(
-        data,
-        keyData: keyData,
-        isDataHolder: isDataHolder,
-        originKeyLength: originKeyLength
-      )
-    else { return nil }
-    self.exclusiveProcessLock.lock()
-    defer { self.exclusiveProcessLock.unlock() }
+    self.lockProcess(.exclusive)
+    defer { self.unlockProcess(.exclusive) }
     guard self.ensureMemorySize(entry.totalSize), self.isFileValid else { return nil }
     if CryptEntry.isValueStoredAsOffset(entry.valueLength), let state = self.crypter?.state {
       self.appendState = state
@@ -298,8 +216,7 @@ extension StoreState {
       try self.withOutput { (output) throws(CodingError) in
         try Self.writeRecord(
           to: &output,
-          keyData: keyData,
-          keyAlreadyEncoded: entry.keyAlreadyEncoded,
+          key: key,
           data: data,
           isDataHolder: isDataHolder,
           valueLength: entry.valueLength
@@ -314,21 +231,72 @@ extension StoreState {
     self.crypter?.encrypt(pointer, pointer, count: entry.totalSize)
     self.actualSize += entry.totalSize
     self.updateCRCDigest(UnsafeRawBufferPointer(start: pointer, count: entry.totalSize))
-    return RecordLocation(keySize: originKeyLength, valueSize: entry.valueLength, offset: offset)
+    return RecordLocation(keySize: key.count, valueSize: entry.valueLength, offset: offset)
   }
 
-  /// Rewrites the data from the start as a single record for `key` (`overrideDataWithKey(data, key)`).
+  /// Appends a record for `key`, which the index holds (`appendDataWithKey(data, kvHolder)`).
+  ///
+  /// The C++ core copies the length-delimited key from the key's current record. The record holds
+  /// the same bytes as `key`, so this writes `key` instead, but makes space before checking the
+  /// size limit, as the C++ core does.
+  mutating func appendDataWithKey(
+    _ data: UnsafeRawBufferPointer,
+    holderOf key: UnsafeRawBufferPointer,
+    isDataHolder: Bool
+  ) -> RecordLocation? {
+    self.lockProcess(.exclusive)
+    defer { self.unlockProcess(.exclusive) }
+    guard
+      let entry = Self.encodedEntrySize(
+        keyLength: key.count,
+        dataLength: data.count,
+        isDataHolder: isDataHolder,
+        needsPlainHolder: true
+      ),
+      self.ensureMemorySize(entry.totalSize)
+    else {
+      return nil
+    }
+    return self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder)
+  }
+
+  /// Rewrites the data from the start as a single record for `key` (`overrideDataWithKey(data, key)`
+  /// and `doOverrideDataWithKey`).
   mutating func overrideDataWithKey(
     _ data: UnsafeRawBufferPointer,
     key: UnsafeRawBufferPointer,
     isDataHolder: Bool
   ) -> RecordLocation? {
-    self.doOverrideDataWithKey(
-      data,
-      keyData: key,
-      isDataHolder: isDataHolder,
-      originKeyLength: key.count
-    )
+    guard let entry = self.checkedEntrySize(data, key: key, isDataHolder: isDataHolder) else {
+      return nil
+    }
+    // Rewriting encrypted data in place would reuse the IV, so an encrypted store appends.
+    if self.crypter != nil || !self.checkSizeForOverride(entry.totalSize) {
+      return self.appendDataWithKey(data, key: key, isDataHolder: isDataHolder)
+    }
+    do throws(CodingError) {
+      try self.withOutput { (output) throws(CodingError) in
+        try output.setPosition(0)
+        try output.writeUInt32(Self.randomItemSizeHolder(size: itemSizeHolderSize))
+      }
+      self.actualSize = itemSizeHolderSize
+      try self.withOutput { (output) throws(CodingError) in
+        try Self.writeRecord(
+          to: &output,
+          key: key,
+          data: data,
+          isDataHolder: isDataHolder,
+          valueLength: entry.valueLength
+        )
+      }
+    } catch {
+      Log.error("\(error)")
+      return nil
+    }
+    let offset = self.actualSize
+    self.actualSize += entry.totalSize
+    self.recalculateCRCDigest(iv: nil, increaseSequence: false)
+    return RecordLocation(keySize: key.count, valueSize: entry.valueLength, offset: offset)
   }
 
   /// Rewrites the data from the start as a single record for `key`, which the index holds
@@ -341,84 +309,26 @@ extension StoreState {
   ) -> RecordLocation? {
     guard
       let entry = Self.encodedEntrySize(
-        holderOf: key,
+        keyLength: key.count,
         dataLength: data.count,
-        isDataHolder: isDataHolder
+        isDataHolder: isDataHolder,
+        needsPlainHolder: true
       )
     else { return nil }
     if !self.checkSizeForOverride(entry.totalSize) {
       return self.appendDataWithKey(data, holderOf: key, isDataHolder: isDataHolder)
     }
-    return self.doOverrideDataWithKey(
-      data,
-      keyData: key,
-      isDataHolder: isDataHolder,
-      originKeyLength: key.count
-    )
-  }
-
-  mutating func doOverrideDataWithKey(
-    _ data: UnsafeRawBufferPointer,
-    keyData: UnsafeRawBufferPointer,
-    isDataHolder: Bool,
-    originKeyLength: Int
-  ) -> RecordLocation? {
-    guard
-      let entry = self.checkedEntrySize(
-        data,
-        keyData: keyData,
-        isDataHolder: isDataHolder,
-        originKeyLength: originKeyLength
-      )
-    else { return nil }
-    // Rewriting encrypted data in place would reuse the IV, so an encrypted store appends.
-    if self.crypter != nil || !self.checkSizeForOverride(entry.totalSize) {
-      return self.doAppendDataWithKey(
-        data,
-        keyData: keyData,
-        isDataHolder: isDataHolder,
-        originKeyLength: originKeyLength
-      )
-    }
-    do throws(CodingError) {
-      try self.withOutput { (output) throws(CodingError) in
-        try output.setPosition(0)
-        try output.writeUInt32(Self.randomItemSizeHolder())
-      }
-      self.actualSize = itemSizeHolderSize
-      try self.withOutput { (output) throws(CodingError) in
-        try Self.writeRecord(
-          to: &output,
-          keyData: keyData,
-          keyAlreadyEncoded: entry.keyAlreadyEncoded,
-          data: data,
-          isDataHolder: isDataHolder,
-          valueLength: entry.valueLength
-        )
-      }
-    } catch {
-      Log.error("\(error)")
-      return nil
-    }
-    let offset = self.actualSize
-    self.actualSize += entry.totalSize
-    self.recalculateCRCDigestOnly()
-    return RecordLocation(keySize: originKeyLength, valueSize: entry.valueLength, offset: offset)
+    return self.overrideDataWithKey(data, key: key, isDataHolder: isDataHolder)
   }
 
   private static func writeRecord(
     to output: inout CodedOutput,
-    keyData: UnsafeRawBufferPointer,
-    keyAlreadyEncoded: Bool,
+    key: UnsafeRawBufferPointer,
     data: UnsafeRawBufferPointer,
     isDataHolder: Bool,
     valueLength: Int
   ) throws(CodingError) {
-    if keyAlreadyEncoded {
-      try output.writeRawData(keyData)
-    } else {
-      try output.writeData(keyData)
-    }
+    try output.writeData(key)
     if isDataHolder {
       try output.writeRawVarint32(UInt32(valueLength))
     }
@@ -453,12 +363,6 @@ extension StoreState {
     var output = CodedOutput(base: memory + fixed32Size, size: state.size, position: state.position)
     defer { self.output = OutputState(position: output.position, size: state.size) }
     return try body(&output)
-  }
-
-  /// A random varint value that takes exactly four bytes, for the placeholder at the start of the
-  /// data (`AESCrypt::randomItemSizeHolder(4)`).
-  static func randomItemSizeHolder() -> UInt32 {
-    UInt32.random(in: 0x20_0000...0x0fff_ffff)
   }
 
   // MARK: - Making space
@@ -517,13 +421,9 @@ extension StoreState {
       containerSize += pbRawVarint32Size(UInt32(record.key.bytes.count)) + record.key.bytes.count
       containerSize += pbRawVarint32Size(UInt32(record.value.count)) + record.value.count
     }
-    var encoded = [UInt8](
-      repeating: 0,
-      count: pbRawVarint32Size(UInt32(containerSize)) + containerSize
-    )
+    var encoded = [UInt8](repeating: 0, count: containerSize)
     encoded.withUnsafeMutableBytes { buffer in
       var output = CodedOutput(buffer)
-      try? output.writeUInt32(UInt32(containerSize))
       for record in records where !record.key.bytes.isEmpty {
         record.key.bytes.withUnsafeBytes { try? output.writeData($0) }
         record.value.withUnsafeBytes { try? output.writeData($0) }
@@ -593,8 +493,8 @@ extension StoreState {
       self.clearAll()
       return true
     }
-    self.exclusiveProcessLock.lock()
-    defer { self.exclusiveProcessLock.unlock() }
+    self.lockProcess(.exclusive)
+    defer { self.unlockProcess(.exclusive) }
     let prepared = self.prepareEncode()
     let sizeOfDic = prepared.totalSize
     guard sizeOfDic > 0 else { return false }
@@ -623,8 +523,8 @@ extension StoreState {
     self.output = OutputState(position: 0, size: self.file.size - fixed32Size)
     if let decrypter = self.crypter {
       self.memmoveCryptDictionary(decrypter: decrypter, encrypter: &encrypter, prepared: prepared)
-    } else if let encoded = prepared.encoded, !encoded.isEmpty {
-      self.fullWriteBackWholeData(encoded, totalSize: totalSize)
+    } else if let encoded = prepared.encoded {
+      self.fullWriteBackWholeData(encoded)
       if encrypter != nil {
         let data = self.file.memory! + fixed32Size
         encrypter!.encrypt(data, data, count: totalSize)
@@ -637,7 +537,7 @@ extension StoreState {
       self.crypter = encrypter
     }
     self.actualSize = totalSize
-    self.recalculateCRCDigestWithIV(newIV)
+    self.recalculateCRCDigest(iv: newIV, increaseSequence: true)
     self.hasFullWriteback = true
     // Make sure the last confirmed size and checksum reach the disk.
     if needSync {
@@ -687,33 +587,18 @@ extension StoreState {
     }
     // The placeholder where a container's size would be.
     try? self.withOutput { (output) throws(CodingError) in
-      try output.writeUInt32(Self.randomItemSizeHolder())
+      try output.writeUInt32(Self.randomItemSizeHolder(size: itemSizeHolderSize))
     }
     let writtenSize = writePosition - originPosition
     encrypter?.encrypt(base + originPosition, base + originPosition, count: writtenSize)
     self.output!.position += writtenSize - itemSizeHolderSize
   }
 
-  /// Rewrites the data from an encoded container (`fullWriteBackWholeData`).
-  private mutating func fullWriteBackWholeData(_ allData: [UInt8], totalSize: Int) {
+  /// Rewrites the data from encoded records (`fullWriteBackWholeData`).
+  private mutating func fullWriteBackWholeData(_ records: [UInt8]) {
     try? self.withOutput { (output) throws(CodingError) in
-      try output.writeUInt32(Self.randomItemSizeHolder())
-      var failure: CodingError?
-      allData.withUnsafeBytes { buffer in
-        do throws(CodingError) {
-          var input = CodedInput(buffer)
-          let dataSize = Int(try input.readUInt32())
-          if dataSize > 0 {
-            let start = pbRawVarint32Size(UInt32(dataSize))
-            try output.writeRawData(
-              UnsafeRawBufferPointer(rebasing: buffer[start..<(start + dataSize)])
-            )
-          }
-        } catch {
-          failure = error
-        }
-      }
-      if let failure { throw failure }
+      try output.writeUInt32(Self.randomItemSizeHolder(size: itemSizeHolderSize))
+      records.withUnsafeBytes { try? output.writeRawData($0) }
     }
   }
 
@@ -735,20 +620,19 @@ extension StoreState {
 
   /// Records the data's size and checksum, increasing the sequence after a full rewrite so other
   /// processes load everything again (`writeActualSize`).
-  @discardableResult
   mutating func writeActualSize(
     _ size: Int,
     crcDigest: UInt32,
     iv: [UInt8]?,
     increaseSequence: Bool
-  ) -> Bool {
+  ) {
     if self.isReadOnly {
-      return false
+      return
     }
     if !increaseSequence && self.metaInfo.version < MetaInfo.Version.actualSize {
       self.oldStyleWriteActualSize(size)
     }
-    guard self.metaFile.isFileValid else { return false }
+    guard self.metaFile.isFileValid else { return }
     var needsFullWrite = false
     self.actualSize = size
     self.metaInfo.actualSize = UInt32(truncatingIfNeeded: size)
@@ -784,21 +668,12 @@ extension StoreState {
     } else {
       self.metaInfo.writeCRCAndActualSize(to: self.metaFile.memory!)
     }
-    return true
   }
 
   /// Writes the size into the data file's header, where versions before 3 keep it.
   mutating func oldStyleWriteActualSize(_ size: Int) {
     self.actualSize = size
     self.file.memory!.storeBytes(of: UInt32(truncatingIfNeeded: size).littleEndian, as: UInt32.self)
-  }
-
-  mutating func recalculateCRCDigestWithIV(_ iv: [UInt8]?) {
-    self.recalculateCRCDigest(iv: iv, increaseSequence: true)
-  }
-
-  mutating func recalculateCRCDigestOnly() {
-    self.recalculateCRCDigest(iv: nil, increaseSequence: false)
   }
 
   /// Computes the checksum of the whole data, then records it with the size.
