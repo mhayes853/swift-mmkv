@@ -41,6 +41,7 @@ extension StoreState {
           // next write replaces the data.
           Log.error("[\(self.id)] intact data cannot be decoded: wrong encryption key")
           self.hasUndecodableData = true
+          IntegrityFailureReport.send(id: self.id, kind: .wrongEncryptionKey)
           self.needLoadFromFile = false
           return
         }
@@ -367,9 +368,12 @@ extension StoreState {
         loadFromFile = true
       } else {
         checkLastConfirmedInfo()
-        if !loadFromFile && self.recoverOnError {
-          loadFromFile = true
-          needFullWriteback = true
+        if !loadFromFile {
+          IntegrityFailureReport.send(id: self.id, kind: .checksum)
+          if self.recoverOnError {
+            loadFromFile = true
+            needFullWriteback = true
+          }
         }
       }
     } else {
@@ -377,11 +381,14 @@ extension StoreState {
         "check [\(self.id)] error: \(self.actualSize) size in total, file size is \(fileSize)"
       )
       checkLastConfirmedInfo()
-      if !loadFromFile && self.recoverOnError {
-        // Do not read past the end of the file.
-        self.actualSize = fileSize - fixed32Size
-        loadFromFile = true
-        needFullWriteback = true
+      if !loadFromFile {
+        IntegrityFailureReport.send(id: self.id, kind: .fileLength)
+        if self.recoverOnError {
+          // Do not read past the end of the file.
+          self.actualSize = fileSize - fixed32Size
+          loadFromFile = true
+          needFullWriteback = true
+        }
       }
     }
   }

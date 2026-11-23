@@ -44,7 +44,10 @@ extension MMKVConfiguration.Engine {
     switch self {
     case .cxx: Set(EngineFeature.allCases).subtracting([.encryptionKeyCheck])
     case .swift:
-      [.store, .readOnly, .expiry, .importing, .multiProcess, .encryption, .encryptionKeyCheck]
+      [
+        .store, .readOnly, .expiry, .importing, .multiProcess, .encryption, .encryptionKeyCheck,
+        .integrityFailures
+      ]
     }
   }
 }

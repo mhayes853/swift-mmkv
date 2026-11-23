@@ -1,4 +1,5 @@
 import CSwiftMMKVCore
+import _SwiftMMKVCore
 
 /// The process-wide listeners for ``MMKVStore/IntegrityFailure``.
 enum IntegrityFailureListeners {
@@ -23,23 +24,34 @@ enum IntegrityFailureListeners {
     }
   }
 
+  /// Has both cores report to the listeners.
   private static let installCallback: Void = {
     mmkv_set_integrity_failure_callback { id, kind in
-      let failure = MMKVStore.IntegrityFailure(
-        id: MMKVStore.ID(
-          rawValue: String(
-            decoding: UnsafeRawBufferPointer(start: id.bytes, count: id.count),
-            as: UTF8.self
-          )
-        ),
+      let id = String(
+        decoding: UnsafeRawBufferPointer(start: id.bytes, count: id.count),
+        as: UTF8.self
+      )
+      IntegrityFailureListeners.send(
+        id: id,
         kind: kind == MMKV_INTEGRITY_FAILURE_FILE_LENGTH ? .fileLength : .checksum
       )
-      let listeners = IntegrityFailureListeners.registrations.withLock {
-        Array($0.listeners.values)
-      }
-      for listener in listeners {
-        listener(failure)
-      }
+    }
+    IntegrityFailureReport.setHandler { id, kind in
+      let kind: MMKVStore.IntegrityFailure.Kind =
+        switch kind {
+        case .checksum: .checksum
+        case .fileLength: .fileLength
+        case .wrongEncryptionKey: .wrongEncryptionKey
+        }
+      IntegrityFailureListeners.send(id: id, kind: kind)
     }
   }()
+
+  private static func send(id: String, kind: MMKVStore.IntegrityFailure.Kind) {
+    let failure = MMKVStore.IntegrityFailure(id: MMKVStore.ID(rawValue: id), kind: kind)
+    let listeners = self.registrations.withLock { Array($0.listeners.values) }
+    for listener in listeners {
+      listener(failure)
+    }
+  }
 }
