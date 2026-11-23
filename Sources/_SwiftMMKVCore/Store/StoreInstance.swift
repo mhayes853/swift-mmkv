@@ -38,6 +38,20 @@ package final class StoreInstance: Sendable {
     return result
   }
 
+  /// Loads the files if they are not loaded, and says whether the data, though intact, could not
+  /// be decoded: the store is encrypted with another key than the one it was opened with.
+  package func loadAndCheckForWrongEncryptionKey() -> Bool {
+    self.withState {
+      $0.checkLoadData()
+      return $0.hasUndecodableData
+    }
+  }
+
+  /// Whether the data last loaded was intact but could not be decoded.
+  package var hasUndecodableData: Bool {
+    self.withState { $0.hasUndecodableData }
+  }
+
   /// Called just after an operation that noticed that another process, or another copy of MMKV,
   /// changed the store's files (`onContentChangedByOuterProcess`). The C++ core calls it with its
   /// lock held; this calls it once the lock is released.
@@ -85,6 +99,10 @@ struct StoreState: ~Copyable {
   var needLoadFromFile = true
   var hasFullWriteback = false
   var isSecondLoad = false
+  /// Whether the data last loaded had its checksum but could not be decoded, which means the
+  /// store was opened with the wrong encryption key, or with none. Nothing is written over such
+  /// data except by ``clearAll(keepSpace:)``.
+  var hasUndecodableData = false
 
   var sharedProcessLock: InterProcessLock
   var exclusiveProcessLock: InterProcessLock
@@ -225,6 +243,15 @@ struct StoreState: ~Copyable {
   func checkWritable(function: StaticString = #function) -> Bool {
     if self.isReadOnly {
       Log.warning("[\(self.id)] file readonly", function: function)
+      return false
+    }
+    return true
+  }
+
+  /// Whether the data could be decoded, warning that it could not when it could not.
+  func checkDecodable(function: StaticString = #function) -> Bool {
+    if self.hasUndecodableData {
+      Log.warning("[\(self.id)] wrong encryption key", function: function)
       return false
     }
     return true

@@ -4,18 +4,33 @@ package enum StoreRegistry {
   private static let lock = ThreadLock()
   nonisolated(unsafe) private static var instances = [String: StoreInstance]()
 
+  package enum OpenError: Error {
+    /// The identifier or the directory is empty.
+    case invalidConfiguration
+    /// The store's data is intact but cannot be decoded with the configuration's encryption key,
+    /// or without one.
+    case wrongEncryptionKey
+  }
+
   /// Opens the store described by `configuration`.
   ///
-  /// - Returns: `nil` if the identifier or the directory is empty.
-  package static func open(_ configuration: StoreConfiguration) -> StoreInstance? {
-    guard !configuration.id.isEmpty, !configuration.rootDirectory.isEmpty else { return nil }
+  /// A store opened with an encryption key is loaded straight away, and is not kept open if its
+  /// data cannot be decoded with that key, so that it can be opened again with the right one. A
+  /// store opened without a key is loaded when it is first used, as the C++ core's are.
+  package static func open(_ configuration: StoreConfiguration) throws(OpenError) -> StoreInstance {
+    guard !configuration.id.isEmpty, !configuration.rootDirectory.isEmpty else {
+      throw .invalidConfiguration
+    }
     let root = StorePaths.normalizedRoot(configuration.rootDirectory)
     if !configuration.isReadOnly {
       makeDirectories(root)
     }
-    return Self.lock.withLock {
+    return try Self.lock.withLock { () throws(OpenError) in
       let key = StorePaths.instanceKey(id: configuration.id, root: root)
       if let instance = Self.instances[key] {
+        if instance.hasUndecodableData {
+          throw .wrongEncryptionKey
+        }
         return instance
       }
       if !configuration.isReadOnly {
@@ -35,6 +50,11 @@ package enum StoreRegistry {
         }
       #endif
       let instance = StoreInstance(configuration, root: root)
+      if configuration.encryptionKey?.isEmpty == false,
+        instance.loadAndCheckForWrongEncryptionKey()
+      {
+        throw .wrongEncryptionKey
+      }
       Self.instances[key] = instance
       return instance
     }

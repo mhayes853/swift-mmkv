@@ -3,6 +3,7 @@
 extension StoreState {
   /// Reads the metadata, validates the data, and builds the index (`loadFromFile`).
   mutating func loadFromFile() {
+    self.hasUndecodableData = false
     self.loadMetaInfoAndCheck()
     if self.metaInfo.version >= MetaInfo.Version.randomIV {
       self.crypter?.resetIV(self.metaInfo.vector)
@@ -21,18 +22,28 @@ extension StoreState {
       self.checkDataValid(&loadFromFile, &needFullWriteback)
       let fileSize = self.file.size
       if loadFromFile && self.actualSize > 0 {
+        let didDecode: Bool
         if self.crypter != nil {
           self.dicCrypt.removeAll()
-          self.decodeCrypt(from: 0, size: self.actualSize, greedy: needFullWriteback)
+          didDecode = self.decodeCrypt(from: 0, size: self.actualSize, greedy: needFullWriteback)
         } else {
           let input = UnsafeRawBufferPointer(
             start: self.file.memory! + fixed32Size,
             count: self.actualSize
           )
           self.dic.removeAll()
-          RecordDecoding.decode(input, into: &self.dic, greedy: needFullWriteback)
+          didDecode = RecordDecoding.decode(input, into: &self.dic, greedy: needFullWriteback)
         }
         self.output = OutputState(position: self.actualSize, size: fileSize - fixed32Size)
+        if !didDecode && !needFullWriteback {
+          // The data has the checksum it was written with, so it is what was written, and only
+          // the key it is read with can be wrong. The C++ core carries on with no keys, and its
+          // next write replaces the data.
+          Log.error("[\(self.id)] intact data cannot be decoded: wrong encryption key")
+          self.hasUndecodableData = true
+          self.needLoadFromFile = false
+          return
+        }
         // An encrypted store without a random IV gets one straight away.
         if !needFullWriteback && self.crypter != nil
           && self.metaInfo.version < MetaInfo.Version.randomIV

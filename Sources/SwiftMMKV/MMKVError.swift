@@ -7,6 +7,12 @@ public enum MMKVError: Error, Sendable, Hashable {
   /// The encryption key is empty or longer than its cipher allows.
   case invalidEncryptionKey
 
+  /// The store's file is intact but cannot be read with the configuration's encryption key, or
+  /// without one: it was written with another key. Nothing in the file is changed, and the store
+  /// can be opened again with the right key. If the key is lost, remove the store with
+  /// ``MMKVDirectory/removeStore(id:)`` to start again.
+  case wrongEncryptionKey(id: MMKVStore.ID, directory: MMKVDirectory)
+
   /// The store could not be re-encrypted, for example because it is read-only.
   case rekeyFailed
 

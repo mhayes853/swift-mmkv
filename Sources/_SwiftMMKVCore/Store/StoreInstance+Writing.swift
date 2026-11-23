@@ -267,7 +267,9 @@ extension StoreState {
     key: UnsafeRawBufferPointer,
     isDataHolder: Bool
   ) -> RecordLocation? {
-    guard let entry = self.checkedEntrySize(data, key: key, isDataHolder: isDataHolder) else {
+    guard self.checkDecodable(),
+      let entry = self.checkedEntrySize(data, key: key, isDataHolder: isDataHolder)
+    else {
       return nil
     }
     // Rewriting encrypted data in place would reuse the IV, so an encrypted store appends.
@@ -378,7 +380,7 @@ extension StoreState {
         self.remapIfFileShrunk()
       }
     }
-    guard self.checkFileValid(), self.checkWritable() else { return false }
+    guard self.checkFileValid(), self.checkWritable(), self.checkDecodable() else { return false }
     let maximumActualSize = Int(UInt32.max)
     if newSize > maximumActualSize {
       return false
@@ -482,7 +484,7 @@ extension StoreState {
     if self.hasFullWriteback || self.needLoadFromFile {
       return true
     }
-    guard self.checkFileValid(), self.checkWritable() else { return false }
+    guard self.checkFileValid(), self.checkWritable(), self.checkDecodable() else { return false }
     if self.enableKeyExpire {
       let expiredCount = self.filterExpiredKeys()
       if onlyWhileExpire && expiredCount == 0 {

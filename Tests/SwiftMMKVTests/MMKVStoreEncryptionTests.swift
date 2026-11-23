@@ -73,4 +73,88 @@ import Testing
       try store.rekey(encryption)
     }
   }
+
+  // MMKV keeps a store open for the rest of the process, so each of these opens a copy of an
+  // encrypted store's files, as a later launch of the app would.
+
+  @Test(.requires(.encryptionKeyCheck), arguments: [
+    MMKVConfiguration.Encryption.aes128(key: "another key"),
+    .aes256(key: "the right key")
+  ])
+  func `Opening With The Wrong Key Throws And Leaves The Store As It Was`(
+    wrong: MMKVConfiguration.Encryption
+  ) throws {
+    let (rootDirectory, id) = try self.makeUnopenedEncryptedStore()
+    let files = try self.storeFiles(rootDirectory: rootDirectory, id: id)
+
+    #expect(
+      throws: MMKVError.wrongEncryptionKey(id: id, directory: MMKVDirectory(path: rootDirectory))
+    ) {
+      try makeStore(id: id, rootDirectory: rootDirectory, encryption: wrong)
+    }
+    #expect(try self.storeFiles(rootDirectory: rootDirectory, id: id) == files)
+
+    let store = try makeStore(
+      id: id,
+      rootDirectory: rootDirectory,
+      encryption: .aes128(key: "the right key")
+    )
+    #expect(store.value(forKey: "key", as: String.self) == Self.secret)
+  }
+
+  @Test(.requires(.encryptionKeyCheck))
+  func `A Store Whose Key Is Lost Can Be Removed And Started Again`() throws {
+    let (rootDirectory, id) = try self.makeUnopenedEncryptedStore()
+    let lost = MMKVConfiguration.Encryption.aes128(key: "a new key")
+    #expect(throws: MMKVError.self) {
+      try makeStore(id: id, rootDirectory: rootDirectory, encryption: lost)
+    }
+
+    #expect(try MMKVDirectory(path: rootDirectory).removeStore(id: id))
+    let store = try makeStore(id: id, rootDirectory: rootDirectory, encryption: lost)
+    #expect(store.count == 0)
+    store.set("fresh", forKey: "key")
+    #expect(store.value(forKey: "key", as: String.self) == "fresh")
+  }
+
+  @Test(.requires(.encryptionKeyCheck))
+  func `An Encrypted Store Opened Without Its Key Refuses Writes`() throws {
+    let (rootDirectory, id) = try self.makeUnopenedEncryptedStore()
+    let files = try self.storeFiles(rootDirectory: rootDirectory, id: id)
+
+    // A store with no key loads its file when it is first used.
+    let store = try makeStore(id: id, rootDirectory: rootDirectory)
+    #expect(store.count == 0)
+    #expect(!store.set("value", forKey: "other"))
+    store.trim()
+    #expect(throws: MMKVError.rekeyFailed) {
+      try store.rekey(.aes128(key: "another key"))
+    }
+    store.sync()
+    #expect(try self.storeFiles(rootDirectory: rootDirectory, id: id) == files)
+    #expect(throws: MMKVError.self) { try makeStore(id: id, rootDirectory: rootDirectory) }
+
+    store.removeAll()
+    store.set("fresh", forKey: "key")
+    #expect(store.value(forKey: "key", as: String.self) == "fresh")
+  }
+
+  /// The files of a store encrypted with "the right key" that this process has not opened.
+  private func makeUnopenedEncryptedStore() throws -> (rootDirectory: String, id: MMKVStore.ID) {
+    let rootDirectory = temporaryRootDirectory()
+    let source = try makeStore(
+      id: "source",
+      rootDirectory: rootDirectory,
+      encryption: .aes128(key: "the right key")
+    )
+    source.set(Self.secret, forKey: "key")
+    source.set(42.0, forKey: "number")
+    source.sync()
+    try copyStoreFiles(id: "source", to: "copy", in: rootDirectory)
+    return (rootDirectory, "copy")
+  }
+
+  private func storeFiles(rootDirectory: String, id: MMKVStore.ID) throws -> [Data] {
+    try ["", ".crc"].map { try Data(contentsOf: URL(fileURLWithPath: "\(rootDirectory)/\(id)\($0)")) }
+  }
 }

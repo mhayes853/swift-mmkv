@@ -133,21 +133,27 @@ extension StoreState {
   /// `CodedInputDataCrypt` does, rather than all at once into memory of its own.
   ///
   /// - Parameter greedy: Whether to keep what was decoded before an error.
-  mutating func decodeCrypt(from position: Int, size: Int, greedy: Bool) {
-    guard let memory = self.file.memory, let crypter = self.crypter else { return }
+  ///
+  /// - Returns: Whether everything decoded.
+  @discardableResult
+  mutating func decodeCrypt(from position: Int, size: Int, greedy: Bool) -> Bool {
+    guard let memory = self.file.memory, let crypter = self.crypter else { return false }
     let ciphertext = UnsafeRawBufferPointer(start: memory + fixed32Size, count: size)
     var reader = DecryptingReader(ciphertext: ciphertext, position: position, decrypter: crypter)
+    let didDecode: Bool
     if greedy {
-      _ = Self.decodeCryptRecords(&reader, into: &self.dicCrypt)
+      didDecode = Self.decodeCryptRecords(&reader, into: &self.dicCrypt)
     } else {
       var decoded = CryptIndex()
-      if Self.decodeCryptRecords(&reader, into: &decoded) {
+      didDecode = Self.decodeCryptRecords(&reader, into: &decoded)
+      if didDecode {
         self.dicCrypt = decoded
       }
     }
     self.dicCrypt.shrinkArenaToFit()
     // The store goes on appending where the data ends, whether or not all of it decoded.
     self.crypter = reader.decrypterAtEnd()
+    return didDecode
   }
 
   private static func decodeCryptRecords(
@@ -379,7 +385,7 @@ extension StoreState {
     self.lockProcess(.exclusive)
     defer { self.unlockProcess(.exclusive) }
     self.checkLoadData(checkingFileSize: true)
-    guard self.checkFileValid() else { return false }
+    guard self.checkFileValid(), self.checkDecodable() else { return false }
     // The store's cryptor once re-encrypted, or `nil` for plain text.
     let newCrypter: AESCryptor?
     if let crypter = self.crypter {

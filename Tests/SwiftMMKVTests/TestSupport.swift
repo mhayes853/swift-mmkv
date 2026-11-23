@@ -32,6 +32,8 @@ enum EngineFeature: String, CaseIterable, CustomStringConvertible {
   case logging
   /// Reporting files that fail their integrity check as they load.
   case integrityFailures
+  /// Refusing to open, or to write over, a store whose encryption key is wrong.
+  case encryptionKeyCheck
 
   var description: String { self.rawValue }
 }
@@ -40,8 +42,9 @@ extension MMKVConfiguration.Engine {
   /// The features this engine has so far.
   var features: Set<EngineFeature> {
     switch self {
-    case .cxx: Set(EngineFeature.allCases)
-    case .swift: [.store, .readOnly, .expiry, .importing, .multiProcess, .encryption]
+    case .cxx: Set(EngineFeature.allCases).subtracting([.encryptionKeyCheck])
+    case .swift:
+      [.store, .readOnly, .expiry, .importing, .multiProcess, .encryption, .encryptionKeyCheck]
     }
   }
 }
