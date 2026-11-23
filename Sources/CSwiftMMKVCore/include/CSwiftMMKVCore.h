@@ -16,12 +16,13 @@ extern "C" {
 #endif
 
 // React Native apps link their own copy of MMKV, and other libraries are free to pick the same
-// short names used here. Each function therefore links under a `swiftmmkv_` symbol, whatever it
-// is called in source.
+// short names used here. Each function therefore links under a `swiftmmkv_core_` symbol, whatever
+// it is called in source. The plain `swiftmmkv_` prefix belongs to the package's public C
+// interface.
 #define CSWIFTMMKV_STRINGIFY_(x) #x
 #define CSWIFTMMKV_STRINGIFY(x) CSWIFTMMKV_STRINGIFY_(x)
 #define CSWIFTMMKV_SYMBOL(name) \
-  __asm__(CSWIFTMMKV_STRINGIFY(__USER_LABEL_PREFIX__) "swiftmmkv_" #name)
+  __asm__(CSWIFTMMKV_STRINGIFY(__USER_LABEL_PREFIX__) "swiftmmkv_core_" #name)
 
 /// An MMKV instance. Instances are owned by the core and live for the rest of the process.
 typedef struct mmkv_store mmkv_store;
