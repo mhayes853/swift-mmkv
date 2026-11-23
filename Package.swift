@@ -93,10 +93,23 @@ let libraryTarget: Target = .target(
 // `Foundation` trait never links more than the package uses.
 let foundationTarget: Target = .target(name: "_SwiftMMKVFoundation")
 
+// The header of the package's C interface, which other languages bind to. It is a target of its
+// own because the Swift that implements it has to import it.
+let cInterfaceHeaderTarget: Target = .target(name: "CSwiftMMKV")
+
+// Implements `swiftmmkv.h` with `@c @implementation`, so the compiler checks every function here
+// against its declaration in the header.
+let cInterfaceTarget: Target = .target(
+  name: "SwiftMMKVC",
+  dependencies: ["CSwiftMMKV", "SwiftMMKV"]
+)
+
 let testTarget: Target = .testTarget(
   name: "SwiftMMKVTests",
   dependencies: [
     "SwiftMMKV",
+    "CSwiftMMKV",
+    "SwiftMMKVC",
     .target(name: "_SwiftMMKVFoundation", condition: .when(traits: ["Foundation"])),
     .product(name: "Sharing", package: "swift-sharing", condition: .when(traits: ["Sharing"])),
     .product(
@@ -128,7 +141,8 @@ let package = Package(
     .visionOS(.v1)
   ],
   products: [
-    .library(name: "SwiftMMKV", targets: ["SwiftMMKV"])
+    .library(name: "SwiftMMKV", targets: ["SwiftMMKV"]),
+    .library(name: "SwiftMMKVC", targets: ["SwiftMMKVC"])
   ],
   traits: [
     .default(enabledTraits: ["Foundation"]),
@@ -169,7 +183,14 @@ let package = Package(
     .package(url: "https://github.com/mhayes853/swift-uuidv7", from: "0.6.2"),
     .package(url: "https://github.com/pointfreeco/swift-tagged", from: "0.10.0")
   ],
-  targets: [coreTarget, foundationTarget, libraryTarget, testTarget],
+  targets: [
+    coreTarget,
+    foundationTarget,
+    libraryTarget,
+    cInterfaceHeaderTarget,
+    cInterfaceTarget,
+    testTarget
+  ],
   swiftLanguageModes: [.v6],
   cxxLanguageStandard: .cxx20
 )
