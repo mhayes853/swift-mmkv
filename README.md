@@ -418,6 +418,45 @@ destination already has. The two stores may differ in mode and encryption:
 let imported = store.importAll(from: legacyStore)
 ```
 
+### Backups
+
+A store is backed up by copying its files into another directory, and restored by copying them
+back:
+
+```swift
+let backups = MMKVDirectory(path: documentsPath + "/mmkv-backup")
+
+try store.backUp(to: backups)
+try store.restore(from: backups)  // false if the backup has no copy of this store
+```
+
+`MMKVDirectory` does the same for a store by identifier, whether or not it is open, and for
+every store in a directory:
+
+```swift
+try directory.backUpStore(id: "settings", to: backups)
+try directory.restoreStore(id: "settings", from: backups)
+
+try directory.backUpAllStores(to: backups)
+try directory.restoreAllStores(from: backups)
+```
+
+- A backup is a directory of stores like any other, so its stores can be listed, opened to look
+  at what they hold, and removed. A backup cannot replace a copy that this process has open.
+- The store's locks are held while its files are copied, so a backup holds every write that
+  returned before it began, whichever process made it.
+- Restoring an open store reloads it. Every `MMKVStore` over it reads the restored values, and
+  its listeners receive `.external`.
+- A restore overwrites the store's file in place, because other processes may have it open, so it
+  is not atomic. If the process stops partway, the store's `recovery` setting decides what the
+  next open makes of the file.
+- A copy that does not match its checksum is not restored, and `MMKVError.backupInvalid` is
+  thrown. `isStoreValid(id:)` makes the same check on any store without opening it.
+- Files are copied as they are. The backup of an encrypted store is encrypted with the same key,
+  and restores into a store opened with that key.
+- A read-only store cannot be restored, and a suspended store can be neither backed up nor
+  restored.
+
 ## Change listeners
 
 ```swift
@@ -873,7 +912,6 @@ either way. The trait does not need the `Foundation` trait.
 - On iOS the store's files keep the default file protection. Upstream's Objective-C++ build
   relaxes it to "until first user authentication" so a store can be read while the device is
   locked; this package builds the core's POSIX variant, which does not.
-- Backup and restore are not implemented yet.
 
 ## The vendored core
 

@@ -711,3 +711,45 @@ extension MMKVStore {
     self.currentConfiguration.withLock { $0.encryption = encryption }
   }
 }
+
+// MARK: - Backups
+
+extension MMKVStore {
+  /// Copies the store's files into `backup`, replacing a copy that is already there.
+  ///
+  /// ```swift
+  /// let backups = MMKVDirectory(path: documentsPath + "/mmkv-backup")
+  /// try store.backUp(to: backups)
+  /// ```
+  ///
+  /// See ``MMKVDirectory/backUpStore(id:to:)``.
+  ///
+  /// - Throws: ``MMKVError/backupFailed(id:directory:backup:)`` if the files could not be
+  ///   copied, ``MMKVError/storeIsOpen(id:directory:)`` if this process has the copy in `backup`
+  ///   open, ``MMKVError/storeIsSuspended(id:)`` if the store is suspended, or
+  ///   ``MMKVError/backupIsStoreDirectory(_:)`` if `backup` is the store's directory.
+  public func backUp(to backup: MMKVDirectory) throws(MMKVError) {
+    let configuration = self.configuration
+    guard try configuration.directory.backUpStore(id: configuration.id, to: backup) else {
+      throw .backupFailed(id: configuration.id, directory: configuration.directory, backup: backup)
+    }
+  }
+
+  /// Replaces the store's contents with those of its copy in `backup`.
+  ///
+  /// Every ``MMKVStore`` over the same files reads the restored values afterwards, and the
+  /// store's listeners receive ``Change/external``. See
+  /// ``MMKVDirectory/restoreStore(id:from:)``.
+  ///
+  /// - Returns: Whether `backup` held a copy of the store.
+  /// - Throws: ``MMKVError/backupInvalid(id:backup:)`` if the copy does not match its
+  ///   checksum, ``MMKVError/restoreFailed(id:directory:backup:)`` if the store could not be
+  ///   overwritten, which includes a read-only store, ``MMKVError/storeIsSuspended(id:)`` if
+  ///   the store is suspended, or ``MMKVError/backupIsStoreDirectory(_:)`` if `backup` is the
+  ///   store's directory.
+  @discardableResult
+  public func restore(from backup: MMKVDirectory) throws(MMKVError) -> Bool {
+    let configuration = self.configuration
+    return try configuration.directory.restoreStore(id: configuration.id, from: backup)
+  }
+}

@@ -110,6 +110,24 @@ bool mmkv_storage_exists(mmkv_bytes id, mmkv_bytes root_directory)
 /// The core frees the store's instance if it is open, so the caller must know that it is not.
 bool mmkv_remove_storage(mmkv_bytes id, mmkv_bytes root_directory)
   CSWIFTMMKV_SYMBOL(remove_storage);
+/// Whether the checksum the store's `.crc` file records matches its data file. The result means
+/// nothing for a store whose files do not exist.
+bool mmkv_storage_is_valid(mmkv_bytes id, mmkv_bytes root_directory)
+  CSWIFTMMKV_SYMBOL(storage_is_valid);
+/// Copies a store's files into `backup_directory` while holding its locks, flushing it first if
+/// it is open.
+bool mmkv_backup_storage(mmkv_bytes id, mmkv_bytes root_directory, mmkv_bytes backup_directory)
+  CSWIFTMMKV_SYMBOL(backup_storage);
+/// Overwrites a store's files with those in `backup_directory` while holding its locks, and
+/// reloads the store if it is open.
+bool mmkv_restore_storage(mmkv_bytes id, mmkv_bytes root_directory, mmkv_bytes backup_directory)
+  CSWIFTMMKV_SYMBOL(restore_storage);
+/// Backs up every store in `root_directory`, and returns how many were copied.
+size_t mmkv_backup_all_storage(mmkv_bytes root_directory, mmkv_bytes backup_directory)
+  CSWIFTMMKV_SYMBOL(backup_all_storage);
+/// Restores every store in `backup_directory`, and returns how many were copied.
+size_t mmkv_restore_all_storage(mmkv_bytes root_directory, mmkv_bytes backup_directory)
+  CSWIFTMMKV_SYMBOL(restore_all_storage);
 /// Calls `callback` once with the absolute, normalized path the core uses for `root_directory`.
 void mmkv_resolve_directory(
   mmkv_bytes root_directory, void *_Nullable context, mmkv_bytes_callback _Nonnull callback)

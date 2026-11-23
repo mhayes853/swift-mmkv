@@ -127,6 +127,11 @@ extension MMKVStoreState {
     }
   }
 
+  /// The state of the instance whose pointer has these bits, if a store has been made over it.
+  static func existing(forHandle handle: UInt) -> MMKVStoreState? {
+    Self.all.withLock { $0[handle] }
+  }
+
   // The core reports a change by store identifier alone, so every state with that identifier is
   // marked. Stores with the same identifier in different directories are over-notified, which
   // only costs a spurious `.external`.
