@@ -757,12 +757,14 @@ extension StoreState {
     }
     // An encrypted store starts a new stream.
     let newIV = self.crypter != nil ? AESCryptor.randomIV() : nil
+    self.crypter?.resetIV(newIV)
+    // The metadata says the store is empty before the file shrinks. The C++ core shrinks first,
+    // and a process that stops in between leaves metadata describing data that is gone.
+    self.writeActualSize(0, crcDigest: 0, iv: newIV, increaseSequence: true)
+    self.metaFile.msync(synchronously: true)
     if !keepSpace {
       self.file.truncate(to: self.expectedCapacity)
     }
-    self.crypter?.resetIV(newIV)
-    self.writeActualSize(0, crcDigest: 0, iv: newIV, increaseSequence: true)
-    self.metaFile.msync(synchronously: true)
     self.clearMemoryCache(keepSpace: keepSpace)
     self.loadFromFile()
   }

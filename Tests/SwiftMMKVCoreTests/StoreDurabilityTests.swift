@@ -73,6 +73,33 @@ import Testing
     #expect(Set(store.keys) == Set(names).subtracting(removed))
     #expect(removed.allSatisfy { !store.contains($0) })
   }
+
+  @Test func `Clearing Records The Empty Store Before The File Shrinks`() throws {
+    let root = temporaryDirectory()
+    // The size of the data that the metadata recorded each time the data file was resized.
+    let recordedSizes = LockedValue([UInt32]())
+    var fileSystem = FileSystem.live
+    fileSystem.ftruncate = { descriptor, size in
+      if let meta = try? readFile(atPath: "\(root)/store.crc"), meta.count >= MetaInfo.size {
+        let info = meta.withUnsafeBytes { MetaInfo(reading: $0.baseAddress!) }
+        recordedSizes.set(recordedSizes.get() + [info.actualSize])
+      }
+      return FileSystem.live.ftruncate(descriptor, size)
+    }
+    let store = makeStore(root: root, isMultiProcess: false, fileSystem: fileSystem)
+    let value = [UInt8](repeating: 1, count: 1_000)
+    for index in 0..<100 {
+      _ = value.withUnsafeBytes {
+        store.set(.bytes($0), forKey: "key-\(index)", expiresInSeconds: 0)
+      }
+    }
+    #expect(store.totalSize > pageSize)
+
+    recordedSizes.set([])
+    store.clearAll()
+    #expect(store.totalSize == pageSize)
+    #expect(recordedSizes.get() == [0])
+  }
 }
 
 private func makeStore(
