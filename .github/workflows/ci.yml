@@ -109,10 +109,12 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      # With more than one product, Xcode names the scheme that builds and tests all of them
+      # after the package, with this suffix.
       - name: Test
         run: |
           xcodebuild test \
-            -scheme swift-mmkv \
+            -scheme swift-mmkv-Package \
             -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
 
   build-android:
