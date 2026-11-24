@@ -12,7 +12,7 @@ import Testing
   }
 
   @Test func `Every Status Has A Message Of Its Own`() {
-    let statuses = SWIFTMMKV_OK...SWIFTMMKV_APP_GROUP_CONTAINER_UNAVAILABLE
+    let statuses = SWIFTMMKV_OK...SWIFTMMKV_DISABLE_EXPIRY_FAILED
     let messages = statuses.map { String(cString: swiftmmkv_status_message($0)) }
     let unknown = String(cString: swiftmmkv_status_message(9999))
 
@@ -432,9 +432,12 @@ import Testing
     let store = try CStore()
     defer { store.close() }
     let payload: [UInt8] = [1, 2, 3]
+    let later = swiftmmkv_expiry_after(60)
 
-    #expect(swiftmmkv_store_set_bytes(store.handle, "payload", payload, payload.count, 60) == true)
-    #expect(swiftmmkv_store_set_string(store.handle, "text", "blob", 60) == true)
+    #expect(
+      swiftmmkv_store_set_bytes(store.handle, "payload", payload, payload.count, later) == true
+    )
+    #expect(swiftmmkv_store_set_string(store.handle, "text", "blob", later) == true)
 
     #expect(store.bytes(forKey: "payload") == payload)
     #expect(store.string(forKey: "text") == "blob")
@@ -533,18 +536,19 @@ import Testing
     let store = try CStore()
     defer { store.close() }
     let bytes: [UInt8] = [1, 2, 3]
+    let soon = swiftmmkv_expiry_after(1)
 
     #expect(swiftmmkv_store_set_string(store.handle, "kept", "kept", 0) == true)
-    #expect(swiftmmkv_store_set_bool(store.handle, "bool", true, 1) == true)
-    #expect(swiftmmkv_store_set_int32(store.handle, "int32", 1, 1) == true)
-    #expect(swiftmmkv_store_set_uint32(store.handle, "uint32", 1, 1) == true)
-    #expect(swiftmmkv_store_set_int64(store.handle, "int64", 1, 1) == true)
-    #expect(swiftmmkv_store_set_uint64(store.handle, "uint64", 1, 1) == true)
-    #expect(swiftmmkv_store_set_float(store.handle, "float", 1, 1) == true)
-    #expect(swiftmmkv_store_set_double(store.handle, "double", 1, 1) == true)
-    #expect(swiftmmkv_store_set_string(store.handle, "string", "abc", 1) == true)
-    #expect(swiftmmkv_store_set_bytes(store.handle, "bytes", bytes, bytes.count, 1) == true)
-    #expect(swiftmmkv_store_set_strings(store.handle, "strings", "a", 2, 1) == true)
+    #expect(swiftmmkv_store_set_bool(store.handle, "bool", true, soon) == true)
+    #expect(swiftmmkv_store_set_int32(store.handle, "int32", 1, soon) == true)
+    #expect(swiftmmkv_store_set_uint32(store.handle, "uint32", 1, soon) == true)
+    #expect(swiftmmkv_store_set_int64(store.handle, "int64", 1, soon) == true)
+    #expect(swiftmmkv_store_set_uint64(store.handle, "uint64", 1, soon) == true)
+    #expect(swiftmmkv_store_set_float(store.handle, "float", 1, soon) == true)
+    #expect(swiftmmkv_store_set_double(store.handle, "double", 1, soon) == true)
+    #expect(swiftmmkv_store_set_string(store.handle, "string", "abc", soon) == true)
+    #expect(swiftmmkv_store_set_bytes(store.handle, "bytes", bytes, bytes.count, soon) == true)
+    #expect(swiftmmkv_store_set_strings(store.handle, "strings", "a", 2, soon) == true)
     #expect(swiftmmkv_store_count(store.handle) == 11)
 
     try await Task.sleep(for: .seconds(2.1))
@@ -558,6 +562,171 @@ import Testing
     swiftmmkv_configuration_destroy(nil)
     swiftmmkv_store_close(nil)
     swiftmmkv_subscription_cancel(nil)
+  }
+
+  // MARK: - Expiry
+
+  @Test func `A Zeroed Expiry Is The Store's Default`() {
+    #expect(SWIFTMMKV_EXPIRY_DEFAULT == 0)
+    #expect(swiftmmkv_expiry_never() != SWIFTMMKV_EXPIRY_DEFAULT)
+    #expect(swiftmmkv_expiry_after(0) != SWIFTMMKV_EXPIRY_DEFAULT)
+    #expect(swiftmmkv_expiry_at(0) != SWIFTMMKV_EXPIRY_DEFAULT)
+    #expect(swiftmmkv_expiry_after(30) != swiftmmkv_expiry_at(30))
+    #expect(swiftmmkv_expiry_after(30) == swiftmmkv_expiry_after(30))
+  }
+
+  @Test func `A Store Keeps Its Values Until They Are Removed By Default`() throws {
+    let store = try CStore()
+    defer { store.close() }
+
+    #expect(
+      swiftmmkv_store_set_bool(store.handle, "default", true, SWIFTMMKV_EXPIRY_DEFAULT) == true
+    )
+    #expect(swiftmmkv_store_set_bool(store.handle, "never", true, swiftmmkv_expiry_never()) == true)
+
+    #expect(swiftmmkv_store_is_expiry_enabled(store.handle) == false)
+  }
+
+  @Test func `Values Expire After A Duration Or At A Moment`() async throws {
+    let store = try CStore()
+    defer { store.close() }
+    let now = Date().timeIntervalSince1970
+
+    #expect(swiftmmkv_store_set_bool(store.handle, "kept", true, swiftmmkv_expiry_never()) == true)
+    #expect(
+      swiftmmkv_store_set_bool(store.handle, "later", true, swiftmmkv_expiry_at(now + 3600)) == true
+    )
+    #expect(
+      swiftmmkv_store_set_bool(store.handle, "after", true, swiftmmkv_expiry_after(1)) == true
+    )
+    #expect(
+      swiftmmkv_store_set_bool(store.handle, "at", true, swiftmmkv_expiry_at(now + 1)) == true
+    )
+    #expect(swiftmmkv_store_is_expiry_enabled(store.handle) == true)
+    #expect(store.keys().sorted() == ["after", "at", "kept", "later"])
+
+    try await Task.sleep(for: .seconds(3.1))
+
+    #expect(store.keys().sorted() == ["kept", "later"])
+  }
+
+  @Test func `The Shortest Expiry Is One Second`() throws {
+    let store = try CStore()
+    defer { store.close() }
+
+    #expect(swiftmmkv_store_set_bool(store.handle, "none", true, swiftmmkv_expiry_after(0)) == true)
+    #expect(
+      swiftmmkv_store_set_bool(store.handle, "less", true, swiftmmkv_expiry_after(-5)) == true
+    )
+    #expect(swiftmmkv_store_set_bool(store.handle, "past", true, swiftmmkv_expiry_at(0)) == true)
+    #expect(
+      swiftmmkv_store_set_bool(store.handle, "never", true, swiftmmkv_expiry_at(-.infinity)) == true
+    )
+
+    #expect(swiftmmkv_store_is_expiry_enabled(store.handle) == true)
+    #expect(store.keys().sorted() == ["less", "never", "none", "past"])
+  }
+
+  @Test func `An Expiry Later Than MMKV Can Record Is Never`() throws {
+    let store = try CStore()
+    defer { store.close() }
+    let far = [
+      swiftmmkv_expiry_after(.infinity), swiftmmkv_expiry_at(.infinity),
+      swiftmmkv_expiry_after(1e300), swiftmmkv_expiry_at(1e12)
+    ]
+
+    for expiry in far {
+      #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, expiry) == true)
+    }
+
+    #expect(swiftmmkv_store_is_expiry_enabled(store.handle) == false)
+  }
+
+  @Test func `A Write With An Expiry No Function Made Stores Nothing`() throws {
+    let store = try CStore()
+    defer { store.close() }
+    let bytes: [UInt8] = [1]
+
+    for expiry in [1, 42, .max, swiftmmkv_expiry_after(.nan), swiftmmkv_expiry_at(.nan)] {
+      #expect(swiftmmkv_store_set_bool(store.handle, "bool", true, expiry) == false)
+      #expect(swiftmmkv_store_set_string(store.handle, "string", "blob", expiry) == false)
+      #expect(swiftmmkv_store_set_bytes(store.handle, "bytes", bytes, 1, expiry) == false)
+      #expect(swiftmmkv_store_set_strings(store.handle, "strings", "a", 2, expiry) == false)
+    }
+
+    #expect(swiftmmkv_store_count(store.handle) == 0)
+  }
+
+  @Test func `A Store's Default Expiry Applies To Writes That Name None`() async throws {
+    let store = try CStore {
+      swiftmmkv_configuration_set_default_expiry($0, swiftmmkv_expiry_after(1))
+    }
+    defer { store.close() }
+
+    #expect(swiftmmkv_store_set_bool(store.handle, "default", true, 0) == true)
+    #expect(swiftmmkv_store_set_bool(store.handle, "kept", true, swiftmmkv_expiry_never()) == true)
+    #expect(
+      swiftmmkv_store_set_bool(store.handle, "later", true, swiftmmkv_expiry_after(3600)) == true
+    )
+    #expect(store.keys().sorted() == ["default", "kept", "later"])
+
+    try await Task.sleep(for: .seconds(2.1))
+
+    #expect(store.keys().sorted() == ["kept", "later"])
+  }
+
+  @Test func `A Default Expiry That Is Not An Expiry Fails The Open`() {
+    for expiry in [SWIFTMMKV_EXPIRY_DEFAULT, 42, swiftmmkv_expiry_after(.nan)] {
+      #expect(throws: CStatusError(status: SWIFTMMKV_INVALID_ARGUMENT)) {
+        try CStore { swiftmmkv_configuration_set_default_expiry($0, expiry) }
+      }
+    }
+  }
+
+  @Test func `A Default Expiry Can Be Replaced Before Opening`() throws {
+    let store = try CStore {
+      swiftmmkv_configuration_set_default_expiry($0, 42)
+      swiftmmkv_configuration_set_default_expiry($0, swiftmmkv_expiry_never())
+    }
+    defer { store.close() }
+
+    #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == true)
+    #expect(swiftmmkv_store_is_expiry_enabled(store.handle) == false)
+  }
+
+  @Test func `Disabling Expiry Keeps Every Value That Has Not Expired`() throws {
+    let store = try CStore()
+    defer { store.close() }
+    #expect(swiftmmkv_store_set_bool(store.handle, "kept", true, 0) == true)
+    #expect(
+      swiftmmkv_store_set_bool(store.handle, "later", true, swiftmmkv_expiry_after(60)) == true
+    )
+    #expect(swiftmmkv_store_is_expiry_enabled(store.handle) == true)
+
+    #expect(swiftmmkv_store_disable_expiry(store.handle) == SWIFTMMKV_OK)
+
+    #expect(swiftmmkv_store_is_expiry_enabled(store.handle) == false)
+    #expect(store.keys().sorted() == ["kept", "later"])
+    #expect(swiftmmkv_store_disable_expiry(store.handle) == SWIFTMMKV_OK)
+  }
+
+  @Test func `A Read Only Store Cannot Have Its Expiry Disabled`() throws {
+    // The copy in the backup has never been opened for writing in this process.
+    let backup = temporaryRootDirectory()
+    let writer = try CStore(id: "expiring")
+    defer { writer.close() }
+    #expect(
+      swiftmmkv_store_set_bool(writer.handle, "flag", true, swiftmmkv_expiry_after(60)) == true
+    )
+    #expect(swiftmmkv_store_back_up(writer.handle, backup) == SWIFTMMKV_OK)
+    let store = try CStore(id: "expiring", directory: backup) {
+      swiftmmkv_configuration_set_read_only($0, true)
+    }
+    defer { store.close() }
+
+    #expect(swiftmmkv_store_is_expiry_enabled(store.handle) == true)
+    #expect(swiftmmkv_store_disable_expiry(store.handle) == SWIFTMMKV_DISABLE_EXPIRY_FAILED)
+    #expect(swiftmmkv_store_is_expiry_enabled(store.handle) == true)
   }
 
   // MARK: - Keys And Removal
@@ -809,6 +978,8 @@ import Testing
       swiftmmkv_store_back_up(store.handle, temporaryRootDirectory())
         == SWIFTMMKV_STORE_IS_SUSPENDED
     )
+    #expect(swiftmmkv_store_disable_expiry(store.handle) == SWIFTMMKV_STORE_IS_SUSPENDED)
+    #expect(swiftmmkv_store_is_expiry_enabled(store.handle) == false)
 
     swiftmmkv_store_resume(store.handle)
 

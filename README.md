@@ -978,7 +978,8 @@ if (status != SWIFTMMKV_OK) {
   return;
 }
 
-swiftmmkv_store_set_string(store, "username", "blob", 0);
+swiftmmkv_store_set_string(store, "username", "blob", SWIFTMMKV_EXPIRY_DEFAULT);
+swiftmmkv_store_set_string(store, "otp", "123456", swiftmmkv_expiry_after(30));
 
 char username[64];
 size_t length = 0;

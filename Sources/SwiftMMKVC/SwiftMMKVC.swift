@@ -63,11 +63,6 @@ private func makeStrings(_ strings: UnsafePointer<CChar>?, _ size: Int) -> [Stri
   return result
 }
 
-/// The expiry of a C write, where zero seconds means never.
-private func makeExpiry(_ seconds: UInt32) -> Duration? {
-  seconds == 0 ? nil : .seconds(Int64(seconds))
-}
-
 private func makeMode(_ mode: swiftmmkv_mode) -> MMKVConfiguration.Mode? {
   switch mode {
   case SWIFTMMKV_MODE_SINGLE_PROCESS: .singleProcess
@@ -99,6 +94,62 @@ private func makeEncryption(
   case SWIFTMMKV_ENCRYPTION_AES256: .aes256(key: key)
   default: nil
   }
+}
+
+// MARK: - Expiry
+
+// A `swiftmmkv_expiry` holds one of the cases below in its top four bits, and a number of
+// seconds in the sixty under them. Zero is the store's default, as the header promises.
+
+private enum ExpiryCase: UInt64 {
+  case never = 1
+  case after = 2
+  case at = 3
+}
+
+private let expirySecondsBits: UInt64 = 60
+
+/// An expiry with `seconds` rounded up to a whole one, or one that is no expiry at all if
+/// `seconds` is not a number.
+private func makeExpiry(_ expiryCase: ExpiryCase, _ seconds: Double = 0) -> swiftmmkv_expiry {
+  guard !seconds.isNaN else { return .max }
+  // More seconds than fit are more than MMKV can record either way.
+  let limit = Double(Int64(1) << (expirySecondsBits - 2))
+  let whole = Int64(min(max(seconds.rounded(.up), -limit), limit))
+  return expiryCase.rawValue << expirySecondsBits
+    | UInt64(bitPattern: whole) & (1 << expirySecondsBits - 1)
+}
+
+/// What a C expiry stands for.
+///
+/// - Returns: The expiry, an inner `nil` for the store's default, or an outer one if no
+///   function of the interface made `expiry`.
+private func makeExpiry(_ expiry: swiftmmkv_expiry) -> MMKVExpiry?? {
+  guard expiry != SWIFTMMKV_EXPIRY_DEFAULT else { return .some(nil) }
+  // Shifting up and back down again extends the sign of the seconds.
+  let unused = UInt64(64) - expirySecondsBits
+  let seconds = Int64(bitPattern: expiry << unused) >> Int64(unused)
+  return switch ExpiryCase(rawValue: expiry >> expirySecondsBits) {
+  case .never: seconds == 0 ? MMKVExpiry.never : nil
+  case .after: .after(.seconds(seconds))
+  case .at: .at(secondsSince1970: seconds)
+  case nil: nil
+  }
+}
+
+@c @implementation
+public func swiftmmkv_expiry_never() -> swiftmmkv_expiry {
+  makeExpiry(.never)
+}
+
+@c @implementation
+public func swiftmmkv_expiry_after(_ seconds: Double) -> swiftmmkv_expiry {
+  makeExpiry(.after, seconds)
+}
+
+@c @implementation
+public func swiftmmkv_expiry_at(_ secondsSince1970: Double) -> swiftmmkv_expiry {
+  makeExpiry(.at, secondsSince1970)
 }
 
 // MARK: - Buffers
@@ -155,6 +206,7 @@ private func status<T>(
     case .backupInvalid: SWIFTMMKV_BACKUP_INVALID
     case .backupIsStoreDirectory: SWIFTMMKV_BACKUP_IS_STORE_DIRECTORY
     case .storeIsSuspended: SWIFTMMKV_STORE_IS_SUSPENDED
+    case .disableExpiryFailed: SWIFTMMKV_DISABLE_EXPIRY_FAILED
     }
   }
 }
@@ -185,6 +237,8 @@ public func swiftmmkv_status_message(_ status: swiftmmkv_status) -> UnsafePointe
     case SWIFTMMKV_WRITE_FAILED: "The store did not accept a write."
     case SWIFTMMKV_APP_GROUP_CONTAINER_UNAVAILABLE:
       "The app group has no container this process can reach."
+    case SWIFTMMKV_DISABLE_EXPIRY_FAILED:
+      "The store's file could not be rewritten without its expiries."
     default: "An unknown status."
     }
   // A static string's bytes are NUL-terminated and live for the rest of the process.
@@ -315,6 +369,15 @@ public func swiftmmkv_configuration_set_item_size_limit(
   configuration.configuration.value.itemSizeLimit = bytes == 0 ? nil : bytes
 }
 
+@c @implementation
+public func swiftmmkv_configuration_set_default_expiry(
+  _ configuration: OpaquePointer,
+  _ expiry: swiftmmkv_expiry
+) {
+  // The store's default is not an expiry that a store can have for its default.
+  configuration.configuration.set(\.defaultExpiry, to: makeExpiry(expiry).flatMap { $0 })
+}
+
 // MARK: - Stores
 
 @c @implementation
@@ -340,9 +403,10 @@ private func set(
   _ value: some MMKVValue,
   _ store: OpaquePointer,
   _ key: UnsafePointer<CChar>,
-  _ expiresInSeconds: UInt32
+  _ expiry: swiftmmkv_expiry
 ) -> Bool {
-  store.store.set(value, forKey: String(cString: key), expiringIn: makeExpiry(expiresInSeconds))
+  guard let expiry = makeExpiry(expiry) else { return false }
+  return store.store.set(value, forKey: String(cString: key), expiry: expiry)
 }
 
 @c @implementation
@@ -350,9 +414,9 @@ public func swiftmmkv_store_set_bool(
   _ store: OpaquePointer,
   _ key: UnsafePointer<CChar>,
   _ value: Bool,
-  _ expiresInSeconds: UInt32
+  _ expiry: swiftmmkv_expiry
 ) -> Bool {
-  set(value, store, key, expiresInSeconds)
+  set(value, store, key, expiry)
 }
 
 @c @implementation
@@ -360,9 +424,9 @@ public func swiftmmkv_store_set_int32(
   _ store: OpaquePointer,
   _ key: UnsafePointer<CChar>,
   _ value: Int32,
-  _ expiresInSeconds: UInt32
+  _ expiry: swiftmmkv_expiry
 ) -> Bool {
-  set(value, store, key, expiresInSeconds)
+  set(value, store, key, expiry)
 }
 
 @c @implementation
@@ -370,9 +434,9 @@ public func swiftmmkv_store_set_uint32(
   _ store: OpaquePointer,
   _ key: UnsafePointer<CChar>,
   _ value: UInt32,
-  _ expiresInSeconds: UInt32
+  _ expiry: swiftmmkv_expiry
 ) -> Bool {
-  set(value, store, key, expiresInSeconds)
+  set(value, store, key, expiry)
 }
 
 @c @implementation
@@ -380,9 +444,9 @@ public func swiftmmkv_store_set_int64(
   _ store: OpaquePointer,
   _ key: UnsafePointer<CChar>,
   _ value: Int64,
-  _ expiresInSeconds: UInt32
+  _ expiry: swiftmmkv_expiry
 ) -> Bool {
-  set(value, store, key, expiresInSeconds)
+  set(value, store, key, expiry)
 }
 
 @c @implementation
@@ -390,9 +454,9 @@ public func swiftmmkv_store_set_uint64(
   _ store: OpaquePointer,
   _ key: UnsafePointer<CChar>,
   _ value: UInt64,
-  _ expiresInSeconds: UInt32
+  _ expiry: swiftmmkv_expiry
 ) -> Bool {
-  set(value, store, key, expiresInSeconds)
+  set(value, store, key, expiry)
 }
 
 @c @implementation
@@ -400,9 +464,9 @@ public func swiftmmkv_store_set_float(
   _ store: OpaquePointer,
   _ key: UnsafePointer<CChar>,
   _ value: Float,
-  _ expiresInSeconds: UInt32
+  _ expiry: swiftmmkv_expiry
 ) -> Bool {
-  set(value, store, key, expiresInSeconds)
+  set(value, store, key, expiry)
 }
 
 @c @implementation
@@ -410,9 +474,9 @@ public func swiftmmkv_store_set_double(
   _ store: OpaquePointer,
   _ key: UnsafePointer<CChar>,
   _ value: Double,
-  _ expiresInSeconds: UInt32
+  _ expiry: swiftmmkv_expiry
 ) -> Bool {
-  set(value, store, key, expiresInSeconds)
+  set(value, store, key, expiry)
 }
 
 @c @implementation
@@ -420,9 +484,9 @@ public func swiftmmkv_store_set_string(
   _ store: OpaquePointer,
   _ key: UnsafePointer<CChar>,
   _ value: UnsafePointer<CChar>,
-  _ expiresInSeconds: UInt32
+  _ expiry: swiftmmkv_expiry
 ) -> Bool {
-  set(String(cString: value), store, key, expiresInSeconds)
+  set(String(cString: value), store, key, expiry)
 }
 
 @c @implementation
@@ -431,12 +495,13 @@ public func swiftmmkv_store_set_bytes(
   _ key: UnsafePointer<CChar>,
   _ bytes: UnsafeRawPointer?,
   _ count: Int,
-  _ expiresInSeconds: UInt32
+  _ expiry: swiftmmkv_expiry
 ) -> Bool {
-  store.store.set(
+  guard let expiry = makeExpiry(expiry) else { return false }
+  return store.store.set(
     unsafeBytes: UnsafeRawBufferPointer(start: bytes, count: bytes == nil ? 0 : count),
     forKey: String(cString: key),
-    expiringIn: makeExpiry(expiresInSeconds)
+    expiry: expiry
   )
 }
 
@@ -446,9 +511,9 @@ public func swiftmmkv_store_set_strings(
   _ key: UnsafePointer<CChar>,
   _ values: UnsafePointer<CChar>?,
   _ size: Int,
-  _ expiresInSeconds: UInt32
+  _ expiry: swiftmmkv_expiry
 ) -> Bool {
-  set(makeStrings(values, size), store, key, expiresInSeconds)
+  set(makeStrings(values, size), store, key, expiry)
 }
 
 // MARK: - Reads
@@ -766,6 +831,16 @@ public func swiftmmkv_store_trim(_ store: OpaquePointer) {
 @c @implementation
 public func swiftmmkv_store_sync(_ store: OpaquePointer) {
   store.store.sync()
+}
+
+@c @implementation
+public func swiftmmkv_store_is_expiry_enabled(_ store: OpaquePointer) -> Bool {
+  store.store.isExpiryEnabled
+}
+
+@c @implementation
+public func swiftmmkv_store_disable_expiry(_ store: OpaquePointer) -> swiftmmkv_status {
+  status { () throws(MMKVError) in try store.store.disableExpiry() }
 }
 
 @c @implementation

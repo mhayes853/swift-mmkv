@@ -107,9 +107,44 @@ typedef int32_t swiftmmkv_status;
 #define SWIFTMMKV_WRITE_FAILED 15
 /// The app group has no container this process can reach.
 #define SWIFTMMKV_APP_GROUP_CONTAINER_UNAVAILABLE 16
+/// The store's file could not be rewritten without its expiries, for example because it is
+/// read-only.
+#define SWIFTMMKV_DISABLE_EXPIRY_FAILED 17
 
 /// A description of `status` in English. The string is static and must not be freed.
 const char *_Nonnull swiftmmkv_status_message(swiftmmkv_status status);
+
+// MARK: - Expiry
+
+/// How long a store keeps a value.
+///
+/// Make one with the functions below. Its bits are private to the library and can change from
+/// one version to the next, so never build one by hand or keep one outside the process. It is
+/// a plain value: there is nothing to release, and it can be copied, kept, and used from any
+/// thread.
+///
+/// An expired key reads as if it had been removed, and is left out of the store's keys and
+/// count. Nothing reports the moment a key expires, so a change listener hears nothing until
+/// the key is next written or removed.
+///
+/// MMKV records the second a key expires at, by the device's clock, so changing the clock moves
+/// every expiry with it. Seconds are rounded up to a whole one, so that a value is never kept
+/// for less time than was asked for, and the shortest a value is kept for is one second. A
+/// number of seconds that is not a number makes an expiry that no function accepts.
+typedef uint64_t swiftmmkv_expiry;
+
+/// The expiry of the store that is written to: see `swiftmmkv_configuration_set_default_expiry`.
+/// Zero is always this expiry.
+#define SWIFTMMKV_EXPIRY_DEFAULT 0ULL
+
+/// The value is kept until it is removed.
+swiftmmkv_expiry swiftmmkv_expiry_never(void);
+/// The value is kept for `seconds` from the moment it is written.
+swiftmmkv_expiry swiftmmkv_expiry_after(double seconds);
+/// The value is kept until `seconds_since_1970` seconds after the start of 1970 in UTC, which
+/// is how a token's `exp` claim counts. A value written after that moment is kept for one
+/// second, and a moment later than MMKV can record, which is in 2106, means never.
+swiftmmkv_expiry swiftmmkv_expiry_at(double seconds_since_1970);
 
 // MARK: - Configuration
 
@@ -182,6 +217,15 @@ void swiftmmkv_configuration_set_compare_before_set(
 /// Sets the largest key-value pair the store accepts, in bytes. Zero means no limit.
 void swiftmmkv_configuration_set_item_size_limit(
   swiftmmkv_configuration *_Nonnull configuration, size_t bytes);
+/// Sets how long the store keeps a value written with `SWIFTMMKV_EXPIRY_DEFAULT`, which is
+/// until it is removed unless this says otherwise. `SWIFTMMKV_EXPIRY_DEFAULT` is not an expiry
+/// a store can have, and fails the open.
+///
+/// This belongs to the store that is opened and not to its files, so it applies to that
+/// store's writes alone. Values that are already stored keep the expiry they were written
+/// with.
+void swiftmmkv_configuration_set_default_expiry(
+  swiftmmkv_configuration *_Nonnull configuration, swiftmmkv_expiry expiry);
 
 // MARK: - Stores
 
@@ -206,43 +250,46 @@ void swiftmmkv_store_close(swiftmmkv_store *_Nullable store);
 // MARK: - Writes
 //
 // Each returns whether the value was stored. A write fails when the key is empty, the store is
-// read-only or suspended, or the pair exceeds the store's item size limit.
+// read-only or suspended, the pair exceeds the store's item size limit, or `expiry` is not one
+// that the functions of "Expiry" made.
 //
-// An `expires_in_seconds` of zero never expires.
+// The first write that expires switches the store's file to a format that react-native-mmkv
+// has no option for, so avoid one on a store shared with JavaScript.
+// `swiftmmkv_store_disable_expiry` switches it back.
 
 bool swiftmmkv_store_set_bool(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, bool value,
-  uint32_t expires_in_seconds);
+  swiftmmkv_expiry expiry);
 bool swiftmmkv_store_set_int32(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, int32_t value,
-  uint32_t expires_in_seconds);
+  swiftmmkv_expiry expiry);
 bool swiftmmkv_store_set_uint32(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, uint32_t value,
-  uint32_t expires_in_seconds);
+  swiftmmkv_expiry expiry);
 bool swiftmmkv_store_set_int64(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, int64_t value,
-  uint32_t expires_in_seconds);
+  swiftmmkv_expiry expiry);
 bool swiftmmkv_store_set_uint64(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, uint64_t value,
-  uint32_t expires_in_seconds);
+  swiftmmkv_expiry expiry);
 bool swiftmmkv_store_set_float(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, float value,
-  uint32_t expires_in_seconds);
+  swiftmmkv_expiry expiry);
 bool swiftmmkv_store_set_double(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, double value,
-  uint32_t expires_in_seconds);
+  swiftmmkv_expiry expiry);
 bool swiftmmkv_store_set_string(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, const char *_Nonnull value,
-  uint32_t expires_in_seconds);
+  swiftmmkv_expiry expiry);
 /// MMKV copies the bytes before this returns. `bytes` may be NULL when `count` is zero.
 bool swiftmmkv_store_set_bytes(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, const void *_Nullable bytes,
-  size_t count, uint32_t expires_in_seconds);
+  size_t count, swiftmmkv_expiry expiry);
 /// Stores the strings of a packed list of `size` bytes. `values` may be NULL when `size` is
 /// zero, which stores an empty list.
 bool swiftmmkv_store_set_strings(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, const char *_Nullable values,
-  size_t size, uint32_t expires_in_seconds);
+  size_t size, swiftmmkv_expiry expiry);
 
 // MARK: - Reads
 //
@@ -415,6 +462,15 @@ void swiftmmkv_store_trim(swiftmmkv_store *_Nonnull store);
 void swiftmmkv_store_sync(swiftmmkv_store *_Nonnull store);
 /// Re-encrypts the store with `encryption` and `key`, or decrypts it with
 /// `SWIFTMMKV_ENCRYPTION_NONE`.
+/// Whether the store's file records when each key expires, which it does from the first write
+/// that expires until `swiftmmkv_store_disable_expiry`. A suspended store answers false.
+bool swiftmmkv_store_is_expiry_enabled(swiftmmkv_store *_Nonnull store);
+/// Rewrites the store's file in the format it had before its first expiring write, which is
+/// the format react-native-mmkv reads.
+///
+/// Keys that have expired are dropped, and every other key is kept until it is removed,
+/// whatever expiry it was written with. The next write that expires switches the file back.
+swiftmmkv_status swiftmmkv_store_disable_expiry(swiftmmkv_store *_Nonnull store);
 swiftmmkv_status swiftmmkv_store_rekey(
   swiftmmkv_store *_Nonnull store, swiftmmkv_encryption encryption,
   const void *_Nullable key, size_t key_count);
