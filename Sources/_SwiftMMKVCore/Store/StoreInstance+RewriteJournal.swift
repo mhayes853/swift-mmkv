@@ -44,6 +44,7 @@ extension StoreState {
         O_WRONLY | O_CREAT | O_CLOEXEC,
         S_IRWXU
       )
+      self.giveJournalDataProtection()
     }
     let descriptor = self.journalDescriptor
     guard descriptor >= 0 else {
@@ -84,6 +85,23 @@ extension StoreState {
   }
 
   /// Closes the journal's descriptor, which the next rewrite opens again.
+  /// Gives the journal the data file's data protection class, as it holds a copy of that file.
+  /// A new file otherwise takes its directory's class, and one stricter than the data file's
+  /// could not be written while the device is locked.
+  private func giveJournalDataProtection() {
+    #if canImport(Darwin)
+      guard self.journalDescriptor >= 0 else { return }
+      let dataDescriptor = open(self.path, O_RDONLY | O_CLOEXEC)
+      guard dataDescriptor >= 0 else { return }
+      defer { close(dataDescriptor) }
+      let protectionClass = fcntl(dataDescriptor, F_GETPROTECTIONCLASS)
+      if protectionClass > 0, fcntl(self.journalDescriptor, F_GETPROTECTIONCLASS) != protectionClass
+      {
+        _ = fcntl(self.journalDescriptor, F_SETPROTECTIONCLASS, protectionClass)
+      }
+    #endif
+  }
+
   mutating func closeRewriteJournal() {
     if self.journalDescriptor >= 0 {
       _ = self.fileSystem.close(self.journalDescriptor)

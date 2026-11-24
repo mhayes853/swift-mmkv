@@ -21,6 +21,13 @@ final class MMKVCore: Sendable {
       case .cxx: try CxxEngine(configuration)
       case .swift: try SwiftEngine(configuration)
       }
+    if !configuration.isReadOnly, let protectionClass = configuration.fileProtection.cValue {
+      let failures = MMKVStorage(path: configuration.directory.path)
+        .setProtectionClass(protectionClass, forID: configuration.id)
+      for (path, error) in failures {
+        LogSink.log(.warning, "failed to set the file protection of [\(path)], errno \(error)")
+      }
+    }
     self.engine = engine
     self.state = MMKVStoreState.shared(
       for: engine.instance,
@@ -172,5 +179,16 @@ extension MMKVCore {
       throw .storeIsSuspended(id: self.state.id)
     }
     guard didRekey else { throw .rekeyFailed }
+  }
+}
+
+extension MMKVConfiguration.FileProtection {
+  /// The number Darwin gives the class, or `nil` to leave a file's class alone.
+  fileprivate var cValue: Int32? {
+    switch self {
+    case .completeUntilFirstUserAuthentication: 3
+    case .none: 4
+    case .unchanged: nil
+    }
   }
 }

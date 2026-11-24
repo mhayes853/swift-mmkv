@@ -255,6 +255,30 @@ extension MMKVStorage {
   }
 }
 
+// MARK: - File protection
+
+extension MMKVStorage {
+  /// Gives the files of the store with this identifier a data protection class: its two files,
+  /// and the Swift core's journal of a rewrite if one is there.
+  ///
+  /// The core creates the files and maps them before this is called, so a new file has the
+  /// class it inherited until then. The class belongs to the file, so it holds for the core's
+  /// mapping, and for as long as the core rewrites the file in place.
+  ///
+  /// - Returns: The files that could not be given the class, and the error number of each.
+  func setProtectionClass(
+    _ protectionClass: Int32,
+    forID id: MMKVStore.ID
+  ) -> [(path: String, error: Int32)] {
+    self.dataPaths(forID: id)
+      .flatMap { [$0, $0 + Self.crcSuffix, $0 + Self.journalSuffix] }
+      .filter { FileIdentity(path: $0) != nil }
+      .compactMap { path in
+        SwiftMMKV.setProtectionClass(protectionClass, ofFileAtPath: path).map { (path, $0) }
+      }
+  }
+}
+
 // MARK: - Backups
 
 extension MMKVStorage {

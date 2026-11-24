@@ -47,6 +47,10 @@ public struct MMKVConfiguration: Sendable, Hashable {
   /// done, tests and benchmarks use this to run against either.
   @_spi(Engines) public var engine = Engine.cxx
 
+  /// The data protection the store's files are given each time the store is opened, on Apple's
+  /// platforms. A read-only store's files are left as they are.
+  public var fileProtection: FileProtection
+
   /// Creates a configuration.
   ///
   /// - Parameters:
@@ -60,6 +64,7 @@ public struct MMKVConfiguration: Sendable, Hashable {
   ///   - recovery: What to do when the store's file fails its integrity check.
   ///   - compareBeforeSet: Whether a write of an identical value is skipped.
   ///   - itemSizeLimit: The largest key-value pair the store accepts, in bytes.
+  ///   - fileProtection: The data protection the store's files are given on Apple's platforms.
   public init(
     id: MMKVStore.ID = .default,
     directory: MMKVDirectory,
@@ -69,7 +74,8 @@ public struct MMKVConfiguration: Sendable, Hashable {
     expectedCapacity: Int = 0,
     recovery: Recovery = .discard,
     compareBeforeSet: Bool = false,
-    itemSizeLimit: Int? = nil
+    itemSizeLimit: Int? = nil,
+    fileProtection: FileProtection = .completeUntilFirstUserAuthentication
   ) {
     self.id = id
     self.directory = directory
@@ -80,6 +86,7 @@ public struct MMKVConfiguration: Sendable, Hashable {
     self.recovery = recovery
     self.compareBeforeSet = compareBeforeSet
     self.itemSizeLimit = itemSizeLimit
+    self.fileProtection = fileProtection
   }
 }
 
@@ -157,5 +164,27 @@ extension MMKVConfiguration {
 
     /// Keep whatever key-value pairs can still be read.
     case recover
+  }
+
+  /// The data protection a store's files are given, which decides when iOS lets them be read.
+  ///
+  /// A store's file is mapped into memory, and iOS ends a process that touches a mapped file
+  /// the device's lock has made unreadable. The classes that make a file unreadable while the
+  /// device is locked are therefore not offered, and a store whose files have one, as every
+  /// file of an app with the data protection entitlement set to `complete` does, is moved out
+  /// of it by default.
+  ///
+  /// Nothing happens on a platform without data protection.
+  public enum FileProtection: Sendable, Hashable {
+    /// The files can be read once the device has been unlocked for the first time since it
+    /// started, which is what iOS gives an app's files by default and what MMKV gives a
+    /// store's files itself, react-native-mmkv's copy included.
+    case completeUntilFirstUserAuthentication
+
+    /// The files can always be read, even before the device is first unlocked.
+    case none
+
+    /// The files keep whatever protection they have.
+    case unchanged
   }
 }
