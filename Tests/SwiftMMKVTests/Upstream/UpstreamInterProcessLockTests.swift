@@ -20,19 +20,22 @@ import Testing
 
     first.withExclusiveLock { first in
       first.set("changed", forKey: "key")
-      // Two reader threads, as upstream starts. Each read takes the shared file lock.
+      // Two reader threads, as upstream starts. Each read takes the shared file lock. They are
+      // threads of their own because a queue's may all be busy with other tests, which on a
+      // small machine has kept the readers from starting for longer than this test waits.
       for _ in 0..<2 {
-        DispatchQueue.global()
-          .async(group: readers) {
-            results.record(second.value(forKey: "key", as: String.self))
-          }
+        readers.enter()
+        Thread.detachNewThread {
+          results.record(second.value(forKey: "key", as: String.self))
+          readers.leave()
+        }
       }
       // Upstream waits a millisecond; waiting longer only makes a wrong result likelier to show.
       #expect(readers.wait(timeout: .now() + .milliseconds(100)) == .timedOut)
       #expect(results.all.isEmpty)
     }
 
-    #expect(readers.wait(timeout: .now() + .seconds(10)) == .success)
+    #expect(readers.wait(timeout: .now() + .seconds(60)) == .success)
     #expect(results.all == ["changed", "changed"])
   }
 }
