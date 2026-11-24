@@ -38,6 +38,18 @@ public struct MMKVValueReader: ~Copyable, ~Escapable {
     self.core.read { $0.uint64(forKey: self.key) }
   }
 
+  /// Reads the key as a signed 64-bit integer that fits in an `Int`.
+  @inlinable
+  public func int() -> Int? {
+    self.int64().flatMap { Int(exactly: $0) }
+  }
+
+  /// Reads the key as an unsigned 64-bit integer that fits in a `UInt`.
+  @inlinable
+  public func uint() -> UInt? {
+    self.uint64().flatMap { UInt(exactly: $0) }
+  }
+
   /// Reads the key as a single-precision floating-point number.
   public func float() -> Float? {
     self.core.read { $0.float(forKey: self.key) }

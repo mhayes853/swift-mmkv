@@ -8,7 +8,7 @@ struct SwiftEngine: MMKVEngine {
   init(_ configuration: MMKVConfiguration) throws(MMKVError) {
     var hasWrongEncryptionKey = false
     let store = MMKVStorage(path: configuration.directory.path)
-      .opening(id: configuration.id) { () -> StoreInstance? in
+      .opening(id: configuration.id, engine: .swift) { () -> StoreInstance? in
         do throws(StoreRegistry.OpenError) {
           return try StoreRegistry.open(
             StoreConfiguration(
@@ -28,6 +28,8 @@ struct SwiftEngine: MMKVEngine {
           hasWrongEncryptionKey = error == .wrongEncryptionKey
           return nil
         }
+      } instance: {
+        Self.instance(of: $0)
       }
     if hasWrongEncryptionKey {
       throw .wrongEncryptionKey(id: configuration.id, directory: configuration.directory)
@@ -43,7 +45,11 @@ struct SwiftEngine: MMKVEngine {
   }
 
   var instance: UInt {
-    UInt(bitPattern: Unmanaged.passUnretained(self.store).toOpaque())
+    Self.instance(of: self.store)
+  }
+
+  private static func instance(of store: StoreInstance) -> UInt {
+    UInt(bitPattern: Unmanaged.passUnretained(store).toOpaque())
   }
 }
 

@@ -95,14 +95,16 @@ let libraryTarget: Target = .target(
       condition: .when(traits: ["Sharing"])
     ),
     .product(name: "Logging", package: "swift-log", condition: .when(traits: ["Logging"])),
-    .product(name: "UUIDV7", package: "swift-uuidv7", condition: .when(traits: ["UUIDV7"]))
+    .product(name: "UUIDV7", package: "swift-uuidv7", condition: .when(traits: ["UUIDV7"])),
+    .product(name: "Tagged", package: "swift-tagged", condition: .when(traits: ["Tagged"]))
   ],
   swiftSettings: [
     .enableExperimentalFeature("Lifetimes"),
     .define("Foundation", .when(traits: ["Foundation"])),
     .define("Sharing", .when(traits: ["Sharing"])),
     .define("Logging", .when(traits: ["Logging"])),
-    .define("UUIDV7", .when(traits: ["UUIDV7"]))
+    .define("UUIDV7", .when(traits: ["UUIDV7"])),
+    .define("Tagged", .when(traits: ["Tagged"]))
   ]
 )
 
@@ -122,7 +124,8 @@ let testTarget: Target = .testTarget(
       condition: .when(traits: ["Sharing"])
     ),
     .product(name: "Logging", package: "swift-log", condition: .when(traits: ["Logging"])),
-    .product(name: "UUIDV7", package: "swift-uuidv7", condition: .when(traits: ["UUIDV7"]))
+    .product(name: "UUIDV7", package: "swift-uuidv7", condition: .when(traits: ["UUIDV7"])),
+    .product(name: "Tagged", package: "swift-tagged", condition: .when(traits: ["Tagged"]))
   ],
   exclude: ["Upstream/MANIFEST.md"],
   swiftSettings: [
@@ -130,7 +133,8 @@ let testTarget: Target = .testTarget(
     .define("Foundation", .when(traits: ["Foundation"])),
     .define("Sharing", .when(traits: ["Sharing"])),
     .define("Logging", .when(traits: ["Logging"])),
-    .define("UUIDV7", .when(traits: ["UUIDV7"]))
+    .define("UUIDV7", .when(traits: ["UUIDV7"])),
+    .define("Tagged", .when(traits: ["Tagged"]))
   ]
 )
 
@@ -176,13 +180,20 @@ let package = Package(
       description:
         "Adds swift-uuidv7's `UUIDV7` as an `MMKVValue`, stored as its string. It does not need "
         + "the `Foundation` trait."
+    ),
+    .trait(
+      name: "Tagged",
+      description:
+        "Adds swift-tagged's `Tagged` as an `MMKVValue`, stored as its raw value. It does not "
+        + "need the `Foundation` trait."
     )
   ],
   dependencies: [
     .package(url: "https://github.com/pointfreeco/swift-sharing", from: "2.0.0"),
     .package(url: "https://github.com/pointfreeco/swift-dependencies", from: "1.5.1"),
     .package(url: "https://github.com/apple/swift-log", from: "1.11.0"),
-    .package(url: "https://github.com/mhayes853/swift-uuidv7", from: "0.6.2")
+    .package(url: "https://github.com/mhayes853/swift-uuidv7", from: "0.6.2"),
+    .package(url: "https://github.com/pointfreeco/swift-tagged", from: "0.10.0")
   ],
   targets: [
     coreTarget, cryptoTarget, swiftCoreTarget, foundationTarget, libraryTarget, testTarget,

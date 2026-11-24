@@ -41,9 +41,9 @@ reached through a C interface.
 ## Values
 
 MMKV files record no types, so a value is read by naming the type it was written with. Types that
-can be stored conform to `MMKVValue`: `Bool`, `Int32`, `UInt32`, `Int64`, `UInt64`, `Float`,
-`Double`, `String`, `[UInt8]`, and `[String]`. `Int` deliberately does not conform, so that an
-integer literal is never stored in an encoding JavaScript cannot read.
+can be stored conform to `MMKVValue`: `Bool`, `Int`, `UInt`, `Int32`, `UInt32`, `Int64`, `UInt64`,
+`Float`, `Double`, `String`, `[UInt8]`, and `[String]`. `Int` and `UInt` are stored as 64-bit
+integers on every platform.
 
 A type backed by one of those conforms through its raw value, and any other type picks an encoding
 by reading and writing through `MMKVValueReader` and `MMKVValueWriter`:
@@ -70,13 +70,35 @@ store.set(Theme.dark, forKey: "theme")
 store["user"] = UserID(rawValue: 7)
 ```
 
-An integer is stored in its own encoding, which JavaScript cannot read. A type that shares its key
-with JavaScript stores the integer as a `Double` instead. A type with an integer raw value sets
+An integer is stored in its own encoding, which JavaScript cannot read. That includes an integer
+literal, which is an `Int`:
+
+```swift
+store.set(5, forKey: "count")    // A 64-bit integer, which JavaScript cannot read.
+store.set(5.0, forKey: "count")  // A `Double`, which it can.
+```
+
+An integer that shares its key with JavaScript is stored as a `Double` instead, through
+`MMKVNumber`, which is spelled from the integer type it holds:
+
+```swift
+extension MMKVStore.DefaultedKey where Value == Int.MMKVNumber {
+  static let launches = Self("launches", default: 0)
+}
+
+store[.launches] += 1
+store.set(Int.MMKVNumber(5), forKey: "count")
+```
+
+`MMKVNumber` is itself a `BinaryInteger`, so it does arithmetic, compares, and converts to and from
+other integers as the integer it holds does.
+
+A type that holds an integer can store it the same way. A type with an integer raw value sets
 `integerEncoding`, and a type with its own conformance calls `set(number:)` on the writer and
 `number(as:)` on the reader:
 
 ```swift
-enum Priority: Int64, MMKVValue {
+enum Priority: Int, MMKVValue {
   case low, high
   static let integerEncoding = MMKVIntegerEncoding.number
 }
@@ -396,6 +418,45 @@ destination already has. The two stores may differ in mode and encryption:
 let imported = store.importAll(from: legacyStore)
 ```
 
+### Backups
+
+A store is backed up by copying its files into another directory, and restored by copying them
+back:
+
+```swift
+let backups = MMKVDirectory(path: documentsPath + "/mmkv-backup")
+
+try store.backUp(to: backups)
+try store.restore(from: backups)  // false if the backup has no copy of this store
+```
+
+`MMKVDirectory` does the same for a store by identifier, whether or not it is open, and for
+every store in a directory:
+
+```swift
+try directory.backUpStore(id: "settings", to: backups)
+try directory.restoreStore(id: "settings", from: backups)
+
+try directory.backUpAllStores(to: backups)
+try directory.restoreAllStores(from: backups)
+```
+
+- A backup is a directory of stores like any other, so its stores can be listed, opened to look
+  at what they hold, and removed. A backup cannot replace a copy that this process has open.
+- The store's locks are held while its files are copied, so a backup holds every write that
+  returned before it began, whichever process made it.
+- Restoring an open store reloads it. Every `MMKVStore` over it reads the restored values, and
+  its listeners receive `.external`.
+- A restore overwrites the store's file in place, because other processes may have it open, so it
+  is not atomic. If the process stops partway, the store's `recovery` setting decides what the
+  next open makes of the file.
+- A copy that does not match its checksum is not restored, and `MMKVError.backupInvalid` is
+  thrown. `isStoreValid(id:)` makes the same check on any store without opening it.
+- Files are copied as they are. The backup of an encrypted store is encrypted with the same key,
+  and restores into a store opened with that key.
+- A read-only store cannot be restored, and a suspended store can be neither backed up nor
+  restored.
+
 ## Change listeners
 
 ```swift
@@ -492,7 +553,7 @@ single-process mode.
 
 | JavaScript | Swift |
 | --- | --- |
-| `number` | `Double`, or an integer stored as a number (see below) |
+| `number` | `Double`, `Int.MMKVNumber`, or another integer stored as a number (see below) |
 | `boolean` | `Bool` |
 | `string` | `String` |
 | `ArrayBuffer` | `[UInt8]`, `Data`, or `withBytes(forKey:)` |
@@ -502,9 +563,10 @@ single-process mode.
 Things to know while both sides are live:
 
 - JavaScript reads every number as a `Double`, so it cannot read a key that Swift wrote as an
-  `Int32` or `Int64`, and Swift reads garbage from a number when it names an integer type. For an
-  integer that both sides use, store a `Double`, or use a type that stores its integer as one:
-  an integer-backed enum with `integerEncoding` set to `.number`, or a type that calls
+  integer, and Swift reads garbage from a number when it names an integer type. An integer
+  literal is an `Int`, so `store.set(5, forKey:)` is such a write. For an integer that both sides
+  use, store a `Double` or an `Int.MMKVNumber`, or use a type that stores its integer as a
+  number: an integer-backed enum with `integerEncoding` set to `.number`, or a type that calls
   `set(number:)` and `number(as:)`. See [Values](#values).
 - Neither side learns which key the other changed. Swift receives `.external`, and JavaScript
   listeners do not fire for native writes.
@@ -802,6 +864,46 @@ form a Foundation `UUID` is stored in, so either type reads what the other wrote
 A type of your own that stores one reads it with `uuidV7()` on `MMKVValueReader` and writes it
 with `set` on `MMKVValueWriter`.
 
+## The `Tagged` trait
+
+The `Tagged` trait, off by default, makes
+[swift-tagged](https://github.com/pointfreeco/swift-tagged)'s `Tagged` an `MMKVValue` whenever
+its raw value is one:
+
+```swift
+.package(
+  url: "https://github.com/mhayes853/swift-mmkv",
+  branch: "main",
+  traits: ["Foundation", "Tagged"]
+)
+```
+
+```swift
+struct User {
+  typealias ID = Tagged<User, Int>
+}
+
+extension MMKVStore.Key<User.ID> {
+  static let currentUser: Self = "currentUser"
+}
+
+store[.currentUser] = 42
+```
+
+It is stored as its raw value, so the raw value's type decides the encoding, and a key reads back
+as either type. An integer id that JavaScript also reads has `Int.MMKVNumber` as its raw value,
+which stores a `Double`:
+
+```swift
+typealias ID = Tagged<User, Int.MMKVNumber>
+```
+
+Turning the trait on changes how `encode(_:intoKeysUnder:)` stores a `Tagged` property. Without
+it, the property is stored as any `Codable` value is, so an integer follows the `numbers` option
+and is a `Double` by default. With it, the property is an `MMKVValue` and is stored as itself, so
+a `Tagged<User, Int>` becomes a 64-bit integer. A `Tagged<User, Int.MMKVNumber>` is a `Double`
+either way. The trait does not need the `Foundation` trait.
+
 ## Platforms
 
 | Platform | Status |
@@ -816,7 +918,6 @@ with `set` on `MMKVValueWriter`.
 - On iOS the store's files keep the default file protection. Upstream's Objective-C++ build
   relaxes it to "until first user authentication" so a store can be read while the device is
   locked; this package builds the core's POSIX variant, which does not.
-- Backup and restore are not implemented yet.
 
 ## The vendored core
 

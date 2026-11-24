@@ -1,4 +1,5 @@
 import CSwiftMMKVCore
+import _SwiftMMKVCore
 
 /// The files of the stores in one directory, and what this package does with them without
 /// opening a store.
@@ -82,15 +83,35 @@ extension MMKVStorage {
   /// ``MMKVStore`` over it holding a dangling pointer, so removal is refused for these. The
   /// lock is held across opening and removing, so that a store cannot be opened while it is
   /// being removed.
-  private static let openStores = Lock([String: MMKVStore.ID]())
+  private static let openStores = Lock([String: OpenStore]())
 
-  /// Runs `open`, and records the store as open if it returns an instance.
-  func opening<Handle>(id: MMKVStore.ID, _ open: () -> sending Handle?) -> Handle? {
+  private struct OpenStore: Sendable, Hashable {
+    let id: MMKVStore.ID
+    let engine: MMKVConfiguration.Engine
+    /// The engine's ``MMKVEngine/instance``, which is what the store's state is filed under.
+    let instance: UInt
+
+    /// The Swift core's instance, which the C++ core does not know is open.
+    var swiftInstance: StoreInstance? {
+      self.engine == .swift ? StoreRegistry.instance(atAddress: self.instance) : nil
+    }
+  }
+
+  /// Runs `open`, and records the store as open if it returns a handle to an instance.
+  ///
+  /// - Parameter instance: The ``MMKVEngine/instance`` of a handle.
+  func opening<Handle>(
+    id: MMKVStore.ID,
+    engine: MMKVConfiguration.Engine,
+    _ open: () -> Handle?,
+    instance: (Handle) -> UInt
+  ) -> Handle? {
     Self.openStores.withLock { openStores in
       let handle = open()
-      if handle != nil {
+      if let handle {
+        let store = OpenStore(id: id, engine: engine, instance: instance(handle))
         for path in self.dataPaths(forID: id) {
-          openStores[path] = id
+          openStores[path] = store
         }
       }
       return handle
@@ -101,18 +122,45 @@ extension MMKVStorage {
   /// that file's path is spelled.
   private static func openID(
     forDataPaths dataPaths: [String],
-    in openStores: [String: MMKVStore.ID]
+    in openStores: [String: OpenStore]
   ) -> MMKVStore.ID? {
+    Self.openStore(forDataPaths: dataPaths, in: openStores)?.id
+  }
+
+  private static func openStore(
+    forDataPaths dataPaths: [String],
+    in openStores: [String: OpenStore]
+  ) -> OpenStore? {
     func files(_ dataPath: String) -> [FileIdentity] {
       [dataPath, dataPath + Self.crcSuffix].compactMap(FileIdentity.init(path:))
     }
     let targets = Set(dataPaths.flatMap(files))
-    for (openPath, id) in openStores {
+    for (openPath, store) in openStores {
       if dataPaths.contains(openPath) || files(openPath).contains(where: targets.contains) {
-        return id
+        return store
       }
     }
     return nil
+  }
+
+  /// The open store with this identifier in this directory.
+  private func openStore(id: MMKVStore.ID) -> OpenStore? {
+    let dataPaths = self.dataPaths(forID: id)
+    return Self.openStores.withLock { Self.openStore(forDataPaths: dataPaths, in: $0) }
+  }
+
+  /// Every open store whose files are in this directory.
+  private var openStores: [OpenStore] {
+    let directories = [self.resolvedPath, "\(self.resolvedPath)/\(Self.hashedDirectoryName)"]
+    let identities = Set(directories.compactMap(FileIdentity.init(path:)))
+    let stores = Self.openStores.withLock { openStores in
+      openStores.filter { openPath, _ in
+        let directory = String(openPath[..<(openPath.lastIndex(of: "/") ?? openPath.startIndex)])
+        return directories.contains(directory)
+          || FileIdentity(path: directory).map(identities.contains) ?? false
+      }
+    }
+    return Array(Set(stores.values))
   }
 }
 
@@ -203,6 +251,180 @@ extension MMKVStorage {
       }
       removeFile(atPath: dataPath + Self.journalSuffix)
       return true
+    }
+  }
+}
+
+// MARK: - Backups
+
+extension MMKVStorage {
+  /// Whether the checksum recorded for the store with this identifier matches its data.
+  func isValid(id: MMKVStore.ID) -> Bool {
+    guard self.contains(id: id) else { return false }
+    return id.rawValue.withMMKVBytes { id in
+      self.path.withMMKVBytes { mmkv_storage_is_valid(id, $0) }
+    }
+  }
+
+  /// Copies the store with this identifier into `backup`.
+  ///
+  /// - Returns: Whether there was a store to copy.
+  func backUp(id: MMKVStore.ID, to backup: MMKVStorage) throws(MMKVError) -> Bool {
+    try self.checkIsNot(backup)
+    guard self.contains(id: id) else { return false }
+    if backup.openStore(id: id) != nil {
+      throw .storeIsOpen(id: id, directory: backup.directory)
+    }
+    let didBackUp = try Self.entering(self.openStore(id: id).map { [$0] } ?? []) { _ in
+      id.rawValue.withMMKVBytes { id in
+        self.path.withMMKVBytes { path in
+          backup.path.withMMKVBytes { mmkv_backup_storage(id, path, $0) }
+        }
+      }
+    }
+    guard didBackUp else {
+      throw .backupFailed(id: id, directory: self.directory, backup: backup.directory)
+    }
+    return true
+  }
+
+  /// Overwrites the store with this identifier with its copy in `backup`, and tells the
+  /// listeners of an open store that it changed.
+  ///
+  /// - Returns: Whether `backup` held a store to copy.
+  func restore(id: MMKVStore.ID, from backup: MMKVStorage) throws(MMKVError) -> Bool {
+    try self.checkIsNot(backup)
+    guard backup.contains(id: id) else { return false }
+    guard backup.isValid(id: id) else {
+      throw .backupInvalid(id: id, backup: backup.directory)
+    }
+    let openStore = self.openStore(id: id)
+    // The C++ core refuses this for a store it has open itself.
+    if openStore?.swiftInstance?.isReadOnly == true {
+      throw .restoreFailed(id: id, directory: self.directory, backup: backup.directory)
+    }
+    var restored = [MMKVStoreState]()
+    defer {
+      for state in restored {
+        state.notify(.external)
+      }
+    }
+    let didRestore = try Self.entering(openStore.map { [$0] } ?? [], overwriting: true) { states in
+      restored = states
+      return id.rawValue.withMMKVBytes { id in
+        self.path.withMMKVBytes { path in
+          backup.path.withMMKVBytes { mmkv_restore_storage(id, path, $0) }
+        }
+      }
+    }
+    guard didRestore else {
+      throw .restoreFailed(id: id, directory: self.directory, backup: backup.directory)
+    }
+    return true
+  }
+
+  /// Copies every store into `backup`.
+  ///
+  /// - Returns: The number of stores copied.
+  func backUpAll(to backup: MMKVStorage) throws(MMKVError) -> Int {
+    try self.checkIsNot(backup)
+    let openInBackup = backup.openStores.map(\.id).sorted()
+    guard openInBackup.isEmpty else {
+      throw .storesAreOpen(ids: openInBackup, directory: backup.directory)
+    }
+    let storeCount = try self.relativePaths().count
+    guard storeCount > 0 else { return 0 }
+    let count = try Self.entering(self.openStores) { _ in
+      self.path.withMMKVBytes { path in
+        backup.path.withMMKVBytes { mmkv_backup_all_storage(path, $0) }
+      }
+    }
+    guard count >= storeCount else {
+      throw .storesNotBackedUp(
+        count: storeCount - count,
+        directory: self.directory,
+        backup: backup.directory
+      )
+    }
+    return count
+  }
+
+  /// Overwrites every store that has a copy in `backup`, and tells the listeners of the open
+  /// ones that they changed.
+  ///
+  /// - Returns: The number of stores copied.
+  func restoreAll(from backup: MMKVStorage) throws(MMKVError) -> Int {
+    try self.checkIsNot(backup)
+    let relativePaths = try backup.relativePaths()
+    guard !relativePaths.isEmpty else { return 0 }
+    // A store whose identifier its files do not tell cannot be asked about.
+    for id in relativePaths.compactMap(Self.id(forRelativePath:)) where !backup.isValid(id: id) {
+      throw .backupInvalid(id: id, backup: backup.directory)
+    }
+    var restored = [MMKVStoreState]()
+    defer {
+      for state in restored {
+        state.notify(.external)
+      }
+    }
+    let count = try Self.entering(self.openStores, overwriting: true) { states in
+      restored = states
+      return self.path.withMMKVBytes { path in
+        backup.path.withMMKVBytes { mmkv_restore_all_storage(path, $0) }
+      }
+    }
+    guard count >= relativePaths.count else {
+      throw .storesNotRestored(
+        count: relativePaths.count - count,
+        directory: self.directory,
+        backup: backup.directory
+      )
+    }
+    return count
+  }
+
+  /// The core takes copying a directory onto itself for a success.
+  private func checkIsNot(_ backup: MMKVStorage) throws(MMKVError) {
+    let (path, backupPath) = (self.resolvedPath, backup.resolvedPath)
+    let isSame =
+      path == backupPath
+      || FileIdentity(path: path).map { $0 == FileIdentity(path: backupPath) } ?? false
+    if isSame {
+      throw .backupIsStoreDirectory(self.directory)
+    }
+  }
+
+  /// Runs `body`, which has the C++ core copy the files of `stores` under their file locks,
+  /// unless one of them is suspended.
+  ///
+  /// The C++ core takes the lock of a store it has open itself. One the Swift core has open is a
+  /// closed store to it, so that store's instance is kept from its files meanwhile, and loads
+  /// them again if `body` overwrites them.
+  ///
+  /// The lock on the open stores is not held meanwhile, because `body` waits for the locks of
+  /// those stores, and a thread that holds one of them may be opening another store.
+  private static func entering<R>(
+    _ stores: [OpenStore],
+    overwriting: Bool = false,
+    _ body: ([MMKVStoreState]) -> R
+  ) throws(MMKVError) -> R {
+    let states = stores.compactMap { MMKVStoreState.existing(for: $0.instance) }
+    var entered = [SuspensionGate]()
+    defer {
+      for gate in entered {
+        gate.leave()
+      }
+    }
+    for state in states {
+      guard let gate = state.suspensionGate else { continue }
+      guard gate.enter() else { throw .storeIsSuspended(id: state.id) }
+      entered.append(gate)
+    }
+    return StoreInstance.withFilesHandedOver(
+      stores.compactMap(\.swiftInstance),
+      reloading: overwriting
+    ) {
+      body(states)
     }
   }
 }

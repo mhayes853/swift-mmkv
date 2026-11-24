@@ -66,6 +66,15 @@ extension StoreRegistry {
   package static func withLock<R>(_ body: () -> R) -> R {
     Self.lock.withLock(body)
   }
+
+  /// The open instance whose object has the address `address`, if there is one.
+  package static func instance(atAddress address: UInt) -> StoreInstance? {
+    Self.lock.withLock {
+      Self.instances.values.first {
+        UInt(bitPattern: Unmanaged.passUnretained($0).toOpaque()) == address
+      }
+    }
+  }
 }
 
 /// Creates a directory and any missing parents, as MMKV's `mkPath` does.

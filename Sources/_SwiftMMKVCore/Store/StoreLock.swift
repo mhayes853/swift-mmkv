@@ -45,6 +45,11 @@ package final class StoreLock<State: ~Copyable>: @unchecked Sendable {
     self.mutex.lock()
   }
 
+  /// Takes the lock as ``lock()`` does, but only if no other thread holds it.
+  package func tryLock() -> Bool {
+    self.mutex.tryLock()
+  }
+
   package func unlock() {
     self.mutex.unlock()
   }

@@ -211,6 +211,45 @@ bool mmkv_remove_storage(mmkv_bytes id, mmkv_bytes rootDirectory) {
   return nameSpace(string(rootDirectory)).removeStorage(string(id));
 }
 
+bool mmkv_storage_is_valid(mmkv_bytes id, mmkv_bytes rootDirectory) {
+  if (id.count == 0 || rootDirectory.count == 0) {
+    return false;
+  }
+  return nameSpace(string(rootDirectory)).isFileValid(string(id));
+}
+
+bool mmkv_backup_storage(mmkv_bytes id, mmkv_bytes rootDirectory, mmkv_bytes backupDirectory) {
+  if (id.count == 0 || rootDirectory.count == 0 || backupDirectory.count == 0) {
+    return false;
+  }
+  auto backup = nameSpace(string(backupDirectory)).getRootDir();
+  return nameSpace(string(rootDirectory)).backupOneToDirectory(string(id), backup);
+}
+
+bool mmkv_restore_storage(mmkv_bytes id, mmkv_bytes rootDirectory, mmkv_bytes backupDirectory) {
+  if (id.count == 0 || rootDirectory.count == 0 || backupDirectory.count == 0) {
+    return false;
+  }
+  auto backup = nameSpace(string(backupDirectory)).getRootDir();
+  return nameSpace(string(rootDirectory)).restoreOneFromDirectory(string(id), backup);
+}
+
+size_t mmkv_backup_all_storage(mmkv_bytes rootDirectory, mmkv_bytes backupDirectory) {
+  if (rootDirectory.count == 0 || backupDirectory.count == 0) {
+    return 0;
+  }
+  auto backup = nameSpace(string(backupDirectory)).getRootDir();
+  return nameSpace(string(rootDirectory)).backupAllToDirectory(backup);
+}
+
+size_t mmkv_restore_all_storage(mmkv_bytes rootDirectory, mmkv_bytes backupDirectory) {
+  if (rootDirectory.count == 0 || backupDirectory.count == 0) {
+    return 0;
+  }
+  auto backup = nameSpace(string(backupDirectory)).getRootDir();
+  return nameSpace(string(rootDirectory)).restoreAllFromDirectory(backup);
+}
+
 void mmkv_resolve_directory(
   mmkv_bytes rootDirectory, void *context, mmkv_bytes_callback callback) {
   auto path = nameSpace(string(rootDirectory)).getRootDir();

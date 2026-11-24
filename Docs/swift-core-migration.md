@@ -93,7 +93,10 @@ plus the operations that do not open a store:
   external changes; `trim`; `sync`; and `rekey`.
 - **Per directory** (`MMKVStorage`, which calls the C interface directly today): whether a store's
   files exist (`checkExist`), removing a store's files (`removeStorage`), the directory as MMKV
-  resolves it (`NameSpace`), and on Android the file name an older MMKV used.
+  resolves it (`NameSpace`), on Android the file name an older MMKV used, and backing up and
+  restoring stores. The C++ core copies the files for a backup or a restore and does not know
+  which stores the Swift core has open, so `StoreInstance.withFilesHandedOver` keeps those
+  instances off their files meanwhile and has them load again after a restore.
 - **Opening**: the C interface's own rules (an empty identifier or directory fails, the directory is
   created unless the store is read-only), and the instance registry, so that every open of the
   same files in a process shares one instance.

@@ -127,6 +127,20 @@ package final class FileLock {
     return didUnlock
   }
 
+  /// Gives up whatever is held, keeping count of it, so that another descriptor in this process
+  /// can lock the file. ``resume()`` takes it back.
+  package func suspend() {
+    guard self.isValid, self.sharedLockCount > 0 || self.exclusiveLockCount > 0 else { return }
+    _ = self.platformUnlock(toShared: false)
+  }
+
+  /// Takes back what ``suspend()`` gave up, waiting for it.
+  package func resume() {
+    guard self.isValid, self.sharedLockCount > 0 || self.exclusiveLockCount > 0 else { return }
+    let type: LockType = self.exclusiveLockCount > 0 ? .exclusive : .shared
+    _ = self.platformLock(type, wait: true, unlockFirstIfNeeded: false)
+  }
+
   /// Releases everything and forgets the descriptor, which is about to be closed.
   package func destroyAndUnlock() {
     _ = self.platformUnlock(toShared: false)
@@ -246,6 +260,19 @@ package struct InterProcessLock {
   package func unlock() {
     if self.isEnabled {
       self.fileLock.unlock(self.type)
+    }
+  }
+
+  /// Gives up, or takes back, everything held on the file, whichever kind of lock took it.
+  package func suspendFileLock() {
+    if self.isEnabled {
+      self.fileLock.suspend()
+    }
+  }
+
+  package func resumeFileLock() {
+    if self.isEnabled {
+      self.fileLock.resume()
     }
   }
 }

@@ -9,8 +9,10 @@ struct CxxEngine: MMKVEngine {
   init(_ configuration: MMKVConfiguration) throws(MMKVError) {
     Self.installContentChangedCallback
     let handle = MMKVStorage(path: configuration.directory.path)
-      .opening(id: configuration.id) {
+      .opening(id: configuration.id, engine: .cxx) {
         configuration.withCConfiguration { mmkv_open(&$0) }
+      } instance: {
+        UInt(bitPattern: $0)
       }
     guard let handle else {
       throw .openFailed(id: configuration.id, directory: configuration.directory)

@@ -155,6 +155,11 @@ extension MMKVStoreState {
     }
   }
 
+  /// The state of the engine instance `instance`, if a store has been made over it.
+  static func existing(for instance: UInt) -> MMKVStoreState? {
+    Self.all.withLock { $0[instance] }
+  }
+
   /// Records an external change to the engine instance `instance`.
   static func markExternalChange(instance: UInt) {
     let state = Self.all.withLock { $0[instance] }
