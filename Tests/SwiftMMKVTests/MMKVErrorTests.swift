@@ -26,7 +26,8 @@ import Testing
       .openFailed, .invalidEncryptionKey, .rekeyFailed, .disableExpiryFailed,
       .appGroupContainerUnavailable, .writeFailed, .storeIsOpen, .storesAreOpen,
       .directoryUnreadable, .backupFailed, .restoreFailed, .storesNotBackedUp,
-      .storesNotRestored, .backupInvalid, .backupIsStoreDirectory, .storeIsSuspended
+      .storesNotRestored, .backupInvalid, .backupIsStoreDirectory, .storeIsSuspended,
+      .storeIsClosed
     ]
     #expect(Set(codes).count == codes.count)
     #expect(Set(codes.map(\.rawValue)).count == codes.count)
@@ -38,16 +39,20 @@ import Testing
     let store = try makeStore(id: "settings", rootDirectory: rootDirectory)
     store.set("dark", forKey: "theme")
 
-    // A `catch` with a `where` clause crashes the compiler of Swift 6.3.3 here.
-    var caught: MMKVError?
-    do {
-      try directory.removeStore(id: "settings")
-    } catch {
-      guard error.code == .storeIsOpen else { throw error }
-      caught = error
+    // A function, and not a variable that the `catch` sets: the Swift 6.3.3 compiler crashes
+    // while compiling this test written that way.
+    func removing() -> MMKVError? {
+      do {
+        try directory.removeStore(id: "settings")
+        return nil
+      } catch  where error.code == .storeIsOpen {
+        return error
+      } catch {
+        return nil
+      }
     }
 
-    let error = try #require(caught)
+    let error = try #require(removing())
     #expect(
       error.message == "The store \"settings\" in \"\(rootDirectory)\" is open in this process."
     )

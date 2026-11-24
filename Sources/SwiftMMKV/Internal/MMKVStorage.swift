@@ -90,17 +90,38 @@ extension MMKVStorage {
   }
 
   /// Runs `open`, and records the store as open if it returns an instance.
-  func opening(id: MMKVStore.ID, _ open: () -> OpaquePointer?) -> OpaquePointer? {
-    let handle = Self.openStores.withLock { openStores in
-      let handle = open()
-      if handle != nil {
-        for path in self.dataPaths(forID: id) {
-          openStores[path] = OpenStore(id: id, handle: UInt(bitPattern: handle))
-        }
+  ///
+  /// - Parameters:
+  ///   - open: Returns the store's instance, or `nil` if it could not be opened.
+  ///   - state: Returns the state of an instance. It runs before the instance can be closed,
+  ///     so that the state it returns is not that of an instance that has been freed.
+  /// - Returns: The instance and its state, or `nil` if `open` returned `nil`.
+  func opening(
+    id: MMKVStore.ID,
+    _ open: () -> OpaquePointer?,
+    state: (OpaquePointer) -> MMKVStoreState
+  ) -> (handle: OpaquePointer, state: MMKVStoreState)? {
+    let opened: (handle: UInt, state: MMKVStoreState)? = Self.openStores.withLock { openStores in
+      guard let handle = open() else { return nil }
+      for path in self.dataPaths(forID: id) {
+        openStores[path] = OpenStore(id: id, handle: UInt(bitPattern: handle))
       }
-      return UInt(bitPattern: handle)
+      return (UInt(bitPattern: handle), state(handle))
     }
-    return OpaquePointer(bitPattern: handle)
+    guard let opened, let handle = OpaquePointer(bitPattern: opened.handle) else { return nil }
+    return (handle, opened.state)
+  }
+
+  /// Frees the instance whose pointer has these bits, and forgets that its store is open. The
+  /// caller must make sure that nothing is using the instance, or will.
+  static func close(handle: UInt) {
+    Self.openStores.withLock { openStores in
+      openStores = openStores.filter { $0.value.handle != handle }
+      MMKVStoreState.remove(forHandle: handle)
+      if let handle = OpaquePointer(bitPattern: handle) {
+        mmkv_close(handle)
+      }
+    }
   }
 
   /// The identifier of the open store that has one of `dataPaths` as its data file, however
@@ -397,7 +418,8 @@ extension MMKVStorage {
     }
   }
 
-  /// Runs `body`, which takes the file locks of `stores`, unless one of them is suspended.
+  /// Runs `body`, which takes the file locks of `stores`, unless one of them is suspended or
+  /// closed. None of them is closed until `body` returns.
   ///
   /// The lock on the open stores is not held meanwhile, because `body` waits for the locks of
   /// those stores, and a thread that holds one of them may be opening another store.
@@ -406,16 +428,15 @@ extension MMKVStorage {
     _ body: ([MMKVStoreState]) -> R
   ) throws(MMKVError) -> R {
     let states = stores.compactMap { MMKVStoreState.existing(forHandle: $0.handle) }
-    var entered = [SuspensionGate]()
+    var entered = [(gate: StoreGate, pass: StoreGate.Pass)]()
     defer {
-      for gate in entered {
-        gate.leave()
+      for (gate, pass) in entered {
+        gate.leaveScope(pass)
       }
     }
     for state in states {
-      guard let gate = state.suspensionGate else { continue }
-      guard gate.enter() else { throw MMKVErrors.storeIsSuspended(id: state.id) }
-      entered.append(gate)
+      guard let pass = state.gate.enterScope() else { throw MMKVErrors.unavailable(state) }
+      entered.append((state.gate, pass))
     }
     return body(states)
   }

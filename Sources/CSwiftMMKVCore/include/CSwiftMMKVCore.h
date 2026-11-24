@@ -24,6 +24,19 @@ extern "C" {
 #define CSWIFTMMKV_SYMBOL(name) \
   __asm__(CSWIFTMMKV_STRINGIFY(__USER_LABEL_PREFIX__) "swiftmmkv_core_" #name)
 
+// Atomic integers. Swift only has them from the 2024 Apple releases on, and the Swift side
+// counts the operations under way on a store with one, on every read and write.
+
+static inline int64_t mmkv_atomic_add(int64_t *_Nonnull value, int64_t delta) {
+  return __atomic_add_fetch(value, delta, __ATOMIC_SEQ_CST);
+}
+static inline int64_t mmkv_atomic_load(const int64_t *_Nonnull value) {
+  return __atomic_load_n(value, __ATOMIC_SEQ_CST);
+}
+static inline void mmkv_atomic_store(int64_t *_Nonnull value, int64_t new_value) {
+  __atomic_store_n(value, new_value, __ATOMIC_SEQ_CST);
+}
+
 /// An MMKV instance. Instances are owned by the core and live for the rest of the process.
 typedef struct mmkv_store mmkv_store;
 
@@ -101,6 +114,10 @@ void mmkv_set_integrity_failure_callback(mmkv_integrity_failure_callback _Nullab
 /// root directory and identifier. Returns NULL if the store could not be opened.
 mmkv_store *_Nullable mmkv_open(const mmkv_configuration *_Nonnull configuration)
   CSWIFTMMKV_SYMBOL(open);
+/// Frees a store's instance, so that the next open of its root directory and identifier makes a
+/// new one. The caller must make sure that nothing else is using the instance, or will.
+void mmkv_close(mmkv_store *_Nonnull store)
+  CSWIFTMMKV_SYMBOL(close);
 
 // Stores on disk.
 

@@ -125,6 +125,22 @@ enum MMKVErrors {
   static func storeIsSuspended(id: MMKVStore.ID) -> MMKVError {
     MMKVError(code: .storeIsSuspended, message: "The store \(quoted: id) is suspended.")
   }
+
+  static func storeIsClosed(id: MMKVStore.ID) -> MMKVError {
+    MMKVError(code: .storeIsClosed, message: "The store \(quoted: id) is closed.")
+  }
+
+  /// The error for an operation that `store` turned away, or `nil` if it is turning none away.
+  static func unavailable(_ store: MMKVStore) -> MMKVError? {
+    if store.isClosed { return Self.storeIsClosed(id: store.id) }
+    if store.isSuspended { return Self.storeIsSuspended(id: store.id) }
+    return nil
+  }
+
+  /// The error for an operation that the gate of `state` turned away.
+  static func unavailable(_ state: MMKVStoreState) -> MMKVError {
+    state.gate.isClosed ? Self.storeIsClosed(id: state.id) : Self.storeIsSuspended(id: state.id)
+  }
 }
 
 extension String.StringInterpolation {

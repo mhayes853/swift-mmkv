@@ -158,8 +158,8 @@ extension MMKVStore {
       }
       return didStore
     }
-    if !didStore && self.isSuspended {
-      throw MMKVErrors.storeIsSuspended(id: self.id)
+    if !didStore, let error = MMKVErrors.unavailable(self) {
+      throw error
     }
     return didStore
   }
@@ -194,7 +194,12 @@ extension MMKVStore {
     options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
   ) throws -> T {
     try self.withExclusiveLock { store in
-      try KeyDecodingContext(store: store, options: options)
+      // A store that turns reads away looks empty, which an optional or a dictionary decodes
+      // from without complaint.
+      if let error = MMKVErrors.unavailable(store) {
+        throw error
+      }
+      return try KeyDecodingContext(store: store, options: options)
         .decode(type, at: prefix, codingPath: [])
     }
   }
@@ -221,8 +226,72 @@ extension MMKVStore {
     options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
   ) throws -> (repeat each T) {
     try self.withExclusiveLock { store in
+      if let error = MMKVErrors.unavailable(store) {
+        throw error
+      }
       let context = KeyDecodingContext(store: store, options: options)
       return (repeat try context.decode((each values).1, at: (each values).0, codingPath: []))
+    }
+  }
+}
+
+// MARK: - Keys Under A Prefix
+
+extension MMKVStore {
+  /// `prefix`, if it has a value, and every key under it, which is every key that
+  /// ``removeValues(underKey:separator:)`` would remove.
+  ///
+  /// ```swift
+  /// store.keys(underKey: "settings")  // ["settings.theme", "settings.sync.isEnabled"]
+  /// ```
+  ///
+  /// A key is under `prefix` when it starts with `prefix` and `separator`. An empty `prefix`
+  /// has every key under it. The keys are whole keys, with the prefix, so each can be handed
+  /// back to the store. This reads every key in the store.
+  ///
+  /// - Parameters:
+  ///   - prefix: The start of the keys to return.
+  ///   - separator: What joins a prefix and the rest of a key.
+  public func keys(underKey prefix: String, separator: String = ".") -> Set<String> {
+    let names = KeyNames(separator: separator)
+    return self.keys.filter { names.isAtOrUnder($0, prefix) }
+  }
+
+  /// Calls `onChange` whenever `prefix` or a key under it may have changed, until the returned
+  /// subscription is cancelled or released.
+  ///
+  /// ```swift
+  /// let subscription = store.subscribe(underKey: "settings") {
+  ///   settings = try? store.decode(Settings.self, fromKeysUnder: "settings")
+  /// }
+  /// ```
+  ///
+  /// That is whenever such a key is set or removed through this package, and whenever a
+  /// ``Change/external`` change is noticed, since such a change does not say which keys it
+  /// touched. `onChange` runs once for each key that changes, so an
+  /// ``encode(_:intoKeysUnder:removingOtherKeys:expiry:options:)`` that writes three keys runs
+  /// it three times, after all three are written. In other respects this behaves like
+  /// ``subscribe(_:)``.
+  ///
+  /// A key is under `prefix` when it starts with `prefix` and `separator`. An empty `prefix`
+  /// has every key under it.
+  ///
+  /// - Parameters:
+  ///   - prefix: The start of the keys to observe.
+  ///   - separator: What joins a prefix and the rest of a key.
+  ///   - onChange: Runs after each change.
+  public func subscribe(
+    underKey prefix: String,
+    separator: String = ".",
+    _ onChange: @escaping @Sendable () -> Void
+  ) -> MMKVSubscription {
+    self.subscribe { change in
+      if case .key(let changed) = change,
+        !KeyNames(separator: separator).isAtOrUnder(changed, prefix)
+      {
+        return
+      }
+      onChange()
     }
   }
 }

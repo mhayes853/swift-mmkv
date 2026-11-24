@@ -12,8 +12,17 @@ struct KeyChangeSignals {
       of: Void.self,
       bufferingPolicy: .bufferingNewest(1)
     )
-    self.subscription = store.subscribe(forKey: key) { continuation.yield() }
+    // A closed store tells its listeners so once, and nothing after that.
+    self.subscription = store.subscribe(forKey: key) {
+      continuation.yield()
+      if store.isClosed {
+        continuation.finish()
+      }
+    }
     continuation.yield()
+    if store.isClosed {
+      continuation.finish()
+    }
     self.iterator = stream.makeAsyncIterator()
   }
 
