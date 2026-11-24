@@ -38,10 +38,12 @@ import Testing
     let store = try makeStore(id: "settings", rootDirectory: rootDirectory)
     store.set("dark", forKey: "theme")
 
+    // A `catch` with a `where` clause crashes the compiler of Swift 6.3.3 here.
     var caught: MMKVError?
     do {
       try directory.removeStore(id: "settings")
-    } catch  where error.code == .storeIsOpen {
+    } catch {
+      guard error.code == .storeIsOpen else { throw error }
       caught = error
     }
 

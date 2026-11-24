@@ -12,7 +12,7 @@ import Testing
   }
 
   @Test func `Every Status Has A Message Of Its Own`() {
-    let statuses = SWIFTMMKV_OK...SWIFTMMKV_DISABLE_EXPIRY_FAILED
+    let statuses = SWIFTMMKV_OK...SWIFTMMKV_UNKNOWN_ERROR
     let messages = statuses.map { String(cString: swiftmmkv_status_message($0)) }
     let unknown = String(cString: swiftmmkv_status_message(9999))
 

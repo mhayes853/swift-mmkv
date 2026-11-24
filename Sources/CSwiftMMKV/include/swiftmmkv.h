@@ -110,6 +110,8 @@ typedef int32_t swiftmmkv_status;
 /// The store's file could not be rewritten without its expiries, for example because it is
 /// read-only.
 #define SWIFTMMKV_DISABLE_EXPIRY_FAILED 17
+/// The operation failed in a way this version of the interface has no status for.
+#define SWIFTMMKV_UNKNOWN_ERROR 18
 
 /// A description of `status` in English. The string is static and must not be freed.
 const char *_Nonnull swiftmmkv_status_message(swiftmmkv_status status);

@@ -202,7 +202,7 @@ private func status<T>(
     output?.pointee = value
     return SWIFTMMKV_OK
   } catch {
-    return switch error {
+    return switch error.code {
     case .openFailed: SWIFTMMKV_OPEN_FAILED
     case .invalidEncryptionKey: SWIFTMMKV_INVALID_ENCRYPTION_KEY
     case .rekeyFailed: SWIFTMMKV_REKEY_FAILED
@@ -219,6 +219,7 @@ private func status<T>(
     case .backupIsStoreDirectory: SWIFTMMKV_BACKUP_IS_STORE_DIRECTORY
     case .storeIsSuspended: SWIFTMMKV_STORE_IS_SUSPENDED
     case .disableExpiryFailed: SWIFTMMKV_DISABLE_EXPIRY_FAILED
+    default: SWIFTMMKV_UNKNOWN_ERROR
     }
   }
 }
@@ -251,6 +252,8 @@ public func swiftmmkv_status_message(_ status: swiftmmkv_status) -> UnsafePointe
       "The app group has no container this process can reach."
     case SWIFTMMKV_DISABLE_EXPIRY_FAILED:
       "The store's file could not be rewritten without its expiries."
+    case SWIFTMMKV_UNKNOWN_ERROR:
+      "The operation failed in a way this version of the interface has no status for."
     default: "An unknown status."
     }
   // A static string's bytes are NUL-terminated and live for the rest of the process.
