@@ -173,6 +173,20 @@ typedef int32_t swiftmmkv_recovery;
 /// Keep whatever key-value pairs can still be read.
 #define SWIFTMMKV_RECOVERY_RECOVER 1
 
+/// The data protection a store's files are given, which decides when iOS lets them be read.
+///
+/// A store's file is mapped into memory, and iOS ends a process that touches a mapped file
+/// the device's lock has made unreadable. The classes that make a file unreadable while the
+/// device is locked are therefore not offered.
+typedef int32_t swiftmmkv_file_protection;
+/// The files can be read once the device has been unlocked for the first time since it
+/// started, which is what iOS gives an app's files by default.
+#define SWIFTMMKV_FILE_PROTECTION_COMPLETE_UNTIL_FIRST_USER_AUTHENTICATION 0
+/// The files can always be read, even before the device is first unlocked.
+#define SWIFTMMKV_FILE_PROTECTION_NONE 1
+/// The files keep whatever protection they have.
+#define SWIFTMMKV_FILE_PROTECTION_UNCHANGED 2
+
 /// Which store to open and how to open it. A configuration is not thread-safe: use it from one
 /// thread at a time.
 typedef struct swiftmmkv_configuration swiftmmkv_configuration;
@@ -210,6 +224,14 @@ void swiftmmkv_configuration_set_expected_capacity(
   swiftmmkv_configuration *_Nonnull configuration, size_t bytes);
 void swiftmmkv_configuration_set_recovery(
   swiftmmkv_configuration *_Nonnull configuration, swiftmmkv_recovery recovery);
+/// Sets the data protection the store's files are given each time the store is opened, which
+/// is `SWIFTMMKV_FILE_PROTECTION_COMPLETE_UNTIL_FIRST_USER_AUTHENTICATION` unless this says
+/// otherwise.
+///
+/// A read-only store's files are left as they are, and nothing happens on a platform without
+/// data protection. A file whose protection cannot be set is logged and does not fail the open.
+void swiftmmkv_configuration_set_file_protection(
+  swiftmmkv_configuration *_Nonnull configuration, swiftmmkv_file_protection protection);
 /// Sets whether a write is skipped when the key already holds an identical value, which keeps
 /// the file from growing. MMKV ignores this for encrypted stores and stores with expiring keys.
 void swiftmmkv_configuration_set_compare_before_set(
@@ -235,9 +257,9 @@ typedef struct swiftmmkv_store swiftmmkv_store;
 
 /// Opens a store. The configuration is copied, so it can be destroyed or changed afterwards.
 ///
-/// An option that was set to something invalid is reported here: a mode, cipher, or recovery
-/// that is not one of its constants as `SWIFTMMKV_INVALID_ARGUMENT`, and a key of the wrong
-/// length as `SWIFTMMKV_INVALID_ENCRYPTION_KEY`.
+/// An option that was set to something invalid is reported here: a mode, cipher, recovery, or
+/// file protection that is not one of its constants as `SWIFTMMKV_INVALID_ARGUMENT`, and a key
+/// of the wrong length as `SWIFTMMKV_INVALID_ENCRYPTION_KEY`.
 swiftmmkv_status swiftmmkv_store_open(
   const swiftmmkv_configuration *_Nonnull configuration,
   swiftmmkv_store *_Nullable *_Nonnull out_store);

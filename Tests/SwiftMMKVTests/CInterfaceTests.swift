@@ -65,13 +65,34 @@ import Testing
     #expect(handle != nil)
   }
 
-  @Test func `An Unknown Cipher Or Recovery Fails The Open`() {
+  @Test func `An Unknown Cipher, Recovery, Or File Protection Fails The Open`() {
+    #expect(throws: CStatusError(status: SWIFTMMKV_INVALID_ARGUMENT)) {
+      try CStore { swiftmmkv_configuration_set_file_protection($0, 99) }
+    }
     #expect(throws: CStatusError(status: SWIFTMMKV_INVALID_ARGUMENT)) {
       try CStore { swiftmmkv_configuration_set_encryption($0, 99, "key", 3) }
     }
     #expect(throws: CStatusError(status: SWIFTMMKV_INVALID_ARGUMENT)) {
       try CStore { swiftmmkv_configuration_set_recovery($0, 99) }
     }
+  }
+
+  @Test(
+    arguments: [
+      SWIFTMMKV_FILE_PROTECTION_COMPLETE_UNTIL_FIRST_USER_AUTHENTICATION,
+      SWIFTMMKV_FILE_PROTECTION_NONE,
+      SWIFTMMKV_FILE_PROTECTION_UNCHANGED
+    ]
+  )
+  func `A Store Opens With Each File Protection`(protection: swiftmmkv_file_protection) throws {
+    let store = try CStore {
+      swiftmmkv_configuration_set_file_protection($0, 99)
+      swiftmmkv_configuration_set_file_protection($0, protection)
+    }
+    defer { store.close() }
+
+    #expect(swiftmmkv_store_set_string(store.handle, "name", "blob", 0) == true)
+    #expect(store.string(forKey: "name") == "blob")
   }
 
   @Test func `An Encryption Key Of The Wrong Length Fails The Open`() {

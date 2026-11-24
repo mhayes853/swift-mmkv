@@ -79,6 +79,18 @@ private func makeRecovery(_ recovery: swiftmmkv_recovery) -> MMKVConfiguration.R
   }
 }
 
+private func makeFileProtection(
+  _ protection: swiftmmkv_file_protection
+) -> MMKVConfiguration.FileProtection? {
+  switch protection {
+  case SWIFTMMKV_FILE_PROTECTION_COMPLETE_UNTIL_FIRST_USER_AUTHENTICATION:
+    .completeUntilFirstUserAuthentication
+  case SWIFTMMKV_FILE_PROTECTION_NONE: MMKVConfiguration.FileProtection.none
+  case SWIFTMMKV_FILE_PROTECTION_UNCHANGED: .unchanged
+  default: nil
+  }
+}
+
 /// The cipher and key of a C call, or `nil` if `encryption` is not one of its constants.
 ///
 /// A key of the wrong length is let through, for the store to turn down.
@@ -351,6 +363,14 @@ public func swiftmmkv_configuration_set_recovery(
   _ recovery: swiftmmkv_recovery
 ) {
   configuration.configuration.set(\.recovery, to: makeRecovery(recovery))
+}
+
+@c @implementation
+public func swiftmmkv_configuration_set_file_protection(
+  _ configuration: OpaquePointer,
+  _ protection: swiftmmkv_file_protection
+) {
+  configuration.configuration.set(\.fileProtection, to: makeFileProtection(protection))
 }
 
 @c @implementation
