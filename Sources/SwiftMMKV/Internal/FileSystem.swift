@@ -65,3 +65,27 @@ func withExclusiveFileLock<R>(atPath path: String, _ body: () -> R) -> R? {
   }
   return body()
 }
+
+/// Gives the file at `path` a data protection class, which Darwin numbers from 1 for the
+/// strictest.
+///
+/// - Returns: The error number of the call that failed, or `nil` if the file has the class or
+///   the platform has no data protection.
+func setProtectionClass(_ protectionClass: Int32, ofFileAtPath path: String) -> Int32? {
+  #if canImport(Darwin)
+    let descriptor = open(path, O_RDWR | O_CLOEXEC)
+    guard descriptor >= 0 else { return errno }
+    defer { close(descriptor) }
+    guard fcntl(descriptor, F_GETPROTECTIONCLASS) != protectionClass else { return nil }
+    // The system turns a change away as busy for a moment after an earlier change to the same
+    // file, which is over within a few hundred microseconds.
+    for _ in 0..<50 {
+      if fcntl(descriptor, F_SETPROTECTIONCLASS, protectionClass) == 0 { return nil }
+      guard errno == EBUSY else { return errno }
+      usleep(200)
+    }
+    return EBUSY
+  #else
+    return nil
+  #endif
+}

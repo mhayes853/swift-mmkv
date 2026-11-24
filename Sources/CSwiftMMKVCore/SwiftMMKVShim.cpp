@@ -471,6 +471,10 @@ size_t mmkv_total_size(mmkv_store *store) { return core(store)->totalSize(); }
 
 size_t mmkv_actual_size(mmkv_store *store) { return core(store)->actualSize(); }
 
+bool mmkv_is_expiry_enabled(mmkv_store *store) { return core(store)->isExpirationEnabled(); }
+
+bool mmkv_disable_expiry(mmkv_store *store) { return core(store)->disableAutoKeyExpire(); }
+
 bool mmkv_rekey(mmkv_store *store, int32_t encryption, mmkv_bytes encryptionKey) {
   if (encryption == MMKV_ENCRYPTION_NONE) {
     return core(store)->reKey(std::string());

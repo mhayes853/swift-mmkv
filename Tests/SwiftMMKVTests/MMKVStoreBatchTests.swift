@@ -107,7 +107,7 @@ import Testing
     let store = try makeStore()
     store.set(0.0, forKey: "kept")
 
-    store.set(["a": 1.0, "b": 2.0], expiringIn: .seconds(1))
+    store.set(["a": 1.0, "b": 2.0], expiry: .after(.seconds(1)))
     #expect(store.values(forKeys: ["a", "b"], as: Double.self) == ["a": 1, "b": 2])
 
     try await Task.sleep(for: .seconds(2.1))

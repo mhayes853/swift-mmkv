@@ -78,7 +78,7 @@ extension MMKVStore.DefaultedKey where Value == String {
   @Test func `A Value Can Expire`() throws {
     let store = try makeStore()
 
-    #expect(store.set("123456", for: .username, expiringIn: .seconds(60)))
+    #expect(store.set("123456", for: .username, expiry: .after(.seconds(60))))
 
     #expect(store[.username] == "123456")
   }

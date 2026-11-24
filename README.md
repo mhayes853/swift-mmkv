@@ -129,6 +129,41 @@ let count = store.withBytes(forKey: "avatar") { $0.byteCount }
 `set(unsafeBytes:forKey:)` and `withUnsafeBytes(forKey:)` do the same with an
 `UnsafeRawBufferPointer`, for handing bytes to and from C.
 
+## Expiring values
+
+A value can be given an expiry when it is written. An expired key reads as if it had been
+removed, and is left out of `keys` and `count`:
+
+```swift
+store.set("123456", forKey: "otp", expiry: .after(.seconds(30)))
+store.set(token, forKey: "token", expiry: .at(secondsSince1970: claims.exp))
+store.set(token, forKey: "token", expiry: .at(response.expiresAt))  // A `Date`, with `Foundation`.
+```
+
+Every write takes an `expiry:`, typed keys, batches and `Codable` values included. A write
+without one has the store's default, which is to keep the value until it is removed:
+
+```swift
+var configuration = MMKVConfiguration(directory: directory, mode: .singleProcess)
+configuration.defaultExpiry = .after(.seconds(3600))
+let cache = try MMKVStore(configuration)
+
+cache.set(page, forKey: "home")                       // Kept for an hour.
+cache.set(page, forKey: "pinned", expiry: .never)     // Kept until it is removed.
+```
+
+- An expiry is rounded up to a whole second, and the shortest is one second. A value written
+  after the moment it expires at is kept for one second.
+- MMKV records the second a key expires at in 32 bits, by the device's clock. An expiry past the
+  last moment it can record, in 2106, is no expiry, and changing the clock moves every expiry.
+- The default belongs to the `MMKVStore` it was configured on, and not to the store's files. It
+  applies to that store's writes alone, and values that are already stored keep their expiry.
+- Nothing reports the moment a key expires. A change listener, a subscription to the key and a
+  SwiftUI view reading it hear nothing until the key is next written or removed.
+- The first write that expires rewrites the store's file in a format that records an expiry for
+  every key. `isExpiryEnabled` tells whether the file is in it. `disableExpiry()` rewrites the
+  file back, dropping the keys that have expired and keeping every other key for good.
+
 ## Codable values
 
 A `Codable` value is stored whole under one key, in whatever form a coder gives it:
@@ -573,8 +608,8 @@ Things to know while both sides are live:
 - `MMKVDirectory.reactNative()` is only available on Apple platforms, and needs the `Foundation`
   trait. On Android, pass the path of `context.filesDir` to
   `MMKVDirectory.reactNative(filesDirectory:)`.
-- Avoid `expiringIn:` on a shared store. The first expiring write changes the file's format, and
-  react-native-mmkv has no option for it.
+- Avoid expiring values on a shared store. The first write that expires changes the file's
+  format, and react-native-mmkv has no option for it. `store.disableExpiry()` changes it back.
 
 The [`E2E`](E2E) directory holds an Expo app that links react-native-mmkv beside a native module
 built on this package, and checks on iOS and Android that both sides agree about the same files.
@@ -659,6 +694,32 @@ Things to know:
 - An app launched in the background starts with its stores usable, and never enters the
   background. Suspend the stores when that work is done.
 - On macOS there is nothing to observe, so only the manual forms are available.
+
+## File protection
+
+On Apple's platforms a file's data protection class decides when it can be read. A store's file
+is mapped into memory, and iOS ends a process that touches a mapped file the device's lock has
+made unreadable. That happens to a store whose files are in the `complete` class, which is the
+class of every file of an app with the data protection entitlement set to `complete`.
+
+So each time a writable store is opened, its two files are moved to "complete until first user
+authentication", as MMKV itself does on iOS and as react-native-mmkv's copy of it does to any
+store the two share. That is also the class iOS gives an app's files by default, so for most
+apps nothing changes.
+
+```swift
+var configuration = MMKVConfiguration(directory: directory, mode: .singleProcess)
+configuration.fileProtection = .unchanged  // Leave the files' protection alone.
+configuration.fileProtection = .none       // Readable before the device is first unlocked.
+```
+
+- The classes that lock a file while the device is locked are not offered, because a store
+  cannot yet be unmapped before the device locks.
+- A read-only store's files are left as they are.
+- Only the store's files are changed, not their directory. A new store's files have the
+  directory's class for the moment between being created and being opened.
+- A file that cannot be given the class is logged as a warning, and the store still opens.
+- Nothing happens on platforms without data protection.
 
 ## Logging and integrity failures
 
@@ -970,9 +1031,8 @@ the header declares is implemented.
 
 ## Known gaps
 
-- On iOS the store's files keep the default file protection. Upstream's Objective-C++ build
-  relaxes it to "until first user authentication" so a store can be read while the device is
-  locked; this package builds the core's POSIX variant, which does not.
+- File protection is tested by reading the class of a store's files back, on macOS and the iOS
+  simulator. What a locked device does with those files has not been checked on one.
 
 ## The vendored core
 

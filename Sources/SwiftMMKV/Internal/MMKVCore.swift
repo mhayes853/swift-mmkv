@@ -8,6 +8,7 @@ import CSwiftMMKVCore
 struct MMKVCore: Sendable {
   private nonisolated(unsafe) let handle: OpaquePointer
   let state: MMKVStoreState
+  private let defaultExpiry: MMKVExpiry
 
   /// Opens the instance described by `configuration`, creating its files if they do not exist.
   init(_ configuration: MMKVConfiguration) throws(MMKVError) {
@@ -22,7 +23,15 @@ struct MMKVCore: Sendable {
     guard let handle else {
       throw .openFailed(id: configuration.id, directory: configuration.directory)
     }
+    if !configuration.isReadOnly, let protectionClass = configuration.fileProtection.cValue {
+      let failures = MMKVStorage(path: configuration.directory.path)
+        .setProtectionClass(protectionClass, forID: configuration.id)
+      for (path, error) in failures {
+        LogSink.log(.warning, "failed to set the file protection of [\(path)], errno \(error)")
+      }
+    }
     self.handle = handle
+    self.defaultExpiry = configuration.defaultExpiry
     self.state = MMKVStoreState.shared(
       for: handle,
       id: configuration.id,
@@ -352,6 +361,34 @@ extension MMKVCore {
     self.perform { mmkv_sync($0) }
   }
 
+  /// The number of seconds the core should keep a key written now with `expiry` for, or zero
+  /// for good. A write that names no expiry has the one this store was opened with.
+  func expirySeconds(for expiry: MMKVExpiry?) -> UInt32 {
+    SwiftMMKV.expirySeconds(for: expiry ?? self.defaultExpiry)
+  }
+
+  /// Whether the store's file records when each key expires.
+  var isExpiryEnabled: Bool {
+    self.perform { handle in
+      // Another process may have changed the file's format since it was last read.
+      mmkv_check_content_changed(handle)
+      return mmkv_is_expiry_enabled(handle)
+    } ?? false
+  }
+
+  func disableExpiry() throws(MMKVError) {
+    let didDisable = self.perform { handle in
+      mmkv_lock(handle)
+      defer { mmkv_unlock(handle) }
+      // The core keeps every key it holds, and it holds an expired key until it is asked to
+      // look for them, which counting the keys does.
+      _ = mmkv_count(handle)
+      return mmkv_disable_expiry(handle)
+    }
+    guard let didDisable else { throw .storeIsSuspended(id: self.state.id) }
+    guard didDisable else { throw .disableExpiryFailed }
+  }
+
   func rekey(_ encryption: MMKVConfiguration.Encryption?) throws(MMKVError) {
     if let encryption, !encryption.isValid {
       throw .invalidEncryptionKey
@@ -394,6 +431,17 @@ extension MMKVConfiguration.Encryption? {
     case nil: Int32(MMKV_ENCRYPTION_NONE)
     case .aes128: Int32(MMKV_ENCRYPTION_AES128)
     case .aes256: Int32(MMKV_ENCRYPTION_AES256)
+    }
+  }
+}
+
+extension MMKVConfiguration.FileProtection {
+  /// The number Darwin gives the class, or `nil` to leave a file's class alone.
+  fileprivate var cValue: Int32? {
+    switch self {
+    case .completeUntilFirstUserAuthentication: 3
+    case .none: 4
+    case .unchanged: nil
     }
   }
 }

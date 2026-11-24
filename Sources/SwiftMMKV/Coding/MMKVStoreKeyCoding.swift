@@ -18,7 +18,7 @@ extension MMKVStore {
   /// This is how to read and write keys that a React Native app stores one by one, as one
   /// value. With the default `options`, numbers are stored as `Double` and arrays as JSON
   /// strings, as JavaScript stores them. To store a value whole under one key instead, see
-  /// ``encode(_:forKey:expiringIn:with:)``.
+  /// ``encode(_:forKey:expiry:with:)``.
   ///
   /// An empty `prefix` names the keys by their paths alone, so the properties of `value` become
   /// top-level keys. A `value` that encodes itself as a single value, such as a string, is
@@ -41,7 +41,7 @@ extension MMKVStore {
   ///   - prefix: The start of every key.
   ///   - removingOtherKeys: Whether to remove `prefix` and the keys under it that `value` did
   ///     not write. This reads every key in the store.
-  ///   - expiringIn: How long the keys live. `nil` keeps them until they are removed.
+  ///   - expiry: How long the keys live. See ``set(_:forKey:expiry:)``.
   ///   - options: How the keys are named, and how numbers and arrays are stored.
   /// - Returns: Whether every key was stored. A value whose type refuses to store it, such as a
   ///   `Decimal` that is not a number, is one that was not.
@@ -52,7 +52,7 @@ extension MMKVStore {
     _ value: T,
     intoKeysUnder prefix: String,
     removingOtherKeys: Bool = false,
-    expiringIn: Duration? = nil,
+    expiry: MMKVExpiry? = nil,
     options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
   ) throws -> Bool {
     let context = KeyEncodingContext(options)
@@ -62,13 +62,13 @@ extension MMKVStore {
       buffer,
       under: [prefix],
       removingOtherKeys: removingOtherKeys,
-      expiringIn: expiringIn,
+      expiry: expiry,
       names: context.names
     )
   }
 
   /// Stores each value over the keys under its prefix, as
-  /// ``encode(_:intoKeysUnder:removingOtherKeys:expiringIn:options:)`` does for one value.
+  /// ``encode(_:intoKeysUnder:removingOtherKeys:expiry:options:)`` does for one value.
   ///
   /// ```swift
   /// try store.encode(intoKeysUnder: ("settings", settings), ("profile", profile))
@@ -85,7 +85,7 @@ extension MMKVStore {
   ///   - values: Each prefix, paired with the value to store under it.
   ///   - removingOtherKeys: Whether to remove the prefixes and the keys under them that the
   ///     values did not write.
-  ///   - expiringIn: How long the keys live. `nil` keeps them until they are removed.
+  ///   - expiry: How long the keys live. See ``set(_:forKey:expiry:)``.
   ///   - options: How the keys are named, and how numbers and arrays are stored.
   /// - Returns: Whether every key was stored. A value whose type refuses to store it, such as a
   ///   `Decimal` that is not a number, is one that was not.
@@ -95,7 +95,7 @@ extension MMKVStore {
   public func encode<each T: Encodable>(
     intoKeysUnder values: repeat (String, each T),
     removingOtherKeys: Bool = false,
-    expiringIn: Duration? = nil,
+    expiry: MMKVExpiry? = nil,
     options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
   ) throws -> Bool {
     let context = KeyEncodingContext(options)
@@ -110,7 +110,7 @@ extension MMKVStore {
       buffer,
       under: prefixes,
       removingOtherKeys: removingOtherKeys,
-      expiringIn: expiringIn,
+      expiry: expiry,
       names: context.names
     )
   }
@@ -119,7 +119,7 @@ extension MMKVStore {
     _ buffer: KeyEncodingBuffer,
     under prefixes: [String],
     removingOtherKeys: Bool,
-    expiringIn: Duration?,
+    expiry: MMKVExpiry?,
     names: KeyNames
   ) throws -> Bool {
     let didStore = self.withExclusiveLock { store in
@@ -128,7 +128,7 @@ extension MMKVStore {
       for operation in buffer.operations {
         switch operation {
         case .set(let key, let write):
-          didStore = write(store, key, expiringIn) && didStore
+          didStore = write(store, key, expiry) && didStore
           written.insert(key)
         case .removeAtOrUnder(let key):
           store.removeAll(keepingCapacity: true) { names.isAtOrUnder($0, key) }
@@ -148,7 +148,7 @@ extension MMKVStore {
   }
 
   /// Reads a `T` from keys named by `prefix` and the names along the path to each of its
-  /// properties, as ``encode(_:intoKeysUnder:removingOtherKeys:expiringIn:options:)`` stores
+  /// properties, as ``encode(_:intoKeysUnder:removingOtherKeys:expiry:options:)`` stores
   /// them.
   ///
   /// ```swift
@@ -214,7 +214,7 @@ extension MMKVStore {
 
 extension MMKVStore {
   /// Removes `prefix` and every key under it, which is every key that
-  /// ``encode(_:intoKeysUnder:removingOtherKeys:expiringIn:options:)`` could have written for
+  /// ``encode(_:intoKeysUnder:removingOtherKeys:expiry:options:)`` could have written for
   /// that prefix.
   ///
   /// ```swift

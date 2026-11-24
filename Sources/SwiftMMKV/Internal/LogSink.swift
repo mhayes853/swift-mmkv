@@ -77,8 +77,29 @@ enum LogSink {
       function: String(function),
       line: Int(line)
     )
+    LogSink.deliver(message)
+  }
+
+  /// Logs a message of this package's own, which goes where the core's messages go. Without a
+  /// handler or the `Logging` trait there is nowhere in Swift to send it, and it is dropped.
+  static func log(
+    _ level: MMKVLog.Level,
+    _ text: @autoclosure () -> String,
+    file: String = #fileID,
+    function: String = #function,
+    line: Int = #line
+  ) {
+    guard let minimumLevel = self.minimumLevel, level.rawValue >= minimumLevel.rawValue else {
+      return
+    }
+    self.deliver(
+      MMKVLog.Message(level: level, text: text(), file: file, function: function, line: line)
+    )
+  }
+
+  private static func deliver(_ message: MMKVLog.Message) {
     #if Logging
-      let (handler, logger) = LogSink.destination.withLock { destination in
+      let (handler, logger) = self.destination.withLock { destination in
         (destination.handler, destination.handler == nil ? destination.resolveLogger() : nil)
       }
       if let handler {
@@ -94,7 +115,7 @@ enum LogSink {
         )
       }
     #else
-      let handler = LogSink.destination.withLock { $0.handler }
+      let handler = self.destination.withLock { $0.handler }
       handler?(message)
     #endif
   }

@@ -274,6 +274,12 @@ void mmkv_sync(mmkv_store *_Nonnull store)
   CSWIFTMMKV_SYMBOL(sync);
 void mmkv_check_content_changed(mmkv_store *_Nonnull store)
   CSWIFTMMKV_SYMBOL(check_content_changed);
+/// Whether the store's file records when each key expires.
+bool mmkv_is_expiry_enabled(mmkv_store *_Nonnull store)
+  CSWIFTMMKV_SYMBOL(is_expiry_enabled);
+/// Rewrites the store's file without its expiries, keeping every key the core holds.
+bool mmkv_disable_expiry(mmkv_store *_Nonnull store)
+  CSWIFTMMKV_SYMBOL(disable_expiry);
 bool mmkv_rekey(
   mmkv_store *_Nonnull store, int32_t encryption, mmkv_bytes encryption_key)
   CSWIFTMMKV_SYMBOL(rekey);

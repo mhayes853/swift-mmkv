@@ -39,7 +39,7 @@ extension MMKVStore {
   /// - Parameters:
   ///   - value: The value to encode.
   ///   - key: The key, which must not be empty.
-  ///   - expiringIn: How long to keep the value. See ``set(_:forKey:expiringIn:)``.
+  ///   - expiry: How long to keep the value. See ``set(_:forKey:expiry:)``.
   ///   - encoder: The encoder to use.
   /// - Returns: Whether the encoded value was stored.
   /// - Throws: Whatever `encoder` throws, in which case nothing is stored, or
@@ -48,10 +48,10 @@ extension MMKVStore {
   public func encode<T: Encodable, Encoder: MMKVTopLevelEncoder>(
     _ value: T,
     forKey key: String,
-    expiringIn: Duration? = nil,
+    expiry: MMKVExpiry? = nil,
     with encoder: Encoder
   ) throws -> Bool where Encoder.Output: MMKVValue {
-    let didStore = self.set(try encoder.encode(value), forKey: key, expiringIn: expiringIn)
+    let didStore = self.set(try encoder.encode(value), forKey: key, expiry: expiry)
     if !didStore && self.isSuspended {
       throw MMKVError.storeIsSuspended(id: self.id)
     }

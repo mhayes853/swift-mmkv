@@ -86,7 +86,7 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
   @Test func `A Value Can Expire`() throws {
     let store = try makeStore()
 
-    #expect(try store.set(7, for: .count, expiringIn: .seconds(60)))
+    #expect(try store.set(7, for: .count, expiry: .after(.seconds(60))))
 
     #expect(try store.value(for: .count) == 7)
   }
