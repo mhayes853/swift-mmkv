@@ -227,6 +227,67 @@ extension MMKVStore {
   }
 }
 
+// MARK: - Keys Under A Prefix
+
+extension MMKVStore {
+  /// `prefix`, if it has a value, and every key under it, which is every key that
+  /// ``removeValues(underKey:separator:)`` would remove.
+  ///
+  /// ```swift
+  /// store.keys(underKey: "settings")  // ["settings.theme", "settings.sync.isEnabled"]
+  /// ```
+  ///
+  /// A key is under `prefix` when it starts with `prefix` and `separator`. An empty `prefix`
+  /// has every key under it. The keys are whole keys, with the prefix, so each can be handed
+  /// back to the store. This reads every key in the store.
+  ///
+  /// - Parameters:
+  ///   - prefix: The start of the keys to return.
+  ///   - separator: What joins a prefix and the rest of a key.
+  public func keys(underKey prefix: String, separator: String = ".") -> Set<String> {
+    let names = KeyNames(separator: separator)
+    return self.keys.filter { names.isAtOrUnder($0, prefix) }
+  }
+
+  /// Calls `onChange` whenever `prefix` or a key under it may have changed, until the returned
+  /// subscription is cancelled or released.
+  ///
+  /// ```swift
+  /// let subscription = store.subscribe(underKey: "settings") {
+  ///   settings = try? store.decode(Settings.self, fromKeysUnder: "settings")
+  /// }
+  /// ```
+  ///
+  /// That is whenever such a key is set or removed through this package, and whenever a
+  /// ``Change/external`` change is noticed, since such a change does not say which keys it
+  /// touched. `onChange` runs once for each key that changes, so an
+  /// ``encode(_:intoKeysUnder:removingOtherKeys:expiry:options:)`` that writes three keys runs
+  /// it three times, after all three are written. In other respects this behaves like
+  /// ``subscribe(_:)``.
+  ///
+  /// A key is under `prefix` when it starts with `prefix` and `separator`. An empty `prefix`
+  /// has every key under it.
+  ///
+  /// - Parameters:
+  ///   - prefix: The start of the keys to observe.
+  ///   - separator: What joins a prefix and the rest of a key.
+  ///   - onChange: Runs after each change.
+  public func subscribe(
+    underKey prefix: String,
+    separator: String = ".",
+    _ onChange: @escaping @Sendable () -> Void
+  ) -> MMKVSubscription {
+    self.subscribe { change in
+      if case .key(let changed) = change,
+        !KeyNames(separator: separator).isAtOrUnder(changed, prefix)
+      {
+        return
+      }
+      onChange()
+    }
+  }
+}
+
 // MARK: - Removal
 
 extension MMKVStore {

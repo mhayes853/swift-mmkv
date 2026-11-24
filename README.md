@@ -255,6 +255,21 @@ store.removeValues(underKey: "settings")
 store.removeValues(underKeys: ["settings", "profile"])
 ```
 
+`keys(underKey:)` returns the same keys instead of removing them, and `subscribe(underKey:)`
+runs whenever one of them may have changed, which makes a value spread over several keys
+observable as one:
+
+```swift
+store.keys(underKey: "settings")  // ["settings.theme", "settings.sync.isEnabled"]
+
+let subscription = store.subscribe(underKey: "settings") {
+  settings = try? store.decode(Settings.self, fromKeysUnder: "settings")
+}
+```
+
+The subscription runs once for each key that changes, after the whole value is written, so
+the closure above never reads a value that is half written.
+
 ## Typed keys
 
 The string APIs above are the quickest to use. A typed key writes a key's name and the type of
