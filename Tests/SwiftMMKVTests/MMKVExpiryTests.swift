@@ -85,7 +85,7 @@ private struct Session: Codable, Equatable {
 
     store.set("a", forKey: "zero", expiry: .after(.zero))
     store.set("b", forKey: "negative", expiry: .after(.seconds(-60)))
-    store.set("c", forKey: "fraction", expiry: .after(.milliseconds(3_001)))
+    store.set("c", forKey: "fraction", expiry: .after(.milliseconds(3_600_001)))
     #expect(store.keys == ["zero", "negative", "fraction"])
 
     try await Task.sleep(for: Self.expiredAfter)
