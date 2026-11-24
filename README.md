@@ -226,13 +226,31 @@ let (settings, profile) = try store.decode(
 )
 ```
 
-A compiler-written `Encodable` conformance skips a property that is `nil`, so its key keeps the
-value it had. `removingOtherKeys: true` removes the keys under the prefix that the value did not
-write, at the cost of reading every key in the store. `removeValues(underKey:)` removes a prefix
-and everything under it:
+A compiler-written `Encodable` conformance skips a property that is `nil`, so nothing is written
+to its key. Encoding therefore removes the keys under the prefix that the value did not write, so
+that reading the value back gives what was encoded:
 
 ```swift
-try store.encode(settings, intoKeysUnder: "settings", removingOtherKeys: true)
+settings.theme = nil
+try store.encode(settings, intoKeysUnder: "settings")
+store.contains("settings.theme")  // false
+```
+
+Every key under the prefix is taken to belong to the value. **Under an empty prefix that is
+every key in the store**, so encoding there removes everything else the store holds:
+
+```swift
+store.set(true, forKey: "hasOnboarded")
+try store.encode(settings, intoKeysUnder: "")
+store.contains("hasOnboarded")  // false
+```
+
+Pass `removingOtherKeys: false` to remove nothing, when other keys share the prefix or the
+prefix is empty. It also saves reading every key in the store, which removing takes.
+`removeValues(underKey:)` removes a prefix and everything under it:
+
+```swift
+try store.encode(settings, intoKeysUnder: "", removingOtherKeys: false)
 store.removeValues(underKey: "settings")
 store.removeValues(underKeys: ["settings", "profile"])
 ```
@@ -425,11 +443,11 @@ because it contains one of `\ / : * ? " < > |`, is stored under a hash of itself
 for such a store has no `id`. `entry.isStore(id:)` still recognises it, and it can still be
 removed.
 
-A store that is open in this process cannot be removed: `removeStore(id:)` throws
-`MMKVError.storeIsOpen`. A store stays open for the rest of the process once an `MMKVStore` has
-been created for it, so remove a store before opening it, or empty an open one with
-`removeAll()`. `removeAllStores()` removes every store that is not open and then throws
-`MMKVError.storesAreOpen`, naming the ones it left.
+A store that is open in this process cannot be removed: `removeStore(id:)` throws an
+`MMKVError` with the code `.storeIsOpen`. A store stays open for the rest of the process once an
+`MMKVStore` has been created for it, so remove a store before opening it, or empty an open one
+with `removeAll()`. `removeAllStores()` removes every store that is not open and then throws an
+`MMKVError` with the code `.storesAreOpen`, whose message names the ones it left.
 
 For a store that does not need to last, such as one for a test or a preview, use a temporary
 directory. Every call makes a new one, so the store starts empty:
@@ -485,8 +503,8 @@ try directory.restoreAllStores(from: backups)
 - A restore overwrites the store's file in place, because other processes may have it open, so it
   is not atomic. If the process stops partway, the store's `recovery` setting decides what the
   next open makes of the file.
-- A copy that does not match its checksum is not restored, and `MMKVError.backupInvalid` is
-  thrown. `isStoreValid(id:)` makes the same check on any store without opening it.
+- A copy that does not match its checksum is not restored, and an `MMKVError` with the code
+  `.backupInvalid` is thrown. `isStoreValid(id:)` makes the same check on any store without opening it.
 - Files are copied as they are. The backup of an encrypted store is encrypted with the same key,
   and restores into a store opened with that key.
 - A read-only store cannot be restored, and a suspended store can be neither backed up nor
@@ -656,7 +674,8 @@ While a store is suspended:
   is tracked: `MMKVStore` is `Observable` so that it can be put in the SwiftUI environment, and
   its values are not observed that way.
 - Writes and removals do nothing, and return `false` where they return a result.
-- Throwing operations, such as `decode(_:forKey:)`, throw `MMKVError.storeIsSuspended`.
+- Throwing operations, such as `decode(_:forKey:)`, throw an `MMKVError` with the code
+  `.storeIsSuspended`.
 - Async sequences of a key's values produce nothing.
 - `@Shared` state keeps its value and reports the error through `loadError` or `saveError`. A
   change made to the state is not saved, and is replaced by the store's value on resuming.
@@ -747,6 +766,22 @@ let subscription = MMKVStore.subscribeToIntegrityFailures { failure in
 Both the log handler and this listener run while MMKV holds the store's lock, so they must not
 read or write a store. A failure carries the store's identifier alone, so stores with the same
 identifier in different directories cannot be told apart.
+
+### Errors
+
+Everything this package throws of its own is an `MMKVError`, which has a `code` to tell errors
+apart by and a `message` that describes what went wrong:
+
+```swift
+do {
+  try directory.removeStore(id: "settings")
+} catch where error.code == .storeIsOpen {
+  print(error.message)  // The store "settings" in "/path/to/mmkv" is open in this process.
+}
+```
+
+A later version may throw an error with a code this version does not have, so handle the codes
+you expect and treat the rest alike.
 
 ## The `Foundation` trait
 

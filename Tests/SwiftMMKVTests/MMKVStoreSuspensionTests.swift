@@ -71,13 +71,13 @@ import Testing
     try store.encode(["a": 1], forKey: "object", with: IntegerMapCoder())
     store.suspend()
 
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+    expectError(.storeIsSuspended) {
       try store.decode([String: Int].self, forKey: "object", with: IntegerMapCoder())
     }
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+    expectError(.storeIsSuspended) {
       try store.encode(["a": 2], forKey: "object", with: IntegerMapCoder())
     }
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+    expectError(.storeIsSuspended) {
       try store.rekey(.aes128(key: "key"))
     }
 

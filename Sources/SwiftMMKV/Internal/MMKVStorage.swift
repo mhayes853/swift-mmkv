@@ -128,6 +128,12 @@ extension MMKVStorage {
     return nil
   }
 
+  /// The identifier the open store whose data file is at `relativePath` was opened with.
+  func openID(forRelativePath relativePath: String) -> MMKVStore.ID? {
+    let dataPath = "\(self.resolvedPath)/\(relativePath)"
+    return Self.openStores.withLock { Self.openID(forDataPaths: [dataPath], in: $0) }
+  }
+
   /// The open store with this identifier in this directory.
   private func openStore(id: MMKVStore.ID) -> OpenStore? {
     let dataPaths = self.dataPaths(forID: id)
@@ -169,7 +175,7 @@ extension MMKVStorage {
       let names = fileNames(inDirectoryAtPath: self.path),
       let hashedNames = fileNames(inDirectoryAtPath: hashedDirectory)
     else {
-      throw .directoryUnreadable(self.directory)
+      throw MMKVErrors.directoryUnreadable(self.directory)
     }
     let hashedPaths = Self.storeNames(among: hashedNames, inDirectoryAtPath: hashedDirectory)
       .map { "\(Self.hashedDirectoryName)/\($0)" }
@@ -197,7 +203,7 @@ extension MMKVStorage {
     return try Self.openStores.withLock { openStores throws(MMKVError) in
       let dataPaths = self.dataPaths(forID: id)
       if Self.openID(forDataPaths: dataPaths, in: openStores) != nil {
-        throw .storeIsOpen(id: id, directory: self.directory)
+        throw MMKVErrors.storeIsOpen(id: id, directory: self.directory)
       }
       return id.rawValue.withMMKVBytes { id in
         self.path.withMMKVBytes { mmkv_remove_storage(id, $0) }
@@ -215,7 +221,7 @@ extension MMKVStorage {
       let dataPath = "\(self.resolvedPath)/\(relativePath)"
       let crcPath = dataPath + Self.crcSuffix
       if let id = Self.openID(forDataPaths: [dataPath], in: openStores) {
-        throw .storeIsOpen(id: id, directory: self.directory)
+        throw MMKVErrors.storeIsOpen(id: id, directory: self.directory)
       }
       guard FileIdentity(path: dataPath) != nil || FileIdentity(path: crcPath) != nil else {
         return false
@@ -275,7 +281,7 @@ extension MMKVStorage {
     try self.checkIsNot(backup)
     guard self.contains(id: id) else { return false }
     if backup.openStore(id: id) != nil {
-      throw .storeIsOpen(id: id, directory: backup.directory)
+      throw MMKVErrors.storeIsOpen(id: id, directory: backup.directory)
     }
     let didBackUp = try Self.entering(self.openStore(id: id).map { [$0] } ?? []) { _ in
       id.rawValue.withMMKVBytes { id in
@@ -285,7 +291,7 @@ extension MMKVStorage {
       }
     }
     guard didBackUp else {
-      throw .backupFailed(id: id, directory: self.directory, backup: backup.directory)
+      throw MMKVErrors.backupFailed(id: id, directory: self.directory, backup: backup.directory)
     }
     return true
   }
@@ -298,7 +304,7 @@ extension MMKVStorage {
     try self.checkIsNot(backup)
     guard backup.contains(id: id) else { return false }
     guard backup.isValid(id: id) else {
-      throw .backupInvalid(id: id, backup: backup.directory)
+      throw MMKVErrors.backupInvalid(id: id, backup: backup.directory)
     }
     var restored = [MMKVStoreState]()
     defer {
@@ -315,7 +321,7 @@ extension MMKVStorage {
       }
     }
     guard didRestore else {
-      throw .restoreFailed(id: id, directory: self.directory, backup: backup.directory)
+      throw MMKVErrors.restoreFailed(id: id, directory: self.directory, backup: backup.directory)
     }
     return true
   }
@@ -327,7 +333,7 @@ extension MMKVStorage {
     try self.checkIsNot(backup)
     let openInBackup = backup.openStores.map(\.id).sorted()
     guard openInBackup.isEmpty else {
-      throw .storesAreOpen(ids: openInBackup, directory: backup.directory)
+      throw MMKVErrors.storesAreOpen(ids: openInBackup, directory: backup.directory)
     }
     let storeCount = try self.relativePaths().count
     guard storeCount > 0 else { return 0 }
@@ -337,7 +343,7 @@ extension MMKVStorage {
       }
     }
     guard count >= storeCount else {
-      throw .storesNotBackedUp(
+      throw MMKVErrors.storesNotBackedUp(
         count: storeCount - count,
         directory: self.directory,
         backup: backup.directory
@@ -356,7 +362,7 @@ extension MMKVStorage {
     guard !relativePaths.isEmpty else { return 0 }
     // A store whose identifier its files do not tell cannot be asked about.
     for id in relativePaths.compactMap(Self.id(forRelativePath:)) where !backup.isValid(id: id) {
-      throw .backupInvalid(id: id, backup: backup.directory)
+      throw MMKVErrors.backupInvalid(id: id, backup: backup.directory)
     }
     var restored = [MMKVStoreState]()
     defer {
@@ -371,7 +377,7 @@ extension MMKVStorage {
       }
     }
     guard count >= relativePaths.count else {
-      throw .storesNotRestored(
+      throw MMKVErrors.storesNotRestored(
         count: relativePaths.count - count,
         directory: self.directory,
         backup: backup.directory
@@ -387,7 +393,7 @@ extension MMKVStorage {
       path == backupPath
       || FileIdentity(path: path).map { $0 == FileIdentity(path: backupPath) } ?? false
     if isSame {
-      throw .backupIsStoreDirectory(self.directory)
+      throw MMKVErrors.backupIsStoreDirectory(self.directory)
     }
   }
 
@@ -408,7 +414,7 @@ extension MMKVStorage {
     }
     for state in states {
       guard let gate = state.suspensionGate else { continue }
-      guard gate.enter() else { throw .storeIsSuspended(id: state.id) }
+      guard gate.enter() else { throw MMKVErrors.storeIsSuspended(id: state.id) }
       entered.append(gate)
     }
     return body(states)

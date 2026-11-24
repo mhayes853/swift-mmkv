@@ -65,11 +65,11 @@ import Testing
     .aes256(key: [UInt8](repeating: 1, count: 33))
   ])
   func `Rejects Keys Of The Wrong Length`(encryption: MMKVConfiguration.Encryption) throws {
-    #expect(throws: MMKVError.invalidEncryptionKey) {
+    expectError(.invalidEncryptionKey) {
       try makeStore(encryption: encryption)
     }
     let store = try makeStore()
-    #expect(throws: MMKVError.invalidEncryptionKey) {
+    expectError(.invalidEncryptionKey) {
       try store.rekey(encryption)
     }
   }

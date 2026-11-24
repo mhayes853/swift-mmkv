@@ -125,16 +125,16 @@ import Testing
     let store = try makeStore(id: "settings", rootDirectory: rootDirectory)
     let same = MMKVDirectory(path: rootDirectory + "/./")
 
-    #expect(throws: MMKVError.backupIsStoreDirectory(directory)) {
+    expectError(.backupIsStoreDirectory) {
       try store.backUp(to: same)
     }
-    #expect(throws: MMKVError.backupIsStoreDirectory(directory)) {
+    expectError(.backupIsStoreDirectory) {
       try store.restore(from: same)
     }
-    #expect(throws: MMKVError.backupIsStoreDirectory(directory)) {
+    expectError(.backupIsStoreDirectory) {
       try directory.backUpAllStores(to: same)
     }
-    #expect(throws: MMKVError.backupIsStoreDirectory(directory)) {
+    expectError(.backupIsStoreDirectory) {
       try directory.restoreAllStores(from: same)
     }
   }
@@ -147,9 +147,7 @@ import Testing
     try directory.backUpStore(id: "settings", to: backup)
     let store = try makeStore(id: "settings", rootDirectory: rootDirectory, isReadOnly: true)
 
-    #expect(
-      throws: MMKVError.restoreFailed(id: "settings", directory: directory, backup: backup)
-    ) {
+    expectError(.restoreFailed) {
       try store.restore(from: backup)
     }
     #expect(store.value(forKey: "key", as: String.self) == "value")
@@ -165,12 +163,12 @@ import Testing
 
     store.suspend()
 
-    #expect(throws: MMKVError.storeIsSuspended(id: "settings")) { try store.backUp(to: backup) }
-    #expect(throws: MMKVError.storeIsSuspended(id: "settings")) { try store.restore(from: backup) }
-    #expect(throws: MMKVError.storeIsSuspended(id: "settings")) {
+    expectError(.storeIsSuspended) { try store.backUp(to: backup) }
+    expectError(.storeIsSuspended) { try store.restore(from: backup) }
+    expectError(.storeIsSuspended) {
       try directory.backUpAllStores(to: backup)
     }
-    #expect(throws: MMKVError.storeIsSuspended(id: "settings")) {
+    expectError(.storeIsSuspended) {
       try directory.restoreAllStores(from: backup)
     }
 
@@ -186,10 +184,10 @@ import Testing
     let snapshot = try makeStore(id: "settings", rootDirectory: backupDirectory)
     _ = snapshot.count
 
-    #expect(throws: MMKVError.storeIsOpen(id: "settings", directory: backup)) {
+    expectError(.storeIsOpen) {
       try store.backUp(to: backup)
     }
-    #expect(throws: MMKVError.storesAreOpen(ids: ["settings"], directory: backup)) {
+    expectError(.storesAreOpen) {
       try store.configuration.directory.backUpAllStores(to: backup)
     }
   }
@@ -223,10 +221,10 @@ import Testing
     try self.corrupt("\(backupDirectory)/settings")
     store.set("light", forKey: "theme")
 
-    #expect(throws: MMKVError.backupInvalid(id: "settings", backup: backup)) {
+    expectError(.backupInvalid) {
       try store.restore(from: backup)
     }
-    #expect(throws: MMKVError.backupInvalid(id: "settings", backup: backup)) {
+    expectError(.backupInvalid) {
       try store.configuration.directory.restoreAllStores(from: backup)
     }
     #expect(store.value(forKey: "theme", as: String.self) == "light")

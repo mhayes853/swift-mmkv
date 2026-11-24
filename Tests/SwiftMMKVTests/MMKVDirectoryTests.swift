@@ -73,12 +73,12 @@ import Testing
     let store = try makeStore(id: "store", rootDirectory: rootDirectory)
     store.set("value", forKey: "key")
 
-    #expect(throws: MMKVError.storeIsOpen(id: "store", directory: directory)) {
+    expectError(.storeIsOpen) {
       try directory.removeStore(id: "store")
     }
     // The same directory spelled differently is still the same store.
     let respelled = MMKVDirectory(path: rootDirectory + "/")
-    #expect(throws: MMKVError.storeIsOpen(id: "store", directory: respelled)) {
+    expectError(.storeIsOpen) {
       try respelled.removeStore(id: "store")
     }
     #expect(directory.containsStore(id: "store"))
@@ -93,10 +93,10 @@ import Testing
     try FileManager.default.createSymbolicLink(atPath: linkPath, withDestinationPath: rootDirectory)
     let linked = MMKVDirectory(path: linkPath)
 
-    #expect(throws: MMKVError.storeIsOpen(id: "store", directory: linked)) {
+    expectError(.storeIsOpen) {
       try linked.removeStore(id: "store")
     }
-    #expect(throws: MMKVError.storesAreOpen(ids: ["store"], directory: linked)) {
+    expectError(.storesAreOpen) {
       try linked.removeAllStores()
     }
     #expect(store["key", as: String.self] == "value")
@@ -138,8 +138,8 @@ import Testing
     let path = temporaryRootDirectory() + "/file"
     try Data().write(to: URL(fileURLWithPath: path))
     let directory = MMKVDirectory(path: path)
-    #expect(throws: MMKVError.directoryUnreadable(directory)) { try directory.stores }
-    #expect(throws: MMKVError.directoryUnreadable(directory)) { try directory.removeAllStores() }
+    expectError(.directoryUnreadable) { try directory.stores }
+    expectError(.directoryUnreadable) { try directory.removeAllStores() }
   }
 
   @Test func `Lists A Store Whose Identifier Is Hashed Without Its Identifier`() throws {
@@ -157,10 +157,10 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: "\(rootDirectory)/\(stores[0].relativePath)"))
     #expect(directory.containsStore(id: "user/42"))
 
-    #expect(throws: MMKVError.storeIsOpen(id: "user/42", directory: directory)) {
+    expectError(.storeIsOpen) {
       try directory.removeStore(stores[0])
     }
-    #expect(throws: MMKVError.storeIsOpen(id: "user/42", directory: directory)) {
+    expectError(.storeIsOpen) {
       try directory.removeStore(id: "user/42")
     }
     #expect(store["key", as: String.self] == "value")
@@ -196,11 +196,12 @@ import Testing
     let hashed = try makeStore(id: "open:hashed", rootDirectory: rootDirectory)
     hashed.set("value", forKey: "key")
 
-    #expect(
-      throws: MMKVError.storesAreOpen(ids: ["open", "open:hashed"], directory: directory)
-    ) {
+    let error = expectError(.storesAreOpen) {
       try directory.removeAllStores()
     }
+    // A store whose files do not tell its identifier is named by the one it was opened with.
+    #expect(error?.message.contains("\"open\", \"open:hashed\"") == true)
+    #expect(error?.message.contains(rootDirectory) == true)
     #expect(try directory.stores.count == 2)
     #expect(directory.containsStore(id: "open"))
     #expect(directory.containsStore(id: "open:hashed"))

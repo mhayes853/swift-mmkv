@@ -117,7 +117,7 @@
 
       store.suspend()
       $username.withLock { $0 = "blob jr" }
-      #expect($username.saveError as? MMKVError == .storeIsSuspended(id: store.id))
+      #expect(($username.saveError as? MMKVError)?.code == .storeIsSuspended)
 
       @Shared(.mmkv("username", store: store)) var loadedWhileSuspended = "default"
       #expect(loadedWhileSuspended == "blob jr")
@@ -134,7 +134,7 @@
 
       $text.withLock { $0 = String(repeating: "a", count: 64) }
 
-      #expect($text.saveError as? MMKVError == .writeFailed(key: "text"))
+      #expect(($text.saveError as? MMKVError)?.code == .writeFailed)
       #expect(!store.contains("text"))
     }
 

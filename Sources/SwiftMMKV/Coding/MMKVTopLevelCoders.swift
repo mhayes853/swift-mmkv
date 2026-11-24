@@ -43,7 +43,7 @@ extension MMKVStore {
   ///   - encoder: The encoder to use.
   /// - Returns: Whether the encoded value was stored.
   /// - Throws: Whatever `encoder` throws, in which case nothing is stored, or
-  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  ///   ``MMKVError/Code/storeIsSuspended`` if the store is suspended.
   @discardableResult
   public func encode<T: Encodable, Encoder: MMKVTopLevelEncoder>(
     _ value: T,
@@ -53,7 +53,7 @@ extension MMKVStore {
   ) throws -> Bool where Encoder.Output: MMKVValue {
     let didStore = self.set(try encoder.encode(value), forKey: key, expiry: expiry)
     if !didStore && self.isSuspended {
-      throw MMKVError.storeIsSuspended(id: self.id)
+      throw MMKVErrors.storeIsSuspended(id: self.id)
     }
     return didStore
   }
@@ -66,7 +66,7 @@ extension MMKVStore {
   ///
   /// - Returns: The value, or `nil` if the key has no value.
   /// - Throws: Whatever `decoder` throws when the stored value does not decode, or
-  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  ///   ``MMKVError/Code/storeIsSuspended`` if the store is suspended.
   public func decode<T: Decodable, Decoder: MMKVTopLevelDecoder>(
     _ type: T.Type = T.self,
     forKey key: String,
@@ -75,7 +75,7 @@ extension MMKVStore {
     guard let input = self.value(forKey: key, as: Decoder.Input.self) else {
       // A read that was turned away looks like a missing value, so the store is asked afterwards.
       if self.isSuspended {
-        throw MMKVError.storeIsSuspended(id: self.id)
+        throw MMKVErrors.storeIsSuspended(id: self.id)
       }
       return nil
     }

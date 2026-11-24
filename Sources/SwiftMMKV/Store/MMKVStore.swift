@@ -34,8 +34,8 @@ public final class MMKVStore: Sendable {
 
   /// Opens the store described by `configuration`, creating its files if they do not exist.
   ///
-  /// - Throws: ``MMKVError/invalidEncryptionKey`` if the encryption key is empty or too long,
-  ///   or ``MMKVError/openFailed(id:directory:)`` if the store cannot be opened.
+  /// - Throws: ``MMKVError/Code/invalidEncryptionKey`` if the encryption key is empty or too long,
+  ///   or ``MMKVError/Code/openFailed`` if the store cannot be opened.
   public init(_ configuration: MMKVConfiguration) throws(MMKVError) {
     self.core = try MMKVCore(configuration)
     self.currentConfiguration = Lock(configuration)
@@ -53,7 +53,7 @@ public final class MMKVStore: Sendable {
   /// clears its temporary directory.
   ///
   /// - Parameter id: The store's identifier.
-  /// - Throws: ``MMKVError/openFailed(id:directory:)`` if the store cannot be opened, which is
+  /// - Throws: ``MMKVError/Code/openFailed`` if the store cannot be opened, which is
   ///   the case where the system's temporary directory cannot be written to. See
   ///   ``MMKVDirectory/temporary()``.
   public static func temporary(id: MMKVStore.ID = .default) throws(MMKVError) -> MMKVStore {
@@ -586,7 +586,7 @@ extension MMKVStore {
   ///
   /// The result is a success of `nil` when the store has no value for `key`. It is a failure
   /// with whatever `decoder` throws when the stored value does not decode, and with
-  /// ``MMKVError/storeIsSuspended(id:)`` while the store is suspended. The subscription
+  /// ``MMKVError/Code/storeIsSuspended`` while the store is suspended. The subscription
   /// carries on after a failure, so a later write that decodes is delivered as a success.
   ///
   /// In other respects this behaves like ``subscribe(forKey:as:_:)``, including running with a
@@ -654,7 +654,7 @@ extension MMKVStore {
   ///
   /// - Reads return `nil`, and ``keys`` and ``count`` are empty.
   /// - Writes and removals do nothing, and return `false` where they return a result.
-  /// - Throwing operations throw ``MMKVError/storeIsSuspended(id:)``.
+  /// - Throwing operations throw ``MMKVError/Code/storeIsSuspended``.
   /// - ``withExclusiveLock(_:)`` runs its body without the lock.
   ///
   /// Every ``MMKVStore`` over the same files is suspended together. Suspending twice has no
@@ -745,8 +745,8 @@ extension MMKVStore {
   /// so a store with a ``MMKVConfiguration/defaultExpiry`` stays this way only until it is
   /// next written to.
   ///
-  /// - Throws: ``MMKVError/disableExpiryFailed`` if the store could not be rewritten, or
-  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  /// - Throws: ``MMKVError/Code/disableExpiryFailed`` if the store could not be rewritten, or
+  ///   ``MMKVError/Code/storeIsSuspended`` if the store is suspended.
   public func disableExpiry() throws(MMKVError) {
     defer { self.core.operationDidFinish() }
     try self.core.disableExpiry()
@@ -754,9 +754,9 @@ extension MMKVStore {
 
   /// Re-encrypts the store with `encryption`, or decrypts it when `encryption` is `nil`.
   ///
-  /// - Throws: ``MMKVError/invalidEncryptionKey`` if the key is empty or too long,
-  ///   ``MMKVError/rekeyFailed`` if the store could not be rewritten, or
-  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  /// - Throws: ``MMKVError/Code/invalidEncryptionKey`` if the key is empty or too long,
+  ///   ``MMKVError/Code/rekeyFailed`` if the store could not be rewritten, or
+  ///   ``MMKVError/Code/storeIsSuspended`` if the store is suspended.
   public func rekey(_ encryption: MMKVConfiguration.Encryption?) throws(MMKVError) {
     defer { self.core.operationDidFinish() }
     try self.core.rekey(encryption)
@@ -776,14 +776,18 @@ extension MMKVStore {
   ///
   /// See ``MMKVDirectory/backUpStore(id:to:)``.
   ///
-  /// - Throws: ``MMKVError/backupFailed(id:directory:backup:)`` if the files could not be
-  ///   copied, ``MMKVError/storeIsOpen(id:directory:)`` if this process has the copy in `backup`
-  ///   open, ``MMKVError/storeIsSuspended(id:)`` if the store is suspended, or
-  ///   ``MMKVError/backupIsStoreDirectory(_:)`` if `backup` is the store's directory.
+  /// - Throws: ``MMKVError/Code/backupFailed`` if the files could not be
+  ///   copied, ``MMKVError/Code/storeIsOpen`` if this process has the copy in `backup`
+  ///   open, ``MMKVError/Code/storeIsSuspended`` if the store is suspended, or
+  ///   ``MMKVError/Code/backupIsStoreDirectory`` if `backup` is the store's directory.
   public func backUp(to backup: MMKVDirectory) throws(MMKVError) {
     let configuration = self.configuration
     guard try configuration.directory.backUpStore(id: configuration.id, to: backup) else {
-      throw .backupFailed(id: configuration.id, directory: configuration.directory, backup: backup)
+      throw MMKVErrors.backupFailed(
+        id: configuration.id,
+        directory: configuration.directory,
+        backup: backup
+      )
     }
   }
 
@@ -794,10 +798,10 @@ extension MMKVStore {
   /// ``MMKVDirectory/restoreStore(id:from:)``.
   ///
   /// - Returns: Whether `backup` held a copy of the store.
-  /// - Throws: ``MMKVError/backupInvalid(id:backup:)`` if the copy does not match its
-  ///   checksum, ``MMKVError/restoreFailed(id:directory:backup:)`` if the store could not be
-  ///   overwritten, which includes a read-only store, ``MMKVError/storeIsSuspended(id:)`` if
-  ///   the store is suspended, or ``MMKVError/backupIsStoreDirectory(_:)`` if `backup` is the
+  /// - Throws: ``MMKVError/Code/backupInvalid`` if the copy does not match its
+  ///   checksum, ``MMKVError/Code/restoreFailed`` if the store could not be
+  ///   overwritten, which includes a read-only store, ``MMKVError/Code/storeIsSuspended`` if
+  ///   the store is suspended, or ``MMKVError/Code/backupIsStoreDirectory`` if `backup` is the
   ///   store's directory.
   @discardableResult
   public func restore(from backup: MMKVDirectory) throws(MMKVError) -> Bool {

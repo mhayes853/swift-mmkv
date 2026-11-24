@@ -141,7 +141,7 @@ extension MMKVStore.DefaultedCodedKey where Value == Bool {
 
     #expect(username == nil && volume == nil)
     #expect(brightness == 0.5 && theme == "system")
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+    expectError(.storeIsSuspended) {
       _ = try store.values(forKeys: .count, .flag)
     }
   }
@@ -261,10 +261,10 @@ extension MMKVStore.DefaultedCodedKey where Value == Bool {
 
     #expect(!store.set((.username, "blob"), (.volume, 0.8)))
     #expect(!store.set((.brightness, 0.5), (.theme, "dark")))
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+    expectError(.storeIsSuspended) {
       try store.set((.count, 7), (.flag, true))
     }
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+    expectError(.storeIsSuspended) {
       try store.set((.lives, 3), (.isMuted, true))
     }
 
