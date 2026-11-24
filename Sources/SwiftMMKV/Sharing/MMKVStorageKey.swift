@@ -20,7 +20,7 @@
   /// store is next read or written, or when ``MMKVStore/checkForExternalChanges()`` is called.
   ///
   /// While the store is suspended the state keeps its value, and loading or saving reports
-  /// ``MMKVError/storeIsSuspended(id:)`` through `loadError` or `saveError`. The state loads
+  /// ``MMKVError/Code/storeIsSuspended`` through `loadError` or `saveError`. The state loads
   /// again when the store resumes.
   public struct MMKVStorageKey<Value: Sendable>: SharedKey {
     private let store: MMKVStore
@@ -69,7 +69,7 @@
     private func loadUnlessSuspended() throws -> Value? {
       let value = try self.loadValue(self.store, self.key)
       if self.store.isSuspended {
-        throw MMKVError.storeIsSuspended(id: self.store.id)
+        throw MMKVErrors.storeIsSuspended(id: self.store.id)
       }
       return value
     }
@@ -322,7 +322,7 @@
     fileprivate func write(_ key: String, _ body: () throws -> Bool) throws {
       guard try body() else {
         throw self.isSuspended
-          ? MMKVError.storeIsSuspended(id: self.id) : MMKVError.writeFailed(key: key)
+          ? MMKVErrors.storeIsSuspended(id: self.id) : MMKVErrors.writeFailed(key: key)
       }
     }
   }

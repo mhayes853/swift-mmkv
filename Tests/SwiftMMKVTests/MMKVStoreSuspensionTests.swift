@@ -71,13 +71,13 @@ import Testing
     try store.encode(1, forKey: "number", with: TextCoder.shared)
     store.suspend()
 
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+    expectError(.storeIsSuspended) {
       try store.decode(Int.self, forKey: "number", with: TextCoder.shared)
     }
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+    expectError(.storeIsSuspended) {
       try store.encode(2, forKey: "number", with: TextCoder.shared)
     }
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+    expectError(.storeIsSuspended) {
       try store.rekey(.aes128(key: "key"))
     }
 

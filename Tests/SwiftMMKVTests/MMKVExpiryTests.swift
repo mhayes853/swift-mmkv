@@ -329,7 +329,7 @@ private struct Session: Codable, Equatable {
 
     #expect(store.isExpiryEnabled)
     #expect(!store.set("blob", forKey: "username"))
-    #expect(throws: MMKVError.disableExpiryFailed) {
+    expectError(.disableExpiryFailed) {
       try store.disableExpiry()
     }
     #expect(store.isExpiryEnabled)
@@ -341,7 +341,7 @@ private struct Session: Codable, Equatable {
     store.suspend()
 
     #expect(!store.isExpiryEnabled)
-    #expect(throws: MMKVError.storeIsSuspended(id: "cache")) {
+    expectError(.storeIsSuspended) {
       try store.disableExpiry()
     }
 

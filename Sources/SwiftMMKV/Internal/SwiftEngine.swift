@@ -32,10 +32,10 @@ struct SwiftEngine: MMKVEngine {
         Self.instance(of: $0)
       }
     if hasWrongEncryptionKey {
-      throw .wrongEncryptionKey(id: configuration.id, directory: configuration.directory)
+      throw MMKVErrors.wrongEncryptionKey(id: configuration.id, directory: configuration.directory)
     }
     guard let store else {
-      throw .openFailed(id: configuration.id, directory: configuration.directory)
+      throw MMKVErrors.openFailed(id: configuration.id, directory: configuration.directory)
     }
     self.store = store
     let instance = self.instance

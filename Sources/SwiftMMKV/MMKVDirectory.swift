@@ -54,7 +54,7 @@ extension MMKVDirectory {
   /// The system's temporary directory is the `TMPDIR` environment variable. Where that is not
   /// set it is `/tmp`, or `/data/local/tmp` on Android, which an app cannot write to. Recent
   /// versions of Android set `TMPDIR` to the app's cache directory. On one that does not,
-  /// opening a store here throws ``MMKVError/openFailed(id:directory:)``, so either set
+  /// opening a store here throws ``MMKVError/Code/openFailed``, so either set
   /// `TMPDIR` when the app launches or make a directory in the app's cache directory with
   /// ``init(path:)``.
   public static func temporary() -> MMKVDirectory {
@@ -87,7 +87,7 @@ extension MMKVDirectory {
   /// opening it, or empty an open one with ``MMKVStore/removeAll(keepingCapacity:)``.
   ///
   /// - Returns: Whether the store had files to delete.
-  /// - Throws: ``MMKVError/storeIsOpen(id:directory:)`` if the store is open in this process.
+  /// - Throws: ``MMKVError/Code/storeIsOpen`` if the store is open in this process.
   @discardableResult
   public func removeStore(id: MMKVStore.ID = .default) throws(MMKVError) -> Bool {
     try self.storage.remove(id: id)
@@ -130,7 +130,7 @@ extension MMKVDirectory {
   ///
   /// A directory that does not exist has no stores.
   ///
-  /// - Throws: ``MMKVError/directoryUnreadable(_:)`` if the directory exists but cannot be
+  /// - Throws: ``MMKVError/Code/directoryUnreadable`` if the directory exists but cannot be
   ///   read.
   public var stores: [StoreEntry] {
     get throws(MMKVError) {
@@ -141,7 +141,7 @@ extension MMKVDirectory {
   /// Deletes the files of a store found by ``stores``, as ``removeStore(id:)`` does.
   ///
   /// - Returns: Whether the store had files to delete.
-  /// - Throws: ``MMKVError/storeIsOpen(id:directory:)`` if the store is open in this process.
+  /// - Throws: ``MMKVError/Code/storeIsOpen`` if the store is open in this process.
   @discardableResult
   public func removeStore(_ entry: StoreEntry) throws(MMKVError) -> Bool {
     guard let id = entry.id else {
@@ -156,8 +156,8 @@ extension MMKVDirectory {
   /// has been removed.
   ///
   /// - Returns: The number of stores removed.
-  /// - Throws: ``MMKVError/storesAreOpen(ids:directory:)`` if any store is open in this
-  ///   process, or ``MMKVError/directoryUnreadable(_:)`` if the directory cannot be read.
+  /// - Throws: ``MMKVError/Code/storesAreOpen`` if any store is open in this
+  ///   process, or ``MMKVError/Code/directoryUnreadable`` if the directory cannot be read.
   @discardableResult
   public func removeAllStores() throws(MMKVError) -> Int {
     var removedCount = 0
@@ -167,12 +167,16 @@ extension MMKVDirectory {
         if try self.removeStore(entry) {
           removedCount += 1
         }
-      } catch .storeIsOpen(let id, _) {
+      } catch  where error.code == .storeIsOpen {
+        // A store whose files do not tell its identifier is named by the one it was opened
+        // with.
+        let id = entry.id ?? self.storage.openID(forRelativePath: entry.relativePath)
+        guard let id else { throw error }
         openIDs.append(id)
       }
     }
     guard openIDs.isEmpty else {
-      throw .storesAreOpen(ids: openIDs.sorted(), directory: self)
+      throw MMKVErrors.storesAreOpen(ids: openIDs.sorted(), directory: self)
     }
     return removedCount
   }
@@ -205,10 +209,10 @@ extension MMKVDirectory {
   /// are, so the copy of an encrypted store is encrypted with the same key.
   ///
   /// - Returns: Whether there was a store to back up.
-  /// - Throws: ``MMKVError/backupFailed(id:directory:backup:)`` if the files could not be
-  ///   copied, ``MMKVError/storeIsOpen(id:directory:)`` if this process has the copy in `backup`
-  ///   open, ``MMKVError/storeIsSuspended(id:)`` if the store is suspended, or
-  ///   ``MMKVError/backupIsStoreDirectory(_:)`` if `backup` is this directory.
+  /// - Throws: ``MMKVError/Code/backupFailed`` if the files could not be
+  ///   copied, ``MMKVError/Code/storeIsOpen`` if this process has the copy in `backup`
+  ///   open, ``MMKVError/Code/storeIsSuspended`` if the store is suspended, or
+  ///   ``MMKVError/Code/backupIsStoreDirectory`` if `backup` is this directory.
   @discardableResult
   public func backUpStore(
     id: MMKVStore.ID = .default,
@@ -221,11 +225,11 @@ extension MMKVDirectory {
   /// cannot name.
   ///
   /// - Returns: The number of stores backed up.
-  /// - Throws: ``MMKVError/storesNotBackedUp(count:directory:backup:)`` if some stores could
-  ///   not be copied, ``MMKVError/storesAreOpen(ids:directory:)`` if this process has stores in
-  ///   `backup` open, ``MMKVError/storeIsSuspended(id:)`` if a store is suspended,
-  ///   ``MMKVError/directoryUnreadable(_:)`` if the directory cannot be read, or
-  ///   ``MMKVError/backupIsStoreDirectory(_:)`` if `backup` is this directory.
+  /// - Throws: ``MMKVError/Code/storesNotBackedUp`` if some stores could
+  ///   not be copied, ``MMKVError/Code/storesAreOpen`` if this process has stores in
+  ///   `backup` open, ``MMKVError/Code/storeIsSuspended`` if a store is suspended,
+  ///   ``MMKVError/Code/directoryUnreadable`` if the directory cannot be read, or
+  ///   ``MMKVError/Code/backupIsStoreDirectory`` if `backup` is this directory.
   @discardableResult
   public func backUpAllStores(to backup: MMKVDirectory) throws(MMKVError) -> Int {
     try self.storage.backUpAll(to: backup.storage)
@@ -246,11 +250,11 @@ extension MMKVDirectory {
   /// store opened with the key it was backed up with.
   ///
   /// - Returns: Whether `backup` held a copy of the store.
-  /// - Throws: ``MMKVError/backupInvalid(id:backup:)`` if the copy does not match its
-  ///   checksum, ``MMKVError/restoreFailed(id:directory:backup:)`` if the store could not be
+  /// - Throws: ``MMKVError/Code/backupInvalid`` if the copy does not match its
+  ///   checksum, ``MMKVError/Code/restoreFailed`` if the store could not be
   ///   overwritten, which includes a store that is open as read-only,
-  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended, or
-  ///   ``MMKVError/backupIsStoreDirectory(_:)`` if `backup` is this directory.
+  ///   ``MMKVError/Code/storeIsSuspended`` if the store is suspended, or
+  ///   ``MMKVError/Code/backupIsStoreDirectory`` if `backup` is this directory.
   @discardableResult
   public func restoreStore(
     id: MMKVStore.ID = .default,
@@ -266,11 +270,11 @@ extension MMKVDirectory {
   /// not checked.
   ///
   /// - Returns: The number of stores restored.
-  /// - Throws: ``MMKVError/backupInvalid(id:backup:)`` if a copy does not match its checksum,
-  ///   ``MMKVError/storesNotRestored(count:directory:backup:)`` if some stores could not be
-  ///   overwritten, ``MMKVError/storeIsSuspended(id:)`` if a store is suspended,
-  ///   ``MMKVError/directoryUnreadable(_:)`` if `backup` cannot be read, or
-  ///   ``MMKVError/backupIsStoreDirectory(_:)`` if `backup` is this directory.
+  /// - Throws: ``MMKVError/Code/backupInvalid`` if a copy does not match its checksum,
+  ///   ``MMKVError/Code/storesNotRestored`` if some stores could not be
+  ///   overwritten, ``MMKVError/Code/storeIsSuspended`` if a store is suspended,
+  ///   ``MMKVError/Code/directoryUnreadable`` if `backup` cannot be read, or
+  ///   ``MMKVError/Code/backupIsStoreDirectory`` if `backup` is this directory.
   @discardableResult
   public func restoreAllStores(from backup: MMKVDirectory) throws(MMKVError) -> Int {
     try self.storage.restoreAll(from: backup.storage)

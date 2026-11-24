@@ -244,3 +244,28 @@ struct SplitMix64: RandomNumberGenerator {
     return z ^ (z >> 31)
   }
 }
+
+/// Runs `body`, which is expected to throw an ``MMKVError`` with this code.
+///
+/// - Returns: The error, to look at its message.
+@discardableResult
+func expectError<R>(
+  _ code: MMKVError.Code,
+  sourceLocation: SourceLocation = #_sourceLocation,
+  _ body: () throws -> R
+) -> MMKVError? {
+  do {
+    _ = try body()
+    Issue.record("Nothing was thrown.", sourceLocation: sourceLocation)
+    return nil
+  } catch let error as MMKVError {
+    #expect(error.code == code, sourceLocation: sourceLocation)
+    return error
+  } catch {
+    Issue.record(
+      "Something other than an MMKVError was thrown: \(error)",
+      sourceLocation: sourceLocation
+    )
+    return nil
+  }
+}

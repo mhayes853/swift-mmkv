@@ -233,7 +233,7 @@ public struct MMKVThrowingValues<Element: Sendable>: AsyncSequence, Sendable {
     private static func element(from store: MMKVStore, reading read: Read) throws -> Element? {
       do {
         return try read(store)
-      } catch MMKVError.storeIsSuspended {
+      } catch let error as MMKVError where error.code == .storeIsSuspended {
         return nil
       }
     }

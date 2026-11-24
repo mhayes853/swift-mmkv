@@ -15,7 +15,7 @@ struct CxxEngine: MMKVEngine {
         UInt(bitPattern: $0)
       }
     guard let handle else {
-      throw .openFailed(id: configuration.id, directory: configuration.directory)
+      throw MMKVErrors.openFailed(id: configuration.id, directory: configuration.directory)
     }
     self.handle = handle
   }

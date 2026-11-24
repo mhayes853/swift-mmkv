@@ -546,7 +546,7 @@ import Testing
     #expect(store.set("intact", forKey: "ordinary"))
 
     // A plain store cannot hold this pair: its value needs a two-byte length prefix.
-    #expect(throws: MMKVError.rekeyFailed) { try store.rekey(nil) }
+    expectError(.rekeyFailed) { try store.rekey(nil) }
 
     // The store is still encrypted with the old key, in memory and on disk.
     #expect(store.value(forKey: key, as: String.self) == value)

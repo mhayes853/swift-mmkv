@@ -65,11 +65,11 @@ import Testing
     .aes256(key: [UInt8](repeating: 1, count: 33))
   ])
   func `Rejects Keys Of The Wrong Length`(encryption: MMKVConfiguration.Encryption) throws {
-    #expect(throws: MMKVError.invalidEncryptionKey) {
+    expectError(.invalidEncryptionKey) {
       try makeStore(encryption: encryption)
     }
     let store = try makeStore()
-    #expect(throws: MMKVError.invalidEncryptionKey) {
+    expectError(.invalidEncryptionKey) {
       try store.rekey(encryption)
     }
   }
@@ -90,9 +90,7 @@ import Testing
     let (rootDirectory, id) = try self.makeUnopenedEncryptedStore()
     let files = try self.storeFiles(rootDirectory: rootDirectory, id: id)
 
-    #expect(
-      throws: MMKVError.wrongEncryptionKey(id: id, directory: MMKVDirectory(path: rootDirectory))
-    ) {
+    expectError(.wrongEncryptionKey) {
       try makeStore(id: id, rootDirectory: rootDirectory, encryption: wrong)
     }
     #expect(try self.storeFiles(rootDirectory: rootDirectory, id: id) == files)
@@ -130,7 +128,7 @@ import Testing
     #expect(store.count == 0)
     #expect(!store.set("value", forKey: "other"))
     store.trim()
-    #expect(throws: MMKVError.rekeyFailed) {
+    expectError(.rekeyFailed) {
       try store.rekey(.aes128(key: "another key"))
     }
     store.sync()

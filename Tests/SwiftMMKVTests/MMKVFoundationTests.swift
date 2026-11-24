@@ -213,7 +213,8 @@
           let directory = try MMKVDirectory.appGroup(identifier: identifier)
           #expect(directory.path.hasSuffix("/mmkv"))
         } catch {
-          #expect(error == .appGroupContainerUnavailable(identifier: identifier))
+          #expect(error.code == .appGroupContainerUnavailable)
+          #expect(error.message.contains(identifier))
         }
       }
     #endif

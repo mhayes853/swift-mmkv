@@ -14,7 +14,7 @@ final class MMKVCore: Sendable {
   /// Opens the instance described by `configuration`, creating its files if they do not exist.
   init(_ configuration: MMKVConfiguration) throws(MMKVError) {
     if let encryption = configuration.encryption, !encryption.isValid {
-      throw .invalidEncryptionKey
+      throw MMKVErrors.invalidEncryptionKey
     }
     LogSink.prepare()
     let engine: any MMKVEngine =
@@ -197,18 +197,18 @@ extension MMKVCore {
       _ = engine.count
       return engine.disableExpiry()
     }
-    guard let didDisable else { throw .storeIsSuspended(id: self.state.id) }
-    guard didDisable else { throw .disableExpiryFailed }
+    guard let didDisable else { throw MMKVErrors.storeIsSuspended(id: self.state.id) }
+    guard didDisable else { throw MMKVErrors.disableExpiryFailed }
   }
 
   func rekey(_ encryption: MMKVConfiguration.Encryption?) throws(MMKVError) {
     if let encryption, !encryption.isValid {
-      throw .invalidEncryptionKey
+      throw MMKVErrors.invalidEncryptionKey
     }
     guard let didRekey = self.perform({ $0.rekey(encryption) }) else {
-      throw .storeIsSuspended(id: self.state.id)
+      throw MMKVErrors.storeIsSuspended(id: self.state.id)
     }
-    guard didRekey else { throw .rekeyFailed }
+    guard didRekey else { throw MMKVErrors.rekeyFailed }
   }
 }
 

@@ -130,7 +130,7 @@
       store.suspend()
       $count.withLock { $0 = 1 }
 
-      #expect($count.saveError as? MMKVError == .storeIsSuspended(id: store.id))
+      #expect(($count.saveError as? MMKVError)?.code == .storeIsSuspended)
     }
 
     @Test func `Uses The Default Store Dependency`() throws {

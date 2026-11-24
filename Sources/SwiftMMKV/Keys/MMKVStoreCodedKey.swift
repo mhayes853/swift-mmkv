@@ -99,7 +99,7 @@ extension MMKVStore {
   ///
   /// - Returns: The value, or `nil` if the key has no value.
   /// - Throws: Whatever the decoder throws when the stored value does not decode, or
-  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  ///   ``MMKVError/Code/storeIsSuspended`` if the store is suspended.
   public func value<V>(for key: CodedKey<V>) throws -> V? {
     try key.read(self)
   }
@@ -113,7 +113,7 @@ extension MMKVStore {
   ///   - expiry: How long to keep the value. See ``set(_:forKey:expiry:)``.
   /// - Returns: Whether the encoded value was stored.
   /// - Throws: Whatever the encoder throws, in which case nothing is stored, or
-  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  ///   ``MMKVError/Code/storeIsSuspended`` if the store is suspended.
   @discardableResult
   public func set<V>(
     _ value: V,
@@ -122,7 +122,7 @@ extension MMKVStore {
   ) throws -> Bool {
     let didStore = try key.encode(value)(self, expiry)
     if !didStore && self.isSuspended {
-      throw MMKVError.storeIsSuspended(id: self.id)
+      throw MMKVErrors.storeIsSuspended(id: self.id)
     }
     return didStore
   }
@@ -155,7 +155,7 @@ extension MMKVStore {
   ///
   /// The result is a success of `nil` when the store has no value for `key`. It is a failure
   /// with whatever the key's decoder throws when the stored value does not decode, and with
-  /// ``MMKVError/storeIsSuspended(id:)`` while the store is suspended. The subscription
+  /// ``MMKVError/Code/storeIsSuspended`` while the store is suspended. The subscription
   /// carries on after a failure, so a later write that decodes is delivered as a success.
   ///
   /// In other respects this behaves like ``subscribe(forKey:as:_:)``, including running with a
@@ -187,7 +187,7 @@ extension MMKVStore {
   ///
   /// - Returns: The value of each key, in order, or `nil` for a key that has no value.
   /// - Throws: Whatever a key's decoder throws when its stored value does not decode, or
-  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  ///   ``MMKVError/Code/storeIsSuspended`` if the store is suspended.
   public func values<each V>(forKeys keys: repeat CodedKey<each V>) throws -> (repeat (each V)?) {
     try self.withExclusiveLock { store in
       (repeat try store.value(for: each keys))
@@ -214,7 +214,7 @@ extension MMKVStore {
   /// - Returns: Whether every encoded value was stored. One that cannot be stored does not
   ///   stop the others from being stored.
   /// - Throws: Whatever an encoder throws, in which case nothing is stored, or
-  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  ///   ``MMKVError/Code/storeIsSuspended`` if the store is suspended.
   @discardableResult
   public func set<each V>(
     _ values: repeat (CodedKey<each V>, each V),
@@ -228,7 +228,7 @@ extension MMKVStore {
       }
     }
     if !didStoreAll && self.isSuspended {
-      throw MMKVError.storeIsSuspended(id: self.id)
+      throw MMKVErrors.storeIsSuspended(id: self.id)
     }
     return didStoreAll
   }

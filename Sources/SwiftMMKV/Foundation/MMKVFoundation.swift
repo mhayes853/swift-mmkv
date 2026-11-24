@@ -59,7 +59,7 @@
       /// react-native-mmkv keeps an app group's stores in the container itself rather than in
       /// a directory of their own. Use ``reactNative()`` for a store shared with JavaScript.
       ///
-      /// - Throws: ``MMKVError/appGroupContainerUnavailable(identifier:)`` if the app group has
+      /// - Throws: ``MMKVError/Code/appGroupContainerUnavailable`` if the app group has
       ///   no container this process can reach.
       public static func appGroup(identifier: String) throws(MMKVError) -> MMKVDirectory {
         let container = try Self.container(ofAppGroup: identifier)
@@ -72,7 +72,7 @@
             forSecurityApplicationGroupIdentifier: identifier
           )
         else {
-          throw .appGroupContainerUnavailable(identifier: identifier)
+          throw MMKVErrors.appGroupContainerUnavailable(identifier: identifier)
         }
         return container
       }
@@ -89,7 +89,7 @@
       /// On Android the directory depends on the app's `Context`, so the app passes its files
       /// directory to ``reactNative(filesDirectory:)`` instead.
       ///
-      /// - Throws: ``MMKVError/appGroupContainerUnavailable(identifier:)`` if the app group named
+      /// - Throws: ``MMKVError/Code/appGroupContainerUnavailable`` if the app group named
       ///   in `Info.plist` has no container this process can reach.
       public static func reactNative() throws(MMKVError) -> MMKVDirectory {
         if let identifier = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier")
@@ -230,6 +230,14 @@
     public static func at(_ date: Date) -> MMKVExpiry {
       let seconds = date.timeIntervalSince1970.rounded(.up)
       return .at(secondsSince1970: Int64(exactly: seconds) ?? (seconds < 0 ? .min : .max))
+    }
+  }
+
+  // MARK: - Errors
+
+  extension MMKVError: LocalizedError {
+    public var errorDescription: String? {
+      self.message
     }
   }
 #endif
