@@ -23,7 +23,7 @@ import Testing
 
   @Test func `Codes Are Distinct`() {
     let codes: [MMKVError.Code] = [
-      .openFailed, .invalidEncryptionKey, .rekeyFailed, .disableExpiryFailed,
+      .openFailed, .invalidEncryptionKey, .wrongEncryptionKey, .rekeyFailed, .disableExpiryFailed,
       .appGroupContainerUnavailable, .writeFailed, .storeIsOpen, .storesAreOpen,
       .directoryUnreadable, .backupFailed, .restoreFailed, .storesNotBackedUp,
       .storesNotRestored, .backupInvalid, .backupIsStoreDirectory, .storeIsSuspended
@@ -38,12 +38,17 @@ import Testing
     let store = try makeStore(id: "settings", rootDirectory: rootDirectory)
     store.set("dark", forKey: "theme")
 
-    var caught: MMKVError?
-    do {
-      try directory.removeStore(id: "settings")
-    } catch  where error.code == .storeIsOpen {
-      caught = error
+    // Swift 6.3's compiler crashes on Linux when this is written inline as a `do` whose
+    // `catch` has a `where` clause and assigns to a local.
+    func removeCatchingOpenStore() throws -> MMKVError? {
+      do {
+        try directory.removeStore(id: "settings")
+        return nil
+      } catch  where error.code == .storeIsOpen {
+        return error
+      }
     }
+    let caught = try removeCatchingOpenStore()
 
     let error = try #require(caught)
     #expect(
