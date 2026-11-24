@@ -78,7 +78,7 @@ extension MMKVStore {
   /// - Parameters:
   ///   - value: The value to encode. It is stored even when it equals the key's default.
   ///   - key: The key.
-  ///   - expiringIn: How long to keep the value. See ``set(_:forKey:expiringIn:)``.
+  ///   - expiry: How long to keep the value. See ``set(_:forKey:expiry:)``.
   /// - Returns: Whether the encoded value was stored.
   /// - Throws: Whatever the encoder throws, in which case nothing is stored, or
   ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
@@ -86,9 +86,9 @@ extension MMKVStore {
   public func set<V>(
     _ value: V,
     for key: DefaultedCodedKey<V>,
-    expiringIn: Duration? = nil
+    expiry: MMKVExpiry? = nil
   ) throws -> Bool {
-    try self.set(value, for: key.key, expiringIn: expiringIn)
+    try self.set(value, for: key.key, expiry: expiry)
   }
 
   /// Whether the store has a value for `key`, rather than the key's default being read. The
@@ -158,15 +158,15 @@ extension MMKVStore {
   ///
   /// - Parameters:
   ///   - values: Each key with the value to store under it.
-  ///   - expiringIn: How long to keep the values. See ``set(_:forKey:expiringIn:)``.
+  ///   - expiry: How long to keep the values. See ``set(_:forKey:expiry:)``.
   /// - Returns: Whether every encoded value was stored.
   /// - Throws: Whatever an encoder throws, in which case nothing is stored, or
   ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
   @discardableResult
   public func set<each V>(
     _ values: repeat (DefaultedCodedKey<each V>, each V),
-    expiringIn: Duration? = nil
+    expiry: MMKVExpiry? = nil
   ) throws -> Bool {
-    try self.set(repeat ((each values).0.key, (each values).1), expiringIn: expiringIn)
+    try self.set(repeat ((each values).0.key, (each values).1), expiry: expiry)
   }
 }

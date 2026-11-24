@@ -10,6 +10,10 @@ public enum MMKVError: Error, Sendable, Hashable {
   /// The store could not be re-encrypted, for example because it is read-only.
   case rekeyFailed
 
+  /// The store's file could not be rewritten without its expiries, for example because it is
+  /// read-only.
+  case disableExpiryFailed
+
   /// The app group has no container this process can reach.
   case appGroupContainerUnavailable(identifier: String)
 

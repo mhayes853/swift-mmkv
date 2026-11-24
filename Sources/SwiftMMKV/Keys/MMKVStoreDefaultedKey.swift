@@ -76,11 +76,11 @@ extension MMKVStore {
   /// - Parameters:
   ///   - value: The value to store. It is stored even when it equals the key's default.
   ///   - key: The key.
-  ///   - expiringIn: How long to keep the value. See ``set(_:forKey:expiringIn:)``.
+  ///   - expiry: How long to keep the value. See ``set(_:forKey:expiry:)``.
   /// - Returns: Whether the value was stored.
   @discardableResult
-  public func set<V>(_ value: V, for key: DefaultedKey<V>, expiringIn: Duration? = nil) -> Bool {
-    self.set(value, for: key.key, expiringIn: expiringIn)
+  public func set<V>(_ value: V, for key: DefaultedKey<V>, expiry: MMKVExpiry? = nil) -> Bool {
+    self.set(value, for: key.key, expiry: expiry)
   }
 
   /// Whether the store has a value for `key`, rather than the key's default being read.
@@ -140,14 +140,14 @@ extension MMKVStore {
   ///
   /// - Parameters:
   ///   - values: Each key with the value to store under it.
-  ///   - expiringIn: How long to keep the values. See ``set(_:forKey:expiringIn:)``.
+  ///   - expiry: How long to keep the values. See ``set(_:forKey:expiry:)``.
   /// - Returns: Whether every value was stored. A value that cannot be stored does not stop
   ///   the others from being stored.
   @discardableResult
   public func set<each V>(
     _ values: repeat (DefaultedKey<each V>, each V),
-    expiringIn: Duration? = nil
+    expiry: MMKVExpiry? = nil
   ) -> Bool {
-    self.set(repeat ((each values).0.key, (each values).1), expiringIn: expiringIn)
+    self.set(repeat ((each values).0.key, (each values).1), expiry: expiry)
   }
 }

@@ -11,7 +11,7 @@ extension MMKVStore {
   /// ```
   ///
   /// The whole value is stored under the one key, as whatever the encoder produces. A key
-  /// reads and writes exactly what ``MMKVStore/encode(_:forKey:expiringIn:with:)`` and
+  /// reads and writes exactly what ``MMKVStore/encode(_:forKey:expiry:with:)`` and
   /// ``MMKVStore/decode(_:forKey:with:)`` do with the same name and coders.
   ///
   /// Reading and writing throw what the coders throw, which is why a coded key has no
@@ -42,7 +42,7 @@ extension MMKVStore {
     fileprivate let encode: @Sendable (Value) throws -> EncodedWrite
 
     /// Stores a value that has already been encoded, and returns whether it was stored.
-    fileprivate typealias EncodedWrite = (MMKVStore, Duration?) -> Bool
+    fileprivate typealias EncodedWrite = (MMKVStore, MMKVExpiry?) -> Bool
 
     /// Creates a key.
     ///
@@ -68,7 +68,7 @@ extension MMKVStore {
       }
       self.encode = { value in
         let output = try encoder.encode(value)
-        return { store, expiringIn in store.set(output, forKey: name, expiringIn: expiringIn) }
+        return { store, expiry in store.set(output, forKey: name, expiry: expiry) }
       }
     }
   }
@@ -110,7 +110,7 @@ extension MMKVStore {
   /// - Parameters:
   ///   - value: The value to encode.
   ///   - key: The key.
-  ///   - expiringIn: How long to keep the value. See ``set(_:forKey:expiringIn:)``.
+  ///   - expiry: How long to keep the value. See ``set(_:forKey:expiry:)``.
   /// - Returns: Whether the encoded value was stored.
   /// - Throws: Whatever the encoder throws, in which case nothing is stored, or
   ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
@@ -118,9 +118,9 @@ extension MMKVStore {
   public func set<V>(
     _ value: V,
     for key: CodedKey<V>,
-    expiringIn: Duration? = nil
+    expiry: MMKVExpiry? = nil
   ) throws -> Bool {
-    let didStore = try key.encode(value)(self, expiringIn)
+    let didStore = try key.encode(value)(self, expiry)
     if !didStore && self.isSuspended {
       throw MMKVError.storeIsSuspended(id: self.id)
     }
@@ -210,7 +210,7 @@ extension MMKVStore {
   ///
   /// - Parameters:
   ///   - values: Each key with the value to store under it.
-  ///   - expiringIn: How long to keep the values. See ``set(_:forKey:expiringIn:)``.
+  ///   - expiry: How long to keep the values. See ``set(_:forKey:expiry:)``.
   /// - Returns: Whether every encoded value was stored. One that cannot be stored does not
   ///   stop the others from being stored.
   /// - Throws: Whatever an encoder throws, in which case nothing is stored, or
@@ -218,13 +218,13 @@ extension MMKVStore {
   @discardableResult
   public func set<each V>(
     _ values: repeat (CodedKey<each V>, each V),
-    expiringIn: Duration? = nil
+    expiry: MMKVExpiry? = nil
   ) throws -> Bool {
-    var writes = [(MMKVStore, Duration?) -> Bool]()
+    var writes = [(MMKVStore, MMKVExpiry?) -> Bool]()
     repeat writes.append(try (each values).0.encode((each values).1))
     let didStoreAll = self.withExclusiveLock { store in
       writes.reduce(into: true) { didStoreAll, write in
-        didStoreAll = write(store, expiringIn) && didStoreAll
+        didStoreAll = write(store, expiry) && didStoreAll
       }
     }
     if !didStoreAll && self.isSuspended {

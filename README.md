@@ -129,6 +129,41 @@ let count = store.withBytes(forKey: "avatar") { $0.byteCount }
 `set(unsafeBytes:forKey:)` and `withUnsafeBytes(forKey:)` do the same with an
 `UnsafeRawBufferPointer`, for handing bytes to and from C.
 
+## Expiring values
+
+A value can be given an expiry when it is written. An expired key reads as if it had been
+removed, and is left out of `keys` and `count`:
+
+```swift
+store.set("123456", forKey: "otp", expiry: .after(.seconds(30)))
+store.set(token, forKey: "token", expiry: .at(secondsSince1970: claims.exp))
+store.set(token, forKey: "token", expiry: .at(response.expiresAt))  // A `Date`, with `Foundation`.
+```
+
+Every write takes an `expiry:`, typed keys, batches and `Codable` values included. A write
+without one has the store's default, which is to keep the value until it is removed:
+
+```swift
+var configuration = MMKVConfiguration(directory: directory, mode: .singleProcess)
+configuration.defaultExpiry = .after(.seconds(3600))
+let cache = try MMKVStore(configuration)
+
+cache.set(page, forKey: "home")                       // Kept for an hour.
+cache.set(page, forKey: "pinned", expiry: .never)     // Kept until it is removed.
+```
+
+- An expiry is rounded up to a whole second, and the shortest is one second. A value written
+  after the moment it expires at is kept for one second.
+- MMKV records the second a key expires at in 32 bits, by the device's clock. An expiry past the
+  last moment it can record, in 2106, is no expiry, and changing the clock moves every expiry.
+- The default belongs to the `MMKVStore` it was configured on, and not to the store's files. It
+  applies to that store's writes alone, and values that are already stored keep their expiry.
+- Nothing reports the moment a key expires. A change listener, a subscription to the key and a
+  SwiftUI view reading it hear nothing until the key is next written or removed.
+- The first write that expires rewrites the store's file in a format that records an expiry for
+  every key. `isExpiryEnabled` tells whether the file is in it. `disableExpiry()` rewrites the
+  file back, dropping the keys that have expired and keeping every other key for good.
+
 ## Codable values
 
 A `Codable` value is stored whole under one key, in whatever form a coder gives it:
@@ -573,8 +608,8 @@ Things to know while both sides are live:
 - `MMKVDirectory.reactNative()` is only available on Apple platforms, and needs the `Foundation`
   trait. On Android, pass the path of `context.filesDir` to
   `MMKVDirectory.reactNative(filesDirectory:)`.
-- Avoid `expiringIn:` on a shared store. The first expiring write changes the file's format, and
-  react-native-mmkv has no option for it.
+- Avoid expiring values on a shared store. The first write that expires changes the file's
+  format, and react-native-mmkv has no option for it. `store.disableExpiry()` changes it back.
 
 The [`E2E`](E2E) directory holds an Expo app that links react-native-mmkv beside a native module
 built on this package, and checks on iOS and Android that both sides agree about the same files.

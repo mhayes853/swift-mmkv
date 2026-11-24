@@ -118,7 +118,7 @@ struct KeyEncodingContext {
   }
 
   private static func write<V: MMKVValue>(_ value: V) -> KeyWrite {
-    { store, key, expiringIn in store.set(value, forKey: key, expiringIn: expiringIn) }
+    { store, key, expiry in store.set(value, forKey: key, expiry: expiry) }
   }
 }
 
