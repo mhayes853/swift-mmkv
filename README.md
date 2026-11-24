@@ -226,13 +226,31 @@ let (settings, profile) = try store.decode(
 )
 ```
 
-A compiler-written `Encodable` conformance skips a property that is `nil`, so its key keeps the
-value it had. `removingOtherKeys: true` removes the keys under the prefix that the value did not
-write, at the cost of reading every key in the store. `removeValues(underKey:)` removes a prefix
-and everything under it:
+A compiler-written `Encodable` conformance skips a property that is `nil`, so nothing is written
+to its key. Encoding therefore removes the keys under the prefix that the value did not write, so
+that reading the value back gives what was encoded:
 
 ```swift
-try store.encode(settings, intoKeysUnder: "settings", removingOtherKeys: true)
+settings.theme = nil
+try store.encode(settings, intoKeysUnder: "settings")
+store.contains("settings.theme")  // false
+```
+
+Every key under the prefix is taken to belong to the value. **Under an empty prefix that is
+every key in the store**, so encoding there removes everything else the store holds:
+
+```swift
+store.set(true, forKey: "hasOnboarded")
+try store.encode(settings, intoKeysUnder: "")
+store.contains("hasOnboarded")  // false
+```
+
+Pass `removingOtherKeys: false` to remove nothing, when other keys share the prefix or the
+prefix is empty. It also saves reading every key in the store, which removing takes.
+`removeValues(underKey:)` removes a prefix and everything under it:
+
+```swift
+try store.encode(settings, intoKeysUnder: "", removingOtherKeys: false)
 store.removeValues(underKey: "settings")
 store.removeValues(underKeys: ["settings", "profile"])
 ```

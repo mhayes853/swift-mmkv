@@ -30,17 +30,32 @@ extension MMKVStore {
   ///
   /// ## Keys that are not written
   ///
-  /// An `Encodable` conformance that the compiler writes skips a property that is `nil`. Its
-  /// key is then left as it was, and still has the value it had before. Pass
-  /// `removingOtherKeys` to remove it, or write the conformance so that it calls
-  /// `encodeNil(forKey:)`, which removes the key. Encoding `nil` as the whole value removes
-  /// `prefix` and every key under it.
+  /// An `Encodable` conformance that the compiler writes skips a property that is `nil`, so
+  /// nothing is written to its key. To keep the key from holding on to the value it had,
+  /// `prefix` and every key under it that `value` did not write are removed. Reading the value
+  /// back then gives what was encoded.
+  ///
+  /// Every key under `prefix` is therefore taken to belong to `value`. Under an empty `prefix`
+  /// that is every key in the store, so encoding there removes everything else the store
+  /// holds:
+  ///
+  /// ```swift
+  /// store.set(true, forKey: "hasOnboarded")
+  /// try store.encode(settings, intoKeysUnder: "")
+  /// store.contains("hasOnboarded")  // false
+  /// ```
+  ///
+  /// Pass `false` for `removingOtherKeys` to remove nothing, which is what to do when other
+  /// keys share the prefix. A key is then removed only by a conformance that calls
+  /// `encodeNil(forKey:)`, or by encoding `nil` as the whole value, which removes `prefix` and
+  /// every key under it.
   ///
   /// - Parameters:
   ///   - value: The value to store.
   ///   - prefix: The start of every key.
   ///   - removingOtherKeys: Whether to remove `prefix` and the keys under it that `value` did
-  ///     not write. This reads every key in the store.
+  ///     not write, which reads every key in the store. With an empty `prefix` this removes
+  ///     every other key in the store.
   ///   - expiry: How long the keys live. See ``set(_:forKey:expiry:)``.
   ///   - options: How the keys are named, and how numbers and arrays are stored.
   /// - Returns: Whether every key was stored. A value whose type refuses to store it, such as a
@@ -51,7 +66,7 @@ extension MMKVStore {
   public func encode<T: Encodable>(
     _ value: T,
     intoKeysUnder prefix: String,
-    removingOtherKeys: Bool = false,
+    removingOtherKeys: Bool = true,
     expiry: MMKVExpiry? = nil,
     options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
   ) throws -> Bool {
@@ -78,8 +93,10 @@ extension MMKVStore {
   /// does not encode. They are then written under one exclusive lock, in the order given, so a
   /// key that two values write keeps the later one, and listeners hear about each key once.
   ///
-  /// `removingOtherKeys` removes, under every prefix, the keys that none of the values wrote.
-  /// The store's keys are read once for all of them.
+  /// The keys under every prefix that none of the values wrote are removed, unless
+  /// `removingOtherKeys` is `false`. The store's keys are read once for all of them. An empty
+  /// prefix has every key in the store under it: see
+  /// ``encode(_:intoKeysUnder:removingOtherKeys:expiry:options:)``.
   ///
   /// - Parameters:
   ///   - values: Each prefix, paired with the value to store under it.
@@ -94,7 +111,7 @@ extension MMKVStore {
   @discardableResult
   public func encode<each T: Encodable>(
     intoKeysUnder values: repeat (String, each T),
-    removingOtherKeys: Bool = false,
+    removingOtherKeys: Bool = true,
     expiry: MMKVExpiry? = nil,
     options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
   ) throws -> Bool {

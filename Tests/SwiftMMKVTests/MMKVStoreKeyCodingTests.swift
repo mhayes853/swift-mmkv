@@ -131,29 +131,66 @@ private let settings = Settings(
     #expect(try store.decode(Theme.self, fromKeysUnder: "theme") == .dark)
   }
 
-  @Test func `Leaves The Key Of A Skipped Nil Property`() throws {
-    let store = try makeStore()
-    try store.encode(settings, intoKeysUnder: "settings")
-    var changed = settings
-    changed.theme = nil
-
-    try store.encode(changed, intoKeysUnder: "settings")
-
-    #expect(store.value(forKey: "settings.theme", as: String.self) == "dark")
-  }
-
-  @Test func `Removes Other Keys When Asked`() throws {
+  @Test func `Removes The Key Of A Skipped Nil Property`() throws {
     let store = try makeStore()
     try store.encode(settings, intoKeysUnder: "settings")
     store.set("kept", forKey: "settingsBackup")
     var changed = settings
     changed.theme = nil
 
-    try store.encode(changed, intoKeysUnder: "settings", removingOtherKeys: true)
+    try store.encode(changed, intoKeysUnder: "settings")
 
     #expect(!store.contains("settings.theme"))
     #expect(store.contains("settingsBackup"))
     #expect(try store.decode(Settings.self, fromKeysUnder: "settings") == changed)
+  }
+
+  @Test func `Leaves Other Keys When Asked`() throws {
+    let store = try makeStore()
+    try store.encode(settings, intoKeysUnder: "settings")
+    store.set("kept", forKey: "settings.unrelated")
+    var changed = settings
+    changed.theme = nil
+
+    try store.encode(changed, intoKeysUnder: "settings", removingOtherKeys: false)
+
+    #expect(store.value(forKey: "settings.theme", as: String.self) == "dark")
+    #expect(store.contains("settings.unrelated"))
+  }
+
+  @Test func `An Empty Prefix Removes Every Other Key In The Store`() throws {
+    let store = try makeStore()
+    store.set(true, forKey: "hasOnboarded")
+    store.set("abc", forKey: "auth.token")
+
+    try store.encode(ExplicitNil(theme: "dark"), intoKeysUnder: "")
+
+    #expect(store.keys == ["theme"])
+  }
+
+  @Test func `An Empty Prefix Leaves Other Keys When Asked`() throws {
+    let store = try makeStore()
+    store.set(true, forKey: "hasOnboarded")
+    store.set("abc", forKey: "auth.token")
+
+    try store.encode(ExplicitNil(theme: "dark"), intoKeysUnder: "", removingOtherKeys: false)
+
+    #expect(store.keys == ["hasOnboarded", "auth.token", "theme"])
+  }
+
+  @Test func `Several Values Remove The Keys None Of Them Wrote`() throws {
+    let store = try makeStore()
+    try store.encode(settings, intoKeysUnder: "settings")
+    try store.encode(settings, intoKeysUnder: "draft")
+    store.set("kept", forKey: "other")
+    var changed = settings
+    changed.theme = nil
+
+    try store.encode(intoKeysUnder: ("settings", changed), ("draft", changed))
+
+    #expect(!store.contains("settings.theme"))
+    #expect(!store.contains("draft.theme"))
+    #expect(store.contains("other"))
   }
 
   @Test func `An Encoded Nil Removes Its Key`() throws {
