@@ -171,7 +171,9 @@
     func `No Protection Is Accepted`() throws {
       let rootDirectory = try self.makeStrictStoreFiles()
 
-      _ = try MMKVStore(self.configuration(rootDirectory: rootDirectory, fileProtection: .none))
+      // Spelled out, because `.none` for an optional parameter is `nil`.
+      let none = MMKVConfiguration.FileProtection.none
+      _ = try MMKVStore(self.configuration(rootDirectory: rootDirectory, fileProtection: none))
 
       // macOS accepts the class and goes on reporting the one above it.
       let classes = self.protectionClasses(id: "settings", in: rootDirectory)
