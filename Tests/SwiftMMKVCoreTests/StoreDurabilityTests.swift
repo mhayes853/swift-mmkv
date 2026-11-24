@@ -20,7 +20,9 @@ import Testing
     #expect(makeStore(root: root, isMultiProcess: true).int32(forKey: "key") == 42)
   }
 
-  @Test func `Reading An Expired Key Keeps A Value Another Process Wrote While It Waited`() {
+  @Test func `Reading An Expired Key Keeps A Value Another Process Wrote While It Waited`()
+    async throws
+  {
     let root = temporaryDirectory()
     let other = makeStore(root: root, isMultiProcess: true)
     _ = other.set(.int32(1), forKey: "other", expiresInSeconds: 0)
@@ -28,7 +30,7 @@ import Testing
     let interruption = LockInterruption()
     let store = makeStore(root: root, isMultiProcess: true, fileSystem: interruption.fileSystem)
     #expect(store.count == 2)
-    Thread.sleep(forTimeInterval: 2)
+    try await Task.sleep(for: .seconds(2))
 
     // Reading the expired key upgrades the lock to remove it.
     interruption.whenUpgradeGivesUpTheLock {
@@ -38,14 +40,16 @@ import Testing
     #expect(other.int32(forKey: "key") == 99)
   }
 
-  @Test func `Counting Keys Keeps What Another Process Wrote Before Expired Keys Are Dropped`() {
+  @Test func `Counting Keys Keeps What Another Process Wrote Before Expired Keys Are Dropped`()
+    async throws
+  {
     let root = temporaryDirectory()
     let other = makeStore(root: root, isMultiProcess: true)
     _ = other.set(.int32(1), forKey: "expiring", expiresInSeconds: 1)
     let interruption = LockInterruption()
     let store = makeStore(root: root, isMultiProcess: true, fileSystem: interruption.fileSystem)
     #expect(store.count == 1)
-    Thread.sleep(forTimeInterval: 2)
+    try await Task.sleep(for: .seconds(2))
 
     interruption.whenTheLockIsNextReleased {
       _ = other.set(.int32(7), forKey: "fresh", expiresInSeconds: 0)
