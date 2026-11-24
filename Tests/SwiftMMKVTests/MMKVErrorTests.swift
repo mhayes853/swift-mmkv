@@ -39,19 +39,20 @@ import Testing
     let store = try makeStore(id: "settings", rootDirectory: rootDirectory)
     store.set("dark", forKey: "theme")
 
-    // Swift 6.3's compiler crashes on Linux when this is written inline as a `do` whose
-    // `catch` has a `where` clause and assigns to a local.
-    func removeCatchingOpenStore() throws -> MMKVError? {
+    // A function, and not a variable that the `catch` sets: the Swift 6.3.3 compiler crashes
+    // while compiling this test written that way.
+    func removing() -> MMKVError? {
       do {
         try directory.removeStore(id: "settings")
         return nil
       } catch  where error.code == .storeIsOpen {
         return error
+      } catch {
+        return nil
       }
     }
-    let caught = try removeCatchingOpenStore()
 
-    let error = try #require(caught)
+    let error = try #require(removing())
     #expect(
       error.message == "The store \"settings\" in \"\(rootDirectory)\" is open in this process."
     )
