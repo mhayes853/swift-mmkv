@@ -39,14 +39,20 @@ import Testing
     let store = try makeStore(id: "settings", rootDirectory: rootDirectory)
     store.set("dark", forKey: "theme")
 
-    var caught: MMKVError?
-    do {
-      try directory.removeStore(id: "settings")
-    } catch  where error.code == .storeIsOpen {
-      caught = error
+    // A function, and not a variable that the `catch` sets: the Swift 6.3.3 compiler crashes
+    // while compiling this test written that way.
+    func removing() -> MMKVError? {
+      do {
+        try directory.removeStore(id: "settings")
+        return nil
+      } catch where error.code == .storeIsOpen {
+        return error
+      } catch {
+        return nil
+      }
     }
 
-    let error = try #require(caught)
+    let error = try #require(removing())
     #expect(
       error.message == "The store \"settings\" in \"\(rootDirectory)\" is open in this process."
     )
