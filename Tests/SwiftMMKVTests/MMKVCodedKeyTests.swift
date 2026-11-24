@@ -96,8 +96,8 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
     try store.set(1, for: .count)
     store.suspend()
 
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) { try store.value(for: .count) }
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) { try store.set(2, for: .count) }
+    expectError(.storeIsSuspended) { try store.value(for: .count) }
+    expectError(.storeIsSuspended) { try store.set(2, for: .count) }
 
     store.resume()
     #expect(try store.value(for: .count) == 1)
@@ -162,7 +162,7 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
     store.resume()
 
     #expect(recorder.all.map(\.success) == [nil, .some(1)])
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) { try recorder.all[0].get() }
+    expectError(.storeIsSuspended) { try recorder.all[0].get() }
     subscription.cancel()
   }
 

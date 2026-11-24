@@ -67,7 +67,7 @@ extension MMKVStore {
   ///
   /// - Returns: The value, or the key's default if the key has no value.
   /// - Throws: Whatever the decoder throws when the stored value does not decode, or
-  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  ///   ``MMKVError/Code/storeIsSuspended`` if the store is suspended.
   public func value<V>(for key: DefaultedCodedKey<V>) throws -> V {
     try self.value(for: key.key) ?? key.defaultValue
   }
@@ -81,7 +81,7 @@ extension MMKVStore {
   ///   - expiry: How long to keep the value. See ``set(_:forKey:expiry:)``.
   /// - Returns: Whether the encoded value was stored.
   /// - Throws: Whatever the encoder throws, in which case nothing is stored, or
-  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  ///   ``MMKVError/Code/storeIsSuspended`` if the store is suspended.
   @discardableResult
   public func set<V>(
     _ value: V,
@@ -135,7 +135,7 @@ extension MMKVStore {
   /// The store is locked once for the whole read.
   ///
   /// - Throws: Whatever a key's decoder throws when its stored value does not decode, or
-  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  ///   ``MMKVError/Code/storeIsSuspended`` if the store is suspended.
   public func values<each V>(
     forKeys keys: repeat DefaultedCodedKey<each V>
   ) throws -> (repeat each V) {
@@ -161,7 +161,7 @@ extension MMKVStore {
   ///   - expiry: How long to keep the values. See ``set(_:forKey:expiry:)``.
   /// - Returns: Whether every encoded value was stored.
   /// - Throws: Whatever an encoder throws, in which case nothing is stored, or
-  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  ///   ``MMKVError/Code/storeIsSuspended`` if the store is suspended.
   @discardableResult
   public func set<each V>(
     _ values: repeat (DefaultedCodedKey<each V>, each V),

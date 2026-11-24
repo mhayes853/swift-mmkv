@@ -208,10 +208,10 @@ private let settings = Settings(
     let store = try makeStore(mode: .multiProcess)
     store.suspend()
 
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+    expectError(.storeIsSuspended) {
       try store.encode(settings, intoKeysUnder: "settings")
     }
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+    expectError(.storeIsSuspended) {
       try store.decode(Settings.self, fromKeysUnder: "settings")
     }
   }
@@ -516,10 +516,10 @@ private let settings = Settings(
     let store = try makeStore(mode: .multiProcess)
     store.suspend()
 
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+    expectError(.storeIsSuspended) {
       try store.encode(intoKeysUnder: ("a", self.sync), ("b", self.sync))
     }
-    #expect(throws: MMKVError.storeIsSuspended(id: store.id)) {
+    expectError(.storeIsSuspended) {
       try store.decode(fromKeysUnder: ("a", Sync.self), ("b", Sync.self))
     }
   }

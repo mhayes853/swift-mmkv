@@ -176,11 +176,11 @@ import Testing
 
   @Test func `Opening Fails For An Empty Identifier Or Root Directory`() throws {
     let unused = MMKVDirectory(path: "/tmp/unused")
-    #expect(throws: MMKVError.openFailed(id: "", directory: unused)) {
+    expectError(.openFailed) {
       try MMKVStore(MMKVConfiguration(id: "", directory: unused, mode: .singleProcess))
     }
     let empty = MMKVDirectory(path: "")
-    #expect(throws: MMKVError.openFailed(id: "id", directory: empty)) {
+    expectError(.openFailed) {
       try MMKVStore(MMKVConfiguration(id: "id", directory: empty, mode: .singleProcess))
     }
   }

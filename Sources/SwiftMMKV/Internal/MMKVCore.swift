@@ -13,7 +13,7 @@ struct MMKVCore: Sendable {
   /// Opens the instance described by `configuration`, creating its files if they do not exist.
   init(_ configuration: MMKVConfiguration) throws(MMKVError) {
     if let encryption = configuration.encryption, !encryption.isValid {
-      throw .invalidEncryptionKey
+      throw MMKVErrors.invalidEncryptionKey
     }
     LogSink.prepare()
     let handle = MMKVStorage(path: configuration.directory.path)
@@ -21,7 +21,7 @@ struct MMKVCore: Sendable {
         configuration.withCConfiguration { mmkv_open(&$0) }
       }
     guard let handle else {
-      throw .openFailed(id: configuration.id, directory: configuration.directory)
+      throw MMKVErrors.openFailed(id: configuration.id, directory: configuration.directory)
     }
     if !configuration.isReadOnly, let protectionClass = configuration.fileProtection.cValue {
       let failures = MMKVStorage(path: configuration.directory.path)
@@ -375,13 +375,13 @@ extension MMKVCore {
       _ = mmkv_count(handle)
       return mmkv_disable_expiry(handle)
     }
-    guard let didDisable else { throw .storeIsSuspended(id: self.state.id) }
-    guard didDisable else { throw .disableExpiryFailed }
+    guard let didDisable else { throw MMKVErrors.storeIsSuspended(id: self.state.id) }
+    guard didDisable else { throw MMKVErrors.disableExpiryFailed }
   }
 
   func rekey(_ encryption: MMKVConfiguration.Encryption?) throws(MMKVError) {
     if let encryption, !encryption.isValid {
-      throw .invalidEncryptionKey
+      throw MMKVErrors.invalidEncryptionKey
     }
     let didRekey = self.perform { handle in
       (encryption?.key ?? [])
@@ -393,8 +393,8 @@ extension MMKVCore {
           )
         }
     }
-    guard let didRekey else { throw .storeIsSuspended(id: self.state.id) }
-    guard didRekey else { throw .rekeyFailed }
+    guard let didRekey else { throw MMKVErrors.storeIsSuspended(id: self.state.id) }
+    guard didRekey else { throw MMKVErrors.rekeyFailed }
   }
 }
 

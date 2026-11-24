@@ -46,7 +46,7 @@ extension MMKVStore {
   /// - Returns: Whether every key was stored. A value whose type refuses to store it, such as a
   ///   `Decimal` that is not a number, is one that was not.
   /// - Throws: An `EncodingError` if `value` does not encode, in which case nothing is stored,
-  ///   or ``MMKVError/storeIsSuspended(id:)``.
+  ///   or ``MMKVError/Code/storeIsSuspended``.
   @discardableResult
   public func encode<T: Encodable>(
     _ value: T,
@@ -90,7 +90,7 @@ extension MMKVStore {
   /// - Returns: Whether every key was stored. A value whose type refuses to store it, such as a
   ///   `Decimal` that is not a number, is one that was not.
   /// - Throws: An `EncodingError` if a value does not encode, in which case nothing is stored,
-  ///   or ``MMKVError/storeIsSuspended(id:)``.
+  ///   or ``MMKVError/Code/storeIsSuspended``.
   @discardableResult
   public func encode<each T: Encodable>(
     intoKeysUnder values: repeat (String, each T),
@@ -142,7 +142,7 @@ extension MMKVStore {
       return didStore
     }
     if !didStore && self.isSuspended {
-      throw MMKVError.storeIsSuspended(id: self.id)
+      throw MMKVErrors.storeIsSuspended(id: self.id)
     }
     return didStore
   }
@@ -170,7 +170,7 @@ extension MMKVStore {
   ///   - prefix: The start of every key.
   ///   - options: How the keys are named, and how numbers and arrays are stored.
   /// - Throws: `DecodingError.keyNotFound` if a key that `T` needs has no value, another
-  ///   `DecodingError`, or ``MMKVError/storeIsSuspended(id:)``.
+  ///   `DecodingError`, or ``MMKVError/Code/storeIsSuspended``.
   public func decode<T: Decodable>(
     _ type: T.Type = T.self,
     fromKeysUnder prefix: String,
@@ -198,7 +198,7 @@ extension MMKVStore {
   ///   - values: Each prefix, paired with the type to decode from the keys under it.
   ///   - options: How the keys are named, and how numbers and arrays are stored.
   /// - Throws: `DecodingError.keyNotFound` if a key that a type needs has no value, another
-  ///   `DecodingError`, or ``MMKVError/storeIsSuspended(id:)``.
+  ///   `DecodingError`, or ``MMKVError/Code/storeIsSuspended``.
   public func decode<each T: Decodable>(
     fromKeysUnder values: repeat (String, (each T).Type),
     options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()

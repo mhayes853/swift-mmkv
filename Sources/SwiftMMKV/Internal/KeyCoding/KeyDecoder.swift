@@ -145,7 +145,7 @@ final class KeyDecodingContext {
   /// the same, so the store is asked.
   private func missing(_ key: String, _ codingPath: [any CodingKey]) -> any Error {
     if self.store.isSuspended {
-      return MMKVError.storeIsSuspended(id: self.store.id)
+      return MMKVErrors.storeIsSuspended(id: self.store.id)
     }
     return DecodingError.keyNotFound(
       codingPath.last ?? StoreCodingKey(stringValue: key),

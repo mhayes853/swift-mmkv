@@ -49,7 +49,7 @@ extension MMKVStore.ID {
     #expect(directory.containsStore(id: .user(7)))
     #expect(!directory.containsStore(id: .settings))
     #expect(try directory.stores.map(\.id) == [.user(7)])
-    #expect(throws: MMKVError.storeIsOpen(id: .user(7), directory: directory)) {
+    expectError(.storeIsOpen) {
       try directory.removeStore(id: .user(7))
     }
   }

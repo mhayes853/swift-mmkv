@@ -1,56 +1,102 @@
 /// An error from opening, re-encrypting, removing, backing up, or restoring an ``MMKVStore``.
-public enum MMKVError: Error, Sendable, Hashable {
-  /// The store could not be opened, for example because its identifier or its directory's path
-  /// is empty.
-  case openFailed(id: MMKVStore.ID, directory: MMKVDirectory)
+///
+/// An error has a ``code`` that says what went wrong, to tell errors apart by, and a
+/// ``message`` that describes it, naming the store and the directory it is about:
+///
+/// ```swift
+/// do {
+///   try directory.removeStore(id: "settings")
+/// } catch where error.code == .storeIsOpen {
+///   // The store is in use.
+/// }
+/// ```
+///
+/// Later versions of this package may throw errors with codes that this version does not have.
+public struct MMKVError: Error, Hashable, Sendable {
+  /// What went wrong.
+  public let code: Code
 
-  /// The encryption key is empty or longer than its cipher allows.
-  case invalidEncryptionKey
+  /// A description of what went wrong, for a log or a developer to read. Its wording may
+  /// change between versions.
+  public let message: String
 
-  /// The store could not be re-encrypted, for example because it is read-only.
-  case rekeyFailed
+  /// Creates an error.
+  public init(code: Code, message: String) {
+    self.code = code
+    self.message = message
+  }
+}
 
-  /// The store's file could not be rewritten without its expiries, for example because it is
-  /// read-only.
-  case disableExpiryFailed
+extension MMKVError: CustomStringConvertible {
+  public var description: String {
+    self.message
+  }
+}
 
-  /// The app group has no container this process can reach.
-  case appGroupContainerUnavailable(identifier: String)
+extension MMKVError {
+  /// What went wrong, for an ``MMKVError``.
+  public struct Code: RawRepresentable, Hashable, Sendable {
+    public let rawValue: String
 
-  /// The store did not accept a write to `key`. A write fails when the key is empty, the store
-  /// is read-only, or the pair exceeds the store's item size limit.
-  case writeFailed(key: String)
+    public init(rawValue: String) {
+      self.rawValue = rawValue
+    }
 
-  /// The store is open in this process, so its files cannot be removed.
-  case storeIsOpen(id: MMKVStore.ID, directory: MMKVDirectory)
+    /// The store could not be opened, for example because its identifier or its directory's
+    /// path is empty.
+    public static let openFailed = Self(rawValue: "open-failed")
 
-  /// Some stores are open in this process, so their files were not removed along with the rest
-  /// of their directory's stores.
-  case storesAreOpen(ids: [MMKVStore.ID], directory: MMKVDirectory)
+    /// The encryption key is empty or longer than its cipher allows.
+    public static let invalidEncryptionKey = Self(rawValue: "invalid-encryption-key")
 
-  /// The directory exists but its contents cannot be listed.
-  case directoryUnreadable(MMKVDirectory)
+    /// The store could not be re-encrypted, for example because it is read-only.
+    public static let rekeyFailed = Self(rawValue: "rekey-failed")
 
-  /// The store's files could not be copied into `backup`.
-  case backupFailed(id: MMKVStore.ID, directory: MMKVDirectory, backup: MMKVDirectory)
+    /// The store's file could not be rewritten without its expiries, for example because it is
+    /// read-only.
+    public static let disableExpiryFailed = Self(rawValue: "disable-expiry-failed")
 
-  /// The store could not be overwritten with its copy in `backup`, for example because it is
-  /// open as read-only.
-  case restoreFailed(id: MMKVStore.ID, directory: MMKVDirectory, backup: MMKVDirectory)
+    /// The app group has no container this process can reach.
+    public static let appGroupContainerUnavailable = Self(
+      rawValue: "app-group-container-unavailable"
+    )
 
-  /// Some stores could not be copied into `backup`. The others were.
-  case storesNotBackedUp(count: Int, directory: MMKVDirectory, backup: MMKVDirectory)
+    /// The store did not accept a write to a key. A write fails when the key is empty, the
+    /// store is read-only, or the pair exceeds the store's item size limit.
+    public static let writeFailed = Self(rawValue: "write-failed")
 
-  /// Some stores could not be overwritten with their copies in `backup`. The others were.
-  case storesNotRestored(count: Int, directory: MMKVDirectory, backup: MMKVDirectory)
+    /// The store is open in this process, so its files cannot be removed or replaced.
+    public static let storeIsOpen = Self(rawValue: "store-is-open")
 
-  /// The store's copy in `backup` does not match its checksum, so nothing was restored from it.
-  case backupInvalid(id: MMKVStore.ID, backup: MMKVDirectory)
+    /// Some stores are open in this process, so their files were not removed or replaced along
+    /// with the rest of their directory's stores.
+    public static let storesAreOpen = Self(rawValue: "stores-are-open")
 
-  /// The backup directory is the directory the stores are in.
-  case backupIsStoreDirectory(MMKVDirectory)
+    /// The directory exists but its contents cannot be listed.
+    public static let directoryUnreadable = Self(rawValue: "directory-unreadable")
 
-  /// The store is suspended, so it turned the operation away rather than take its file lock.
-  /// The operation can be tried again once the store is resumed.
-  case storeIsSuspended(id: MMKVStore.ID)
+    /// The store's files could not be copied into the backup.
+    public static let backupFailed = Self(rawValue: "backup-failed")
+
+    /// The store could not be overwritten with its copy in the backup, for example because it
+    /// is open as read-only.
+    public static let restoreFailed = Self(rawValue: "restore-failed")
+
+    /// Some stores could not be copied into the backup. The others were.
+    public static let storesNotBackedUp = Self(rawValue: "stores-not-backed-up")
+
+    /// Some stores could not be overwritten with their copies in the backup. The others were.
+    public static let storesNotRestored = Self(rawValue: "stores-not-restored")
+
+    /// The store's copy in the backup does not match its checksum, so nothing was restored
+    /// from it.
+    public static let backupInvalid = Self(rawValue: "backup-invalid")
+
+    /// The backup directory is the directory the stores are in.
+    public static let backupIsStoreDirectory = Self(rawValue: "backup-is-store-directory")
+
+    /// The store is suspended, so it turned the operation away rather than take its file lock.
+    /// The operation can be tried again once the store is resumed.
+    public static let storeIsSuspended = Self(rawValue: "store-is-suspended")
+  }
 }
