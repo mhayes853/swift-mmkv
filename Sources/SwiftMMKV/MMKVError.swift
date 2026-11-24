@@ -98,5 +98,9 @@ extension MMKVError {
     /// The store is suspended, so it turned the operation away rather than take its file lock.
     /// The operation can be tried again once the store is resumed.
     public static let storeIsSuspended = Self(rawValue: "store-is-suspended")
+
+    /// The store is closed, so it turns every operation away. Open the store again, as a new
+    /// ``MMKVStore``, to use it.
+    public static let storeIsClosed = Self(rawValue: "store-is-closed")
   }
 }

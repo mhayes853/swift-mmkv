@@ -459,10 +459,38 @@ for such a store has no `id`. `entry.isStore(id:)` still recognises it, and it c
 removed.
 
 A store that is open in this process cannot be removed: `removeStore(id:)` throws an
-`MMKVError` with the code `.storeIsOpen`. A store stays open for the rest of the process once an
-`MMKVStore` has been created for it, so remove a store before opening it, or empty an open one
+`MMKVError` with the code `.storeIsOpen`. A store stays open once an `MMKVStore` has been
+created for it, until it is closed, so close a store before removing it, or empty an open one
 with `removeAll()`. `removeAllStores()` removes every store that is not open and then throws an
 `MMKVError` with the code `.storesAreOpen`, whose message names the ones it left.
+
+### Closing a store
+
+`close()` releases a store's memory and its files, so that the store can be removed, or
+restored over by its directory:
+
+```swift
+userStore.close()
+try directory.removeStore(id: .user("42"))
+```
+
+A closed store stays closed. It behaves as a suspended store does, for good:
+
+- Reads return `nil`, and `keys` and `count` are empty.
+- Writes and removals do nothing, and return `false` where they return a result.
+- Throwing operations throw an `MMKVError` with the code `.storeIsClosed`.
+
+To use the store again, make a new `MMKVStore` from its configuration. That one reads the
+files as they then are, and may open them with another mode or encryption key.
+
+Closing waits for the operations other threads have under way, so a value that is being
+encoded into several keys is written whole. Every `MMKVStore` over the same files is closed
+together, since they share the open files. Their listeners are told once more, with
+`.external`, because every value now reads as `nil`, and are told nothing after that; `changes`
+and the sequences of a key's values end.
+
+`isClosed` says whether a store has been closed. The Observation framework tracks it, as it
+tracks `isSuspended`, so a SwiftUI view that reads it is drawn again when the store closes.
 
 For a store that does not need to last, such as one for a test or a preview, use a temporary
 directory. Every call makes a new one, so the store starts empty:

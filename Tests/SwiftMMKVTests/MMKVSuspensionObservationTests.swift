@@ -46,6 +46,79 @@
     }
 
     @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
+    final class Closures: Sendable {
+      private let storage = Mutex(0)
+
+      var count: Int { self.storage.withLock { $0 } }
+
+      /// Reads `isClosed` and counts the next change to it.
+      func track(_ store: MMKVStore) {
+        withObservationTracking {
+          _ = store.isClosed
+        } onChange: {
+          self.storage.withLock { $0 += 1 }
+        }
+      }
+    }
+
+    @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
+    @Test func `Closing A Store Is Observed`() throws {
+      let store = try makeStore()
+      let closures = Closures()
+
+      closures.track(store)
+      #expect(closures.count == 0)
+      store.close()
+      #expect(closures.count == 1)
+      #expect(store.isClosed)
+    }
+
+    @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
+    @Test func `Closing A Closed Store Is Not Observed`() throws {
+      let store = try makeStore()
+      let closures = Closures()
+      store.close()
+
+      closures.track(store)
+      store.close()
+      #expect(closures.count == 0)
+    }
+
+    @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
+    @Test func `Closing Is Observed Through Every Store Over The Same Files`() throws {
+      let rootDirectory = temporaryRootDirectory()
+      let first = try makeStore(id: "shared", rootDirectory: rootDirectory)
+      let second = try makeStore(id: "shared", rootDirectory: rootDirectory)
+      let closures = Closures()
+
+      closures.track(second)
+      first.close()
+      #expect(closures.count == 1)
+    }
+
+    @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
+    @Test func `Closing A Suspended Store Is Observed As No Longer Suspended`() throws {
+      let store = try makeStore(mode: .multiProcess)
+      let changes = Changes()
+      store.suspend()
+
+      changes.track(store)
+      store.close()
+      #expect(changes.count == 1)
+      #expect(!store.isSuspended)
+    }
+
+    @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
+    @Test func `Closing A Store That Is Not Suspended Is Not Observed As A Suspension`() throws {
+      let store = try makeStore(mode: .multiProcess)
+      let changes = Changes()
+
+      changes.track(store)
+      store.close()
+      #expect(changes.count == 0)
+    }
+
+    @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
     @Test func `Suspending A Suspended Store Is Not Observed`() throws {
       let store = try makeStore(mode: .multiProcess)
       let changes = Changes()

@@ -158,8 +158,8 @@ extension MMKVStore {
       }
       return didStore
     }
-    if !didStore && self.isSuspended {
-      throw MMKVErrors.storeIsSuspended(id: self.id)
+    if !didStore, let error = MMKVErrors.unavailable(self) {
+      throw error
     }
     return didStore
   }
@@ -194,7 +194,12 @@ extension MMKVStore {
     options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
   ) throws -> T {
     try self.withExclusiveLock { store in
-      try KeyDecodingContext(store: store, options: options)
+      // A store that turns reads away looks empty, which an optional or a dictionary decodes
+      // from without complaint.
+      if let error = MMKVErrors.unavailable(store) {
+        throw error
+      }
+      return try KeyDecodingContext(store: store, options: options)
         .decode(type, at: prefix, codingPath: [])
     }
   }
@@ -221,6 +226,9 @@ extension MMKVStore {
     options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
   ) throws -> (repeat each T) {
     try self.withExclusiveLock { store in
+      if let error = MMKVErrors.unavailable(store) {
+        throw error
+      }
       let context = KeyDecodingContext(store: store, options: options)
       return (repeat try context.decode((each values).1, at: (each values).0, codingPath: []))
     }

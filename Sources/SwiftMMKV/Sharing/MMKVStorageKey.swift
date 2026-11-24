@@ -68,8 +68,8 @@
     /// the store notifies the subscription, which loads the value again.
     private func loadUnlessSuspended() throws -> Value? {
       let value = try self.loadValue(self.store, self.key)
-      if self.store.isSuspended {
-        throw MMKVErrors.storeIsSuspended(id: self.store.id)
+      if let error = MMKVErrors.unavailable(self.store) {
+        throw error
       }
       return value
     }
@@ -321,8 +321,7 @@
     /// Runs a write to `key`, turning a write the store did not accept into an error.
     fileprivate func write(_ key: String, _ body: () throws -> Bool) throws {
       guard try body() else {
-        throw self.isSuspended
-          ? MMKVErrors.storeIsSuspended(id: self.id) : MMKVErrors.writeFailed(key: key)
+        throw MMKVErrors.unavailable(self) ?? MMKVErrors.writeFailed(key: key)
       }
     }
   }

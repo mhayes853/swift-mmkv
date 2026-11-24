@@ -16,9 +16,10 @@ final class MMKVStoreState: Sendable {
   }
 
   let id: MMKVStore.ID
-  /// Turns operations away while the store is suspended. A single-process store takes no file
-  /// lock, so it has nothing to suspend.
-  let suspensionGate: SuspensionGate?
+  /// Turns operations away while the store is suspended, and once it is closed.
+  let gate = StoreGate()
+  /// A single-process store takes no file lock, so it has nothing to suspend.
+  let canSuspend: Bool
   /// Shared by every store over the instance, so that suspending one tells the observers of
   /// them all. A registrar tells observers apart by key path, and not by which store was read.
   let observationRegistrar = _ObservationRegistrar()
@@ -26,7 +27,7 @@ final class MMKVStoreState: Sendable {
 
   private init(id: MMKVStore.ID, isMultiProcess: Bool) {
     self.id = id
-    self.suspensionGate = isMultiProcess ? SuspensionGate() : nil
+    self.canSuspend = isMultiProcess
   }
 
   var hasListeners: Bool {
@@ -62,6 +63,22 @@ final class MMKVStoreState: Sendable {
     guard let listeners else { return }
     for listener in listeners {
       listener(change)
+    }
+  }
+
+  /// Tells listeners that the store changed, for the last time, and forgets them along with
+  /// anything that was being held back for them. Called once the store is closed.
+  func finishListeners() {
+    let listeners = self.registrations.withLock { registrations in
+      defer {
+        registrations.listeners = [:]
+        registrations.pendingKeys = []
+        registrations.hasPendingExternalChange = false
+      }
+      return Array(registrations.listeners.values)
+    }
+    for listener in listeners {
+      listener(.external)
     }
   }
 
@@ -125,6 +142,12 @@ extension MMKVStoreState {
       states[key] = state
       return state
     }
+  }
+
+  /// Forgets the state of the instance whose pointer has these bits, which is about to be freed.
+  /// A later instance may be given the same pointer.
+  static func remove(forHandle handle: UInt) {
+    Self.all.withLock { _ = $0.removeValue(forKey: handle) }
   }
 
   /// The state of the instance whose pointer has these bits, if a store has been made over it.

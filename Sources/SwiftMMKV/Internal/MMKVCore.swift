@@ -16,11 +16,17 @@ struct MMKVCore: Sendable {
       throw MMKVErrors.invalidEncryptionKey
     }
     LogSink.prepare()
-    let handle = MMKVStorage(path: configuration.directory.path)
+    let opened = MMKVStorage(path: configuration.directory.path)
       .opening(id: configuration.id) {
         configuration.withCConfiguration { mmkv_open(&$0) }
+      } state: {
+        MMKVStoreState.shared(
+          for: $0,
+          id: configuration.id,
+          isMultiProcess: configuration.mode == .multiProcess
+        )
       }
-    guard let handle else {
+    guard let opened else {
       throw MMKVErrors.openFailed(id: configuration.id, directory: configuration.directory)
     }
     if !configuration.isReadOnly, let protectionClass = configuration.fileProtection.cValue {
@@ -30,24 +36,28 @@ struct MMKVCore: Sendable {
         LogSink.log(.warning, "failed to set the file protection of [\(path)], errno \(error)")
       }
     }
-    self.handle = handle
+    self.handle = opened.handle
     self.defaultExpiry = configuration.defaultExpiry
-    self.state = MMKVStoreState.shared(
-      for: handle,
-      id: configuration.id,
-      isMultiProcess: configuration.mode == .multiProcess
-    )
+    self.state = opened.state
   }
 
-  /// Runs an operation that takes the store's file lock, unless the store is suspended.
+  /// Runs an operation on the store's instance, unless the store is suspended or closed.
   ///
-  /// - Returns: `nil`, without running `body`, if the store is suspended.
+  /// - Returns: `nil`, without running `body`, if the store is suspended or closed.
   private func perform<R, E: Error>(
     _ body: (OpaquePointer) throws(E) -> R
   ) throws(E) -> R? {
-    guard let gate = self.state.suspensionGate else { return try body(self.handle) }
-    guard gate.enter() else { return nil }
-    defer { gate.leave() }
+    guard let pass = self.state.gate.enter() else { return nil }
+    defer { self.state.gate.leave(pass) }
+    return try body(self.handle)
+  }
+
+  /// As ``perform(_:)``, for a `body` that runs the caller's code.
+  private func performScope<R, E: Error>(
+    _ body: (OpaquePointer) throws(E) -> R
+  ) throws(E) -> R? {
+    guard let pass = self.state.gate.enterScope() else { return nil }
+    defer { self.state.gate.leaveScope(pass) }
     return try body(self.handle)
   }
 
@@ -140,7 +150,7 @@ extension MMKVCore {
     forKey key: String,
     _ body: (RawSpan) throws(E) -> R
   ) throws(E) -> R? {
-    try self.perform { (handle: OpaquePointer) throws(E) -> R? in
+    try self.performScope { (handle: OpaquePointer) throws(E) -> R? in
       try key
         .withMMKVBytes { key in
           Result { () throws(E) -> R? in
@@ -292,16 +302,34 @@ extension MMKVCore {
 
 extension MMKVCore {
   var isSuspended: Bool {
-    self.state.suspensionGate?.isSuspended ?? false
+    self.state.gate.isSuspended
   }
 
   func suspend() {
-    self.state.suspensionGate?.suspend()
+    guard self.state.canSuspend else { return }
+    self.state.gate.suspend()
   }
 
   /// - Returns: Whether the store was suspended.
   func resume() -> Bool {
-    self.state.suspensionGate?.resume() ?? false
+    self.state.gate.resume()
+  }
+}
+
+// MARK: - Closing
+
+extension MMKVCore {
+  var isClosed: Bool {
+    self.state.gate.isClosed
+  }
+
+  /// Turns every operation away for good, and frees the instance once nothing is using it.
+  /// Every ``MMKVCore`` over the instance holds its pointer, and none uses it again.
+  ///
+  /// - Returns: Whether this call closed the store, rather than finding it closed.
+  func close() -> Bool {
+    let handle = UInt(bitPattern: self.handle)
+    return self.state.gate.close { MMKVStorage.close(handle: handle) }
   }
 }
 
@@ -315,17 +343,17 @@ extension MMKVCore {
   /// they never see part of what `body` writes. They are told once the outermost call releases
   /// the lock.
   ///
-  /// While the store is suspended `body` runs without the lock, and every operation in it is
-  /// turned away.
+  /// While the store is suspended, and once it is closed, `body` runs without the lock, and
+  /// every operation in it is turned away.
   func locked<R, E: Error>(_ body: () throws(E) -> R) throws(E) -> R {
-    let gate = self.state.suspensionGate
-    guard gate?.enter() ?? true else { return try body() }
+    let gate = self.state.gate
+    guard let pass = gate.enterScope() else { return try body() }
     mmkv_lock(self.handle)
     self.state.beginDeferringChanges()
     defer {
       self.state.endDeferringChanges()
       mmkv_unlock(self.handle)
-      gate?.leave()
+      gate.leaveScope(pass)
       self.state.deliverPendingChanges()
     }
     return try body()
@@ -375,7 +403,7 @@ extension MMKVCore {
       _ = mmkv_count(handle)
       return mmkv_disable_expiry(handle)
     }
-    guard let didDisable else { throw MMKVErrors.storeIsSuspended(id: self.state.id) }
+    guard let didDisable else { throw MMKVErrors.unavailable(self.state) }
     guard didDisable else { throw MMKVErrors.disableExpiryFailed }
   }
 
@@ -393,7 +421,7 @@ extension MMKVCore {
           )
         }
     }
-    guard let didRekey else { throw MMKVErrors.storeIsSuspended(id: self.state.id) }
+    guard let didRekey else { throw MMKVErrors.unavailable(self.state) }
     guard didRekey else { throw MMKVErrors.rekeyFailed }
   }
 }

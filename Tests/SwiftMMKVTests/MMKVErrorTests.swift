@@ -26,7 +26,8 @@ import Testing
       .openFailed, .invalidEncryptionKey, .rekeyFailed, .disableExpiryFailed,
       .appGroupContainerUnavailable, .writeFailed, .storeIsOpen, .storesAreOpen,
       .directoryUnreadable, .backupFailed, .restoreFailed, .storesNotBackedUp,
-      .storesNotRestored, .backupInvalid, .backupIsStoreDirectory, .storeIsSuspended
+      .storesNotRestored, .backupInvalid, .backupIsStoreDirectory, .storeIsSuspended,
+      .storeIsClosed
     ]
     #expect(Set(codes).count == codes.count)
     #expect(Set(codes.map(\.rawValue)).count == codes.count)

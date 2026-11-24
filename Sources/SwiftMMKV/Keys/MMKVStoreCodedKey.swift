@@ -121,8 +121,8 @@ extension MMKVStore {
     expiry: MMKVExpiry? = nil
   ) throws -> Bool {
     let didStore = try key.encode(value)(self, expiry)
-    if !didStore && self.isSuspended {
-      throw MMKVErrors.storeIsSuspended(id: self.id)
+    if !didStore, let error = MMKVErrors.unavailable(self) {
+      throw error
     }
     return didStore
   }
@@ -227,8 +227,8 @@ extension MMKVStore {
         didStoreAll = write(store, expiry) && didStoreAll
       }
     }
-    if !didStoreAll && self.isSuspended {
-      throw MMKVErrors.storeIsSuspended(id: self.id)
+    if !didStoreAll, let error = MMKVErrors.unavailable(self) {
+      throw error
     }
     return didStoreAll
   }

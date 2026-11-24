@@ -52,8 +52,8 @@ extension MMKVStore {
     with encoder: Encoder
   ) throws -> Bool where Encoder.Output: MMKVValue {
     let didStore = self.set(try encoder.encode(value), forKey: key, expiry: expiry)
-    if !didStore && self.isSuspended {
-      throw MMKVErrors.storeIsSuspended(id: self.id)
+    if !didStore, let error = MMKVErrors.unavailable(self) {
+      throw error
     }
     return didStore
   }
@@ -74,8 +74,8 @@ extension MMKVStore {
   ) throws -> T? where Decoder.Input: MMKVValue {
     guard let input = self.value(forKey: key, as: Decoder.Input.self) else {
       // A read that was turned away looks like a missing value, so the store is asked afterwards.
-      if self.isSuspended {
-        throw MMKVErrors.storeIsSuspended(id: self.id)
+      if let error = MMKVErrors.unavailable(self) {
+        throw error
       }
       return nil
     }

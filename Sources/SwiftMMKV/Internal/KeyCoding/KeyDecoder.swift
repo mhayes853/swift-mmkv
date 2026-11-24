@@ -144,8 +144,8 @@ final class KeyDecodingContext {
   /// The error for a key that has no value. A read that a suspended store turned away looks
   /// the same, so the store is asked.
   private func missing(_ key: String, _ codingPath: [any CodingKey]) -> any Error {
-    if self.store.isSuspended {
-      return MMKVErrors.storeIsSuspended(id: self.store.id)
+    if let error = MMKVErrors.unavailable(self.store) {
+      return error
     }
     return DecodingError.keyNotFound(
       codingPath.last ?? StoreCodingKey(stringValue: key),

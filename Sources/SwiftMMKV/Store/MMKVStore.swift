@@ -636,7 +636,7 @@ extension MMKVStore {
   /// body returns.
   public func suspend() {
     // Suspending a store that already is, or that has nothing to suspend, tells no observer.
-    guard self.core.state.suspensionGate != nil, !self.core.isSuspended else { return }
+    guard self.core.state.canSuspend, !self.core.isSuspended, !self.core.isClosed else { return }
     self.core.state.observationRegistrar.withMutation(of: self, keyPath: \.isSuspended) {
       self.core.suspend()
     }
@@ -652,6 +652,71 @@ extension MMKVStore {
       .withMutation(of: self, keyPath: \.isSuspended) { self.core.resume() }
     if didResume {
       self.core.state.notify(.external)
+    }
+  }
+}
+
+// MARK: - Closing
+
+extension MMKVStore {
+  /// Whether the store has been closed.
+  ///
+  /// The Observation framework tracks this property as it tracks ``isSuspended``, so a SwiftUI
+  /// view that reads it is drawn again when the store is closed. Observers are told on the
+  /// thread that closes the store.
+  public var isClosed: Bool {
+    self.core.state.observationRegistrar.access(self, keyPath: \.isClosed)
+    return self.core.isClosed
+  }
+
+  /// Closes the store for good, releasing its memory and its files.
+  ///
+  /// An open store cannot be removed, and a directory cannot restore over it. Close it first:
+  ///
+  /// ```swift
+  /// userStore.close()
+  /// try directory.removeStore(id: "user-42")
+  /// ```
+  ///
+  /// This turns new operations away, waits for those other threads have under way, and
+  /// returns once the store's files are closed. From then on:
+  ///
+  /// - Reads return `nil`, and ``keys`` and ``count`` are empty.
+  /// - Writes and removals do nothing, and return `false` where they return a result.
+  /// - Throwing operations throw ``MMKVError/Code/storeIsClosed``.
+  /// - ``withExclusiveLock(_:)`` runs its body without the lock.
+  /// - ``isSuspended`` is `false`, and ``suspend()`` and ``resume()`` do nothing.
+  ///
+  /// A closed store stays closed. Open the store again by making a new ``MMKVStore`` from its
+  /// configuration, which reads the files as they then are.
+  ///
+  /// Every ``MMKVStore`` over the same files is closed together, including one that is made
+  /// while this is waiting. Closing twice has no further effect.
+  ///
+  /// Listeners are told once more, with ``Change/external``, because every value now reads as
+  /// `nil`. They are told nothing after that, and ``changes`` and the sequences of a key's
+  /// values end.
+  ///
+  /// An operation that is under way finishes first, so a value another thread is in the
+  /// middle of encoding into several keys is written whole. That holds for the calling thread
+  /// too: called from inside ``withExclusiveLock(_:)``, or from the body of
+  /// ``withBytes(forKey:_:)``, this lets the rest of that body read and write, and the store's
+  /// files are closed when the body returns. Avoid calling it there all the same: if another
+  /// thread is waiting for the lock, this waits for that thread, and neither can go on.
+  public func close() {
+    guard !self.core.isClosed else {
+      // Another thread may be closing the store. This returns once it has.
+      _ = self.core.close()
+      return
+    }
+    let registrar = self.core.state.observationRegistrar
+    let wasSuspended = self.core.isSuspended
+    let didClose = registrar.withMutation(of: self, keyPath: \.isClosed) {
+      guard wasSuspended else { return self.core.close() }
+      return registrar.withMutation(of: self, keyPath: \.isSuspended) { self.core.close() }
+    }
+    if didClose {
+      self.core.state.finishListeners()
     }
   }
 }
@@ -752,6 +817,7 @@ extension MMKVStore {
   ///   open, ``MMKVError/Code/storeIsSuspended`` if the store is suspended, or
   ///   ``MMKVError/Code/backupIsStoreDirectory`` if `backup` is the store's directory.
   public func backUp(to backup: MMKVDirectory) throws(MMKVError) {
+    try self.checkIsNotClosed()
     let configuration = self.configuration
     guard try configuration.directory.backUpStore(id: configuration.id, to: backup) else {
       throw MMKVErrors.backupFailed(
@@ -776,7 +842,15 @@ extension MMKVStore {
   ///   store's directory.
   @discardableResult
   public func restore(from backup: MMKVDirectory) throws(MMKVError) -> Bool {
+    try self.checkIsNotClosed()
     let configuration = self.configuration
     return try configuration.directory.restoreStore(id: configuration.id, from: backup)
+  }
+
+  /// The directory would otherwise copy the files of a store that this one no longer is.
+  private func checkIsNotClosed() throws(MMKVError) {
+    if self.core.isClosed {
+      throw MMKVErrors.storeIsClosed(id: self.id)
+    }
   }
 }
