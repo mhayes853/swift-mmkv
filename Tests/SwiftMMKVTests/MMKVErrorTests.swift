@@ -45,7 +45,7 @@ import Testing
       do {
         try directory.removeStore(id: "settings")
         return nil
-      } catch where error.code == .storeIsOpen {
+      } catch  where error.code == .storeIsOpen {
         return error
       } catch {
         return nil
