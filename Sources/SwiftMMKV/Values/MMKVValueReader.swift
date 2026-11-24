@@ -88,7 +88,7 @@ public struct MMKVValueReader: ~Copyable, ~Escapable {
   ///
   /// - Returns: The result of `body`, or `nil` if the key has no value.
   public func withBytes<R, E: Error>(_ body: (RawSpan) throws(E) -> R) throws(E) -> R? {
-    try self.core.read { (engine) throws(E) -> R? in
+    try self.core.readScope { (engine) throws(E) -> R? in
       try engine.withBytes(forKey: self.key, body)
     }
   }

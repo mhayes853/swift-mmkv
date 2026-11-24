@@ -97,24 +97,36 @@ extension MMKVStorage {
     }
   }
 
-  /// Runs `open`, and records the store as open if it returns a handle to an instance.
+  /// Runs `open`, and records the store as open once it returns the store's engine.
   ///
-  /// - Parameter instance: The ``MMKVEngine/instance`` of a handle.
-  func opening<Handle>(
+  /// - Parameters:
+  ///   - open: Returns the engine over the store's instance.
+  ///   - state: Returns the state of an engine's instance. It runs before the instance can be
+  ///     closed, so that the state it returns is not that of an instance that has been closed.
+  /// - Returns: The engine and its state.
+  func opening(
     id: MMKVStore.ID,
-    engine: MMKVConfiguration.Engine,
-    _ open: () -> Handle?,
-    instance: (Handle) -> UInt
-  ) -> Handle? {
-    Self.openStores.withLock { openStores in
-      let handle = open()
-      if let handle {
-        let store = OpenStore(id: id, engine: engine, instance: instance(handle))
-        for path in self.dataPaths(forID: id) {
-          openStores[path] = store
-        }
+    _ open: () throws(MMKVError) -> any MMKVEngine,
+    state: (any MMKVEngine) -> MMKVStoreState
+  ) throws(MMKVError) -> (engine: any MMKVEngine, state: MMKVStoreState) {
+    try Self.openStores.withLock { openStores throws(MMKVError) in
+      let engine = try open()
+      let store = OpenStore(id: id, engine: engine.kind, instance: engine.instance)
+      for path in self.dataPaths(forID: id) {
+        openStores[path] = store
       }
-      return handle
+      return (engine, state(engine))
+    }
+  }
+
+  /// Closes the instance of `engine`, and forgets that its store is open. The caller must make
+  /// sure that nothing is using the instance, or will.
+  static func close(_ engine: any MMKVEngine) {
+    let instance = engine.instance
+    Self.openStores.withLock { openStores in
+      openStores = openStores.filter { $0.value.instance != instance }
+      MMKVStoreState.remove(for: instance)
+      engine.close()
     }
   }
 
@@ -425,7 +437,7 @@ extension MMKVStorage {
   }
 
   /// Runs `body`, which has the C++ core copy the files of `stores` under their file locks,
-  /// unless one of them is suspended.
+  /// unless one of them is suspended or closed. None of them is closed until `body` returns.
   ///
   /// The C++ core takes the lock of a store it has open itself. One the Swift core has open is a
   /// closed store to it, so that store's instance is kept from its files meanwhile, and loads
@@ -439,16 +451,15 @@ extension MMKVStorage {
     _ body: ([MMKVStoreState]) -> R
   ) throws(MMKVError) -> R {
     let states = stores.compactMap { MMKVStoreState.existing(for: $0.instance) }
-    var entered = [SuspensionGate]()
+    var entered = [(gate: StoreGate, pass: StoreGate.Pass)]()
     defer {
-      for gate in entered {
-        gate.leave()
+      for (gate, pass) in entered {
+        gate.leaveScope(pass)
       }
     }
     for state in states {
-      guard let gate = state.suspensionGate else { continue }
-      guard gate.enter() else { throw MMKVErrors.storeIsSuspended(id: state.id) }
-      entered.append(gate)
+      guard let pass = state.gate.enterScope() else { throw MMKVErrors.unavailable(state) }
+      entered.append((state.gate, pass))
     }
     return StoreInstance.withFilesHandedOver(
       stores.compactMap(\.swiftInstance),

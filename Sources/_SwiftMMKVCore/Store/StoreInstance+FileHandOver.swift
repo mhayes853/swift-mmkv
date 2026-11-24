@@ -58,3 +58,16 @@ extension StoreInstance {
     }
   }
 }
+
+extension StoreInstance {
+  /// Unmaps and closes the instance's files, for an instance that is never used again.
+  func releaseFiles() {
+    self.state.withLock { state in
+      state.contentChangedHandler = nil
+      state.clearMemoryCache()
+      // An instance that has not loaded yet skips that, but may have mapped the file.
+      state.file.clearMemoryCache()
+      state.metaFile.clearMemoryCache()
+    }
+  }
+}

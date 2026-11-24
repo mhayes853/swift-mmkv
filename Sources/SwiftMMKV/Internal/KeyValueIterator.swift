@@ -15,8 +15,17 @@ struct KeyValueIterator {
       bufferingPolicy: .bufferingNewest(1)
     )
     self.store = store
-    self.subscription = store.subscribe(forKey: key) { continuation.yield() }
+    // A closed store tells its listeners so once, and nothing after that.
+    self.subscription = store.subscribe(forKey: key) {
+      continuation.yield()
+      if store.isClosed {
+        continuation.finish()
+      }
+    }
     continuation.yield()
+    if store.isClosed {
+      continuation.finish()
+    }
     self.changes = stream.makeAsyncIterator()
   }
 

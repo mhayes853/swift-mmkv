@@ -562,6 +562,145 @@ private let settings = Settings(
   }
 }
 
+@Suite struct MMKVStoreKeysUnderKeyTests {
+  @Test func `Returns A Key And The Keys Under It`() throws {
+    let store = try makeStore()
+    for key in ["settings", "settings.theme", "settings.sync.interval", "settingsBackup", "other"] {
+      store.set("value", forKey: key)
+    }
+
+    #expect(
+      store.keys(underKey: "settings") == ["settings", "settings.theme", "settings.sync.interval"]
+    )
+  }
+
+  @Test func `Returns Nothing When No Key Is Under The Prefix`() throws {
+    let store = try makeStore()
+    store.set("value", forKey: "settingsBackup")
+
+    #expect(store.keys(underKey: "settings").isEmpty)
+  }
+
+  @Test func `An Empty Prefix Returns Every Key`() throws {
+    let store = try makeStore()
+    store.set("value", forKey: "a.x")
+    store.set("value", forKey: "b")
+
+    #expect(store.keys(underKey: "") == ["a.x", "b"])
+  }
+
+  @Test func `Uses The Separator`() throws {
+    let store = try makeStore()
+    store.set("value", forKey: "a/x")
+    store.set("value", forKey: "a.x")
+
+    #expect(store.keys(underKey: "a", separator: "/") == ["a/x"])
+  }
+
+  @Test func `Returns The Keys A Value Was Encoded Into`() throws {
+    let store = try makeStore()
+    store.set(true, forKey: "hasOnboarded")
+    try store.encode(settings, intoKeysUnder: "settings")
+
+    #expect(
+      store.keys(underKey: "settings") == [
+        "settings.fontSize", "settings.theme", "settings.sync.isEnabled", "settings.sync.interval"
+      ]
+    )
+  }
+
+  @Test func `Is Empty While The Store Is Suspended`() throws {
+    let store = try makeStore(mode: .multiProcess)
+    store.set("value", forKey: "a.x")
+    store.suspend()
+
+    #expect(store.keys(underKey: "a").isEmpty)
+    store.resume()
+    #expect(store.keys(underKey: "a") == ["a.x"])
+  }
+}
+
+@Suite struct MMKVStoreSubscribeUnderKeyTests {
+  @Test func `Runs For A Key And The Keys Under It`() throws {
+    let store = try makeStore()
+    let recorder = ValueRecorder<Int>()
+    let subscription = store.subscribe(underKey: "settings") { recorder.record(0) }
+
+    store.set("value", forKey: "settings")
+    store.set("value", forKey: "settings.theme")
+    store.set("value", forKey: "settings.sync.interval")
+    store.set("value", forKey: "settingsBackup")
+    store.set("value", forKey: "other")
+    #expect(recorder.all.count == 3)
+
+    store.removeValue(forKey: "settings.theme")
+    store.removeValue(forKey: "other")
+    #expect(recorder.all.count == 4)
+    subscription.cancel()
+  }
+
+  @Test func `An Empty Prefix Runs For Every Key`() throws {
+    let store = try makeStore()
+    let recorder = ValueRecorder<Int>()
+    let subscription = store.subscribe(underKey: "") { recorder.record(0) }
+
+    store.set("value", forKey: "a.x")
+    store.set("value", forKey: "b")
+
+    #expect(recorder.all.count == 2)
+    subscription.cancel()
+  }
+
+  @Test func `Uses The Separator`() throws {
+    let store = try makeStore()
+    let recorder = ValueRecorder<Int>()
+    let subscription = store.subscribe(underKey: "a", separator: "/") { recorder.record(0) }
+
+    store.set("value", forKey: "a.x")
+    store.set("value", forKey: "a/x")
+
+    #expect(recorder.all.count == 1)
+    subscription.cancel()
+  }
+
+  @Test func `Runs Once For Each Key Of An Encoded Value, After All Are Written`() throws {
+    let store = try makeStore()
+    let recorder = ValueRecorder<Settings?>()
+    let subscription = store.subscribe(underKey: "settings") {
+      recorder.record(try? store.decode(Settings.self, fromKeysUnder: "settings"))
+    }
+
+    try store.encode(settings, intoKeysUnder: "settings")
+    try store.encode(settings, intoKeysUnder: "profile")
+
+    #expect(recorder.all == [settings, settings, settings, settings])
+    subscription.cancel()
+  }
+
+  @Test func `Runs For An External Change`() throws {
+    let store = try makeStore(mode: .multiProcess)
+    let recorder = ValueRecorder<Int>()
+    let subscription = store.subscribe(underKey: "settings") { recorder.record(0) }
+
+    store.suspend()
+    store.resume()
+
+    #expect(recorder.all.count == 1)
+    subscription.cancel()
+  }
+
+  @Test func `Stops When Cancelled`() throws {
+    let store = try makeStore()
+    let recorder = ValueRecorder<Int>()
+    let subscription = store.subscribe(underKey: "a") { recorder.record(0) }
+
+    subscription.cancel()
+    store.set("value", forKey: "a.x")
+
+    #expect(recorder.all.isEmpty)
+  }
+}
+
 @Suite struct MMKVStoreKeyRemovalTests {
   @Test func `Removes A Key And The Keys Under It`() throws {
     let store = try makeStore()

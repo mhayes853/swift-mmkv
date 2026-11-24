@@ -13,9 +13,16 @@ struct PendingChanges {
       of: Void.self,
       bufferingPolicy: .bufferingNewest(1)
     )
+    // A closed store tells its listeners so once, and nothing after that.
     self.subscription = store.subscribe { [queue] change in
       queue.append(change)
       continuation.yield()
+      if store.isClosed {
+        continuation.finish()
+      }
+    }
+    if store.isClosed {
+      continuation.finish()
     }
     self.wakeUps = stream.makeAsyncIterator()
   }

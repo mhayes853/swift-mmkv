@@ -10,6 +10,14 @@ protocol MMKVEngine: Sendable {
   /// so that every ``MMKVStore`` over it shares one ``MMKVStoreState``.
   var instance: UInt { get }
 
+  /// Which core this is.
+  var kind: MMKVConfiguration.Engine { get }
+
+  /// Closes the instance, so that the next open of its directory and identifier makes a new one,
+  /// and releases its memory and its files. The caller must make sure that nothing else is
+  /// using the instance, or will.
+  func close()
+
   // MARK: Reads
 
   func bool(forKey key: String) -> Bool?

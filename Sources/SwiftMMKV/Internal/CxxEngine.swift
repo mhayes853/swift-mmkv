@@ -8,20 +8,20 @@ struct CxxEngine: MMKVEngine {
   /// its directory and identifier.
   init(_ configuration: MMKVConfiguration) throws(MMKVError) {
     Self.installContentChangedCallback
-    let handle = MMKVStorage(path: configuration.directory.path)
-      .opening(id: configuration.id, engine: .cxx) {
-        configuration.withCConfiguration { mmkv_open(&$0) }
-      } instance: {
-        UInt(bitPattern: $0)
-      }
-    guard let handle else {
+    guard let handle = configuration.withCConfiguration({ mmkv_open(&$0) }) else {
       throw MMKVErrors.openFailed(id: configuration.id, directory: configuration.directory)
     }
     self.handle = handle
   }
 
+  var kind: MMKVConfiguration.Engine { .cxx }
+
   var instance: UInt {
     UInt(bitPattern: self.handle)
+  }
+
+  func close() {
+    mmkv_close(self.handle)
   }
 
   // The core reports a change by store identifier alone, so every instance with that identifier

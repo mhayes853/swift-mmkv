@@ -91,7 +91,8 @@ plus the operations that do not open a store:
   `contains`; removing one key, several, or all, optionally keeping the file's size; importing
   another store's keys; the recursive lock; the file's size and the size of its data; checking for
   external changes; `trim`; `sync`; `rekey`; and whether the file records expiries, and rewriting
-  it without them (`disableAutoKeyExpire`).
+  it without them (`disableAutoKeyExpire`); and closing the instance (`close`), so that the next
+  open of its files makes a new one.
 - **Per directory** (`MMKVStorage`, which calls the C interface directly today): whether a store's
   files exist (`checkExist`), removing a store's files (`removeStorage`), the directory as MMKV
   resolves it (`NameSpace`), on Android the file name an older MMKV used, and backing up and
@@ -204,8 +205,8 @@ the page-size rules, and a file-system seam that tests can make fail.
 Loading and validating a file (the actual size, the CRC, the fallback to the last confirmed
 metadata, the recovery policy), the key index, appending, full write-back and compaction,
 removal, `clearAll`, `trim`, `sync`, compare-before-set, the item size limit, read-only mode,
-expiry, and the per-path instance registry. Instances still live for the rest of the process;
-parity comes first.
+expiry, and the per-path instance registry. An instance stays open until `MMKVStore.close()`
+closes it: `StoreRegistry.close` forgets it and unmaps and closes its files.
 
 ### 5. Multi-process
 

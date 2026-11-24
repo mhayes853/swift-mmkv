@@ -197,6 +197,8 @@ mmkv_store *mmkv_open(const mmkv_configuration *configuration) {
   return reinterpret_cast<mmkv_store *>(nameSpace.mmkvWithID(id, config));
 }
 
+void mmkv_close(mmkv_store *store) { core(store)->close(); }
+
 bool mmkv_storage_exists(mmkv_bytes id, mmkv_bytes rootDirectory) {
   if (id.count == 0 || rootDirectory.count == 0) {
     return false;

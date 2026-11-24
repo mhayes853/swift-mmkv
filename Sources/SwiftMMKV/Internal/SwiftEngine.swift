@@ -6,46 +6,46 @@ struct SwiftEngine: MMKVEngine {
   private let store: StoreInstance
 
   init(_ configuration: MMKVConfiguration) throws(MMKVError) {
-    var hasWrongEncryptionKey = false
-    let store = MMKVStorage(path: configuration.directory.path)
-      .opening(id: configuration.id, engine: .swift) { () -> StoreInstance? in
-        do throws(StoreRegistry.OpenError) {
-          return try StoreRegistry.open(
-            StoreConfiguration(
-              id: configuration.id.rawValue,
-              rootDirectory: configuration.directory.path,
-              isMultiProcess: configuration.mode == .multiProcess,
-              isReadOnly: configuration.isReadOnly,
-              expectedCapacity: max(configuration.expectedCapacity, 0),
-              recoverOnError: configuration.recovery == .recover,
-              compareBeforeSet: configuration.compareBeforeSet,
-              itemSizeLimit: UInt32(clamping: configuration.itemSizeLimit ?? 0),
-              encryptionKey: configuration.encryption?.key,
-              isAES256: configuration.encryption?.isAES256 ?? false
-            )
-          )
-        } catch {
-          hasWrongEncryptionKey = error == .wrongEncryptionKey
-          return nil
-        }
-      } instance: {
-        Self.instance(of: $0)
+    do throws(StoreRegistry.OpenError) {
+      self.store = try StoreRegistry.open(
+        StoreConfiguration(
+          id: configuration.id.rawValue,
+          rootDirectory: configuration.directory.path,
+          isMultiProcess: configuration.mode == .multiProcess,
+          isReadOnly: configuration.isReadOnly,
+          expectedCapacity: max(configuration.expectedCapacity, 0),
+          recoverOnError: configuration.recovery == .recover,
+          compareBeforeSet: configuration.compareBeforeSet,
+          itemSizeLimit: UInt32(clamping: configuration.itemSizeLimit ?? 0),
+          encryptionKey: configuration.encryption?.key,
+          isAES256: configuration.encryption?.isAES256 ?? false
+        )
+      )
+    } catch {
+      switch error {
+      case .wrongEncryptionKey:
+        throw MMKVErrors.wrongEncryptionKey(
+          id: configuration.id,
+          directory: configuration.directory
+        )
+      case .invalidConfiguration:
+        throw MMKVErrors.openFailed(id: configuration.id, directory: configuration.directory)
       }
-    if hasWrongEncryptionKey {
-      throw MMKVErrors.wrongEncryptionKey(id: configuration.id, directory: configuration.directory)
     }
-    guard let store else {
-      throw MMKVErrors.openFailed(id: configuration.id, directory: configuration.directory)
-    }
-    self.store = store
     let instance = self.instance
     store.setContentChangedHandler {
       MMKVStoreState.markExternalChange(instance: instance)
     }
   }
 
+  var kind: MMKVConfiguration.Engine { .swift }
+
   var instance: UInt {
     Self.instance(of: self.store)
+  }
+
+  func close() {
+    StoreRegistry.close(self.store)
   }
 
   private static func instance(of store: StoreInstance) -> UInt {

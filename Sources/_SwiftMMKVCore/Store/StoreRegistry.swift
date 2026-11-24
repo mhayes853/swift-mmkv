@@ -1,5 +1,5 @@
 /// Opens stores, handing back the instance already open for the same files, as MMKV's
-/// `getMMKVWithID` and the package's `mmkv_open` do. Instances live for the rest of the process.
+/// `getMMKVWithID` and the package's `mmkv_open` do. An instance stays open until it is closed.
 package enum StoreRegistry {
   private static let lock = ThreadLock()
   nonisolated(unsafe) private static var instances = [String: StoreInstance]()
@@ -65,6 +65,18 @@ extension StoreRegistry {
   /// Runs `body` holding the lock that guards the registry (`g_instanceLock`).
   package static func withLock<R>(_ body: () -> R) -> R {
     Self.lock.withLock(body)
+  }
+
+  /// Forgets `instance`, so that the next open of its files makes a new one, and unmaps and
+  /// closes its files (`close`). The caller must make sure that nothing else is using the
+  /// instance, or will.
+  package static func close(_ instance: StoreInstance) {
+    Self.lock.withLock {
+      if let key = Self.instances.first(where: { $0.value === instance })?.key {
+        Self.instances[key] = nil
+      }
+    }
+    instance.releaseFiles()
   }
 
   /// The open instance whose object has the address `address`, if there is one.
