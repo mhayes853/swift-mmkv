@@ -919,12 +919,27 @@ if (status != SWIFTMMKV_OK) {
 
 swiftmmkv_store_set_string(store, "username", "blob", 0);
 
-char *username = NULL;
-if (swiftmmkv_store_get_string(store, "username", &username, NULL)) {
+char username[64];
+size_t length = 0;
+if (swiftmmkv_store_get_string(store, "username", username, sizeof username, &length)
+    && length < sizeof username) {
   printf("%s\n", username);
-  swiftmmkv_free(username);
 }
 swiftmmkv_store_close(store);
+```
+
+A string, a run of bytes, or a list of strings is copied into a buffer the caller owns, so the
+interface allocates nothing that a binding has to free. Each such function reports the size of
+the value, and copies nothing when the buffer is too small, which is the cue to read again with
+a larger one. Bytes and strings go from the store's file to the buffer in a single copy.
+
+```c
+size_t count = 0;
+if (swiftmmkv_store_get_bytes(store, "avatar", buffer, capacity, &count) && count > capacity) {
+  buffer = realloc(buffer, count);
+  capacity = count;
+  swiftmmkv_store_get_bytes(store, "avatar", buffer, capacity, &count);
+}
 ```
 
 The interface covers what a binding builds on: configurations, the stored value types, keys and
@@ -932,11 +947,11 @@ removal, exclusive access, change listeners, suspension, maintenance, backups, s
 logging, and integrity failures. Typed keys, `Codable` values, async sequences, and the traits
 are left to each language to build in its own idiom.
 
-- Strings are NUL-terminated UTF-8, and bytes are a pointer and a count.
+- Strings are NUL-terminated UTF-8, and bytes are a pointer and a count. A list of strings is
+  its strings end to end, each with its terminator, and a size in bytes.
 - A function that can fail returns a `swiftmmkv_status`, which `swiftmmkv_status_message`
   describes.
-- A string or run of bytes that a function returns is released with `swiftmmkv_free`, and a
-  handle with the function that matches the one that made it.
+- A handle is released with the function that matches the one that made it.
 - A callback takes a context pointer, and an optional function that releases the context once
   the callback can no longer be called.
 

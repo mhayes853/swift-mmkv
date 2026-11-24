@@ -207,6 +207,14 @@ bool mmkv_get_bytes(
   mmkv_store *_Nonnull store, mmkv_bytes key, void *_Nullable context,
   mmkv_bytes_callback _Nonnull callback)
   CSWIFTMMKV_SYMBOL(get_bytes);
+/// Copies the bytes or string stored under `key` into `buffer`, if they fit in `capacity`
+/// bytes, and writes their count to `count` whether or not they do. Nothing is copied in part.
+///
+/// Returns false, leaving `count` alone, if the key has no such value.
+bool mmkv_copy_bytes(
+  mmkv_store *_Nonnull store, mmkv_bytes key, void *_Nullable buffer, size_t capacity,
+  size_t *_Nonnull count)
+  CSWIFTMMKV_SYMBOL(copy_bytes);
 /// Calls `callback` once per string, in order.
 bool mmkv_get_strings(
   mmkv_store *_Nonnull store, mmkv_bytes key, void *_Nullable context,

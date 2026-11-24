@@ -224,11 +224,11 @@ import Testing
     var uint64: UInt64 = 7
     var float: Float = 7
     var double: Double = 7
-    var string: UnsafeMutablePointer<CChar>?
+    var string: [CChar] = [7, 7]
     var length = 7
-    var bytes: UnsafeMutablePointer<UInt8>?
+    var bytes: [UInt8] = [7, 7]
     var count = 7
-    var strings: OpaquePointer?
+    var size = 7
     #expect(swiftmmkv_store_get_bool(store.handle, "missing", &bool) == false)
     #expect(swiftmmkv_store_get_int32(store.handle, "missing", &int32) == false)
     #expect(swiftmmkv_store_get_uint32(store.handle, "missing", &uint32) == false)
@@ -236,9 +236,12 @@ import Testing
     #expect(swiftmmkv_store_get_uint64(store.handle, "missing", &uint64) == false)
     #expect(swiftmmkv_store_get_float(store.handle, "missing", &float) == false)
     #expect(swiftmmkv_store_get_double(store.handle, "missing", &double) == false)
-    #expect(swiftmmkv_store_get_string(store.handle, "missing", &string, &length) == false)
-    #expect(swiftmmkv_store_get_bytes(store.handle, "missing", &bytes, &count) == false)
-    #expect(swiftmmkv_store_get_strings(store.handle, "missing", &strings) == false)
+    #expect(swiftmmkv_store_get_string(store.handle, "missing", &string, 2, &length) == false)
+    #expect(swiftmmkv_store_get_bytes(store.handle, "missing", &bytes, 2, &count) == false)
+    #expect(
+      swiftmmkv_store_get_strings(store.handle, "missing", &string, 2, &size, &count) == false
+    )
+    #expect(swiftmmkv_store_value_size(store.handle, "missing", &size) == false)
     #expect(bool)
     #expect(int32 == 7)
     #expect(uint32 == 7)
@@ -246,90 +249,267 @@ import Testing
     #expect(uint64 == 7)
     #expect(float == 7)
     #expect(double == 7)
-    #expect(string == nil)
+    #expect(string == [7, 7])
     #expect(length == 7)
-    #expect(bytes == nil)
+    #expect(bytes == [7, 7])
     #expect(count == 7)
-    #expect(strings == nil)
+    #expect(size == 7)
   }
 
-  @Test func `Strings Round Trip With Their Length In Bytes`() throws {
+  @Test func `A String Is Copied With Its Terminator Into A Buffer It Fits`() throws {
     let store = try CStore()
     defer { store.close() }
     let text = "héllo wörld 👋"
-
     #expect(swiftmmkv_store_set_string(store.handle, "greeting", text, 0) == true)
 
-    var value: UnsafeMutablePointer<CChar>?
+    var exact = [CChar](repeating: 7, count: text.utf8.count + 1)
+    var roomy = [CChar](repeating: 7, count: text.utf8.count + 3)
     var length = 0
-    #expect(swiftmmkv_store_get_string(store.handle, "greeting", &value, &length) == true)
-    defer { swiftmmkv_free(value) }
-    #expect(String(cString: try #require(value)) == text)
+    #expect(
+      swiftmmkv_store_get_string(store.handle, "greeting", &exact, exact.count, &length) == true
+    )
     #expect(length == text.utf8.count)
+    #expect(exact == Array(text.utf8CString))
+
+    length = 0
+    #expect(
+      swiftmmkv_store_get_string(store.handle, "greeting", &roomy, roomy.count, &length) == true
+    )
+    #expect(length == text.utf8.count)
+    #expect(roomy == Array(text.utf8CString) + [7, 7])
   }
 
-  @Test func `A String With An Embedded NUL Reports Its Whole Length`() throws {
+  @Test func `A String That Does Not Fit Is Sized And Not Copied`() throws {
+    let store = try CStore()
+    defer { store.close() }
+    #expect(swiftmmkv_store_set_string(store.handle, "username", "blob", 0) == true)
+
+    // Four bytes hold the string, but not its terminator.
+    for capacity in [0, 1, 4] {
+      var buffer = [CChar](repeating: 7, count: 4)
+      var length = 0
+      #expect(
+        swiftmmkv_store_get_string(store.handle, "username", &buffer, capacity, &length) == true
+      )
+      #expect(length == 4)
+      #expect(buffer == [7, 7, 7, 7])
+    }
+
+    var length = 0
+    var size = 0
+    #expect(swiftmmkv_store_get_string(store.handle, "username", nil, 0, &length) == true)
+    #expect(swiftmmkv_store_get_string(store.handle, "username", nil, 99, &size) == true)
+    #expect(length == 4)
+    #expect(size == 4)
+  }
+
+  @Test func `A String With An Embedded NUL Is Copied Whole`() throws {
     let directory = temporaryRootDirectory()
     let store = try CStore(directory: directory)
     defer { store.close() }
     try makeStore(rootDirectory: directory).set("a\0b", forKey: "text")
 
-    var value: UnsafeMutablePointer<CChar>?
+    var buffer = [CChar](repeating: 7, count: 4)
     var length = 0
-    #expect(swiftmmkv_store_get_string(store.handle, "text", &value, &length) == true)
-    defer { swiftmmkv_free(value) }
-    let pointer = try #require(value)
+    #expect(
+      swiftmmkv_store_get_string(store.handle, "text", &buffer, buffer.count, &length) == true
+    )
     #expect(length == 3)
-    #expect(strlen(pointer) == 1)
-    #expect(pointer[2] == CChar(UInt8(ascii: "b")))
-    #expect(pointer[3] == 0)
+    #expect(buffer == [CChar(UInt8(ascii: "a")), 0, CChar(UInt8(ascii: "b")), 0])
   }
 
-  @Test func `Bytes Round Trip`() throws {
+  @Test func `An Empty String Is A Value Of No Length`() throws {
+    let store = try CStore()
+    defer { store.close() }
+    #expect(swiftmmkv_store_set_string(store.handle, "empty", "", 0) == true)
+
+    var buffer: [CChar] = [7]
+    var length = 7
+    #expect(swiftmmkv_store_get_string(store.handle, "empty", &buffer, 1, &length) == true)
+    #expect(length == 0)
+    #expect(buffer == [0])
+    #expect(store.string(forKey: "empty") == "")
+  }
+
+  @Test func `Bytes Are Copied Into A Buffer They Fit`() throws {
     let store = try CStore()
     defer { store.close() }
     let payload: [UInt8] = [0, 1, 2, 255, 0]
+    #expect(swiftmmkv_store_set_bytes(store.handle, "payload", payload, payload.count, 0) == true)
+
+    var exact = [UInt8](repeating: 7, count: 5)
+    var roomy = [UInt8](repeating: 7, count: 7)
+    var count = 0
+    #expect(swiftmmkv_store_get_bytes(store.handle, "payload", &exact, exact.count, &count) == true)
+    #expect(count == 5)
+    #expect(exact == payload)
+
+    count = 0
+    #expect(swiftmmkv_store_get_bytes(store.handle, "payload", &roomy, roomy.count, &count) == true)
+    #expect(count == 5)
+    #expect(roomy == payload + [7, 7])
+  }
+
+  @Test func `Bytes That Do Not Fit Are Sized And Not Copied`() throws {
+    let store = try CStore()
+    defer { store.close() }
+    let payload: [UInt8] = [1, 2, 3, 4, 5]
+    #expect(swiftmmkv_store_set_bytes(store.handle, "payload", payload, payload.count, 0) == true)
+
+    for capacity in [0, 1, 4] {
+      var buffer = [UInt8](repeating: 7, count: 5)
+      var count = 0
+      #expect(swiftmmkv_store_get_bytes(store.handle, "payload", &buffer, capacity, &count) == true)
+      #expect(count == 5)
+      #expect(buffer == [7, 7, 7, 7, 7])
+    }
+
+    var count = 0
+    var size = 0
+    #expect(swiftmmkv_store_get_bytes(store.handle, "payload", nil, 99, &count) == true)
+    #expect(swiftmmkv_store_value_size(store.handle, "payload", &size) == true)
+    #expect(count == 5)
+    #expect(size == 5)
+  }
+
+  @Test func `Empty Bytes Are A Value Of No Size`() throws {
+    let store = try CStore()
+    defer { store.close() }
+    #expect(swiftmmkv_store_set_bytes(store.handle, "empty", nil, 0, 0) == true)
+
+    var buffer: [UInt8] = [7]
+    var count = 7
+    var size = 7
+    #expect(swiftmmkv_store_get_bytes(store.handle, "empty", &buffer, 1, &count) == true)
+    #expect(swiftmmkv_store_value_size(store.handle, "empty", &size) == true)
+    #expect(count == 0)
+    #expect(size == 0)
+    #expect(buffer == [7])
+    #expect(store.bytes(forKey: "empty") == [])
+  }
+
+  @Test func `Bytes Larger Than A Page Round Trip`() throws {
+    let store = try CStore()
+    defer { store.close() }
+    let payload = (0..<100_000).map { UInt8(truncatingIfNeeded: $0) }
 
     #expect(swiftmmkv_store_set_bytes(store.handle, "payload", payload, payload.count, 0) == true)
 
-    var bytes: UnsafeMutablePointer<UInt8>?
-    var count = 0
-    #expect(swiftmmkv_store_get_bytes(store.handle, "payload", &bytes, &count) == true)
-    defer { swiftmmkv_free(bytes) }
-    #expect(Array(UnsafeBufferPointer(start: bytes, count: count)) == payload)
+    #expect(store.bytes(forKey: "payload") == payload)
   }
 
-  @Test func `Empty Bytes Are A Value With An Allocation To Free`() throws {
+  @Test func `A String Is Read As Bytes Without Its Terminator`() throws {
     let store = try CStore()
     defer { store.close() }
+    let utf8 = Array("ünï".utf8)
+    #expect(swiftmmkv_store_set_string(store.handle, "text", "ünï", 0) == true)
+    #expect(swiftmmkv_store_set_bytes(store.handle, "bytes", utf8, utf8.count, 0) == true)
 
-    #expect(swiftmmkv_store_set_bytes(store.handle, "empty", nil, 0, 0) == true)
-
-    var bytes: UnsafeMutablePointer<UInt8>?
-    var count = 7
-    #expect(swiftmmkv_store_get_bytes(store.handle, "empty", &bytes, &count) == true)
-    defer { swiftmmkv_free(bytes) }
-    #expect(bytes != nil)
-    #expect(count == 0)
+    var size = 0
+    #expect(swiftmmkv_store_value_size(store.handle, "text", &size) == true)
+    #expect(size == utf8.count)
+    #expect(store.bytes(forKey: "text") == utf8)
+    #expect(store.string(forKey: "bytes") == "ünï")
   }
 
-  @Test func `String Arrays Round Trip`() throws {
+  @Test func `Values Of An Encrypted Store Are Copied As They Were Written`() throws {
+    let store = try CStore {
+      let key = Array("secret".utf8)
+      swiftmmkv_configuration_set_encryption($0, SWIFTMMKV_ENCRYPTION_AES256, key, key.count)
+    }
+    defer { store.close() }
+    let small: [UInt8] = [1, 2, 3]
+    let large = (0..<10_000).map { UInt8(truncatingIfNeeded: $0) }
+
+    #expect(swiftmmkv_store_set_bytes(store.handle, "small", small, small.count, 0) == true)
+    #expect(swiftmmkv_store_set_bytes(store.handle, "large", large, large.count, 0) == true)
+
+    #expect(store.bytes(forKey: "small") == small)
+    #expect(store.bytes(forKey: "large") == large)
+  }
+
+  @Test func `A Value With An Expiry Is Copied Without It`() throws {
     let store = try CStore()
     defer { store.close() }
+    let payload: [UInt8] = [1, 2, 3]
 
-    #expect(
-      withCStrings(["a", "", "ünï"]) {
-        swiftmmkv_store_set_strings(store.handle, "tags", $0, $1, 0)
-      }
-    )
+    #expect(swiftmmkv_store_set_bytes(store.handle, "payload", payload, payload.count, 60) == true)
+    #expect(swiftmmkv_store_set_string(store.handle, "text", "blob", 60) == true)
+
+    #expect(store.bytes(forKey: "payload") == payload)
+    #expect(store.string(forKey: "text") == "blob")
+  }
+
+  @Test func `String Lists Round Trip Packed`() throws {
+    let store = try CStore()
+    defer { store.close() }
+    let tags = packed(["a", "", "ünï"])
+    let blank = packed([""])
+
+    #expect(swiftmmkv_store_set_strings(store.handle, "tags", tags, tags.count, 0) == true)
+    #expect(swiftmmkv_store_set_strings(store.handle, "blank", blank, blank.count, 0) == true)
     #expect(swiftmmkv_store_set_strings(store.handle, "none", nil, 0, 0) == true)
 
-    var tags: OpaquePointer?
-    var none: OpaquePointer?
-    #expect(swiftmmkv_store_get_strings(store.handle, "tags", &tags) == true)
-    #expect(swiftmmkv_store_get_strings(store.handle, "none", &none) == true)
-    #expect(takeStrings(try #require(tags)) == ["a", "", "ünï"])
-    #expect(takeStrings(try #require(none)) == [])
+    var buffer = [CChar](repeating: 7, count: tags.count + 2)
+    var size = 0
+    var count = 0
+    #expect(
+      swiftmmkv_store_get_strings(store.handle, "tags", &buffer, buffer.count, &size, &count)
+        == true
+    )
+    #expect(size == tags.count)
+    #expect(count == 3)
+    #expect(buffer == tags + [7, 7])
+    #expect(store.strings(forKey: "tags") == ["a", "", "ünï"])
+    #expect(store.strings(forKey: "blank") == [""])
+    #expect(store.strings(forKey: "none") == [])
+  }
+
+  @Test func `A Packed List May Leave Out Its Last Terminator`() throws {
+    let store = try CStore()
+    defer { store.close() }
+    let tags = packed(["a", "bc"])
+
+    #expect(swiftmmkv_store_set_strings(store.handle, "tags", tags, tags.count - 1, 0) == true)
+    #expect(swiftmmkv_store_set_bool(store.handle, "a", true, 0) == true)
+    #expect(swiftmmkv_store_set_bool(store.handle, "bc", true, 0) == true)
+    swiftmmkv_store_remove_many(store.handle, tags, tags.count - 1)
+
+    #expect(store.strings(forKey: "tags") == ["a", "bc"])
+    #expect(store.keys() == ["tags"])
+  }
+
+  @Test func `A String List That Does Not Fit Is Sized And Not Copied`() throws {
+    let store = try CStore()
+    defer { store.close() }
+    let tags = packed(["a", "bc"])
+    #expect(swiftmmkv_store_set_strings(store.handle, "tags", tags, tags.count, 0) == true)
+
+    for capacity in [0, 1, 4] {
+      var buffer = [CChar](repeating: 7, count: 5)
+      var size = 0
+      var count = 0
+      #expect(
+        swiftmmkv_store_get_strings(store.handle, "tags", &buffer, capacity, &size, &count) == true
+      )
+      #expect(size == 5)
+      #expect(count == 2)
+      #expect(buffer == [7, 7, 7, 7, 7])
+    }
+  }
+
+  @Test func `A Packed List Is The One The Swift Interface Reads And Writes`() throws {
+    let directory = temporaryRootDirectory()
+    let store = try CStore(directory: directory)
+    defer { store.close() }
+    let swiftStore = try makeStore(rootDirectory: directory)
+    let tags = packed(["a", "b"])
+
+    #expect(swiftmmkv_store_set_strings(store.handle, "tags", tags, tags.count, 0) == true)
+    swiftStore.set(["c", "d"], forKey: "more")
+
+    #expect(swiftStore.value(forKey: "tags", as: [String].self) == ["a", "b"])
+    #expect(store.strings(forKey: "more") == ["c", "d"])
   }
 
   @Test func `Values Are The Ones The Swift Interface Reads And Writes`() throws {
@@ -364,19 +544,17 @@ import Testing
     #expect(swiftmmkv_store_set_double(store.handle, "double", 1, 1) == true)
     #expect(swiftmmkv_store_set_string(store.handle, "string", "abc", 1) == true)
     #expect(swiftmmkv_store_set_bytes(store.handle, "bytes", bytes, bytes.count, 1) == true)
-    #expect(withCStrings(["a"]) { swiftmmkv_store_set_strings(store.handle, "strings", $0, $1, 1) })
+    #expect(swiftmmkv_store_set_strings(store.handle, "strings", "a", 2, 1) == true)
     #expect(swiftmmkv_store_count(store.handle) == 11)
 
     try await Task.sleep(for: .seconds(2.1))
 
-    #expect(takeStrings(swiftmmkv_store_keys(store.handle)) == ["kept"])
+    #expect(store.keys() == ["kept"])
     #expect(store.string(forKey: "string") == nil)
     #expect(store.string(forKey: "kept") == "kept")
   }
 
-  @Test func `Freeing Nothing Does Nothing`() {
-    swiftmmkv_free(nil)
-    swiftmmkv_string_list_free(nil)
+  @Test func `Releasing Nothing Does Nothing`() {
     swiftmmkv_configuration_destroy(nil)
     swiftmmkv_store_close(nil)
     swiftmmkv_subscription_cancel(nil)
@@ -394,18 +572,57 @@ import Testing
     #expect(swiftmmkv_store_count(store.handle) == 4)
     #expect(swiftmmkv_store_contains(store.handle, "a") == true)
     #expect(swiftmmkv_store_contains(store.handle, "z") == false)
-    #expect(takeStrings(swiftmmkv_store_keys(store.handle)).sorted() == ["a", "b", "c", "d"])
+    #expect(store.keys().sorted() == ["a", "b", "c", "d"])
 
     #expect(swiftmmkv_store_remove(store.handle, "a") == true)
     #expect(swiftmmkv_store_contains(store.handle, "a") == false)
 
-    withCStrings(["b", "c", "missing"]) { swiftmmkv_store_remove_many(store.handle, $0, $1) }
+    let doomed = packed(["b", "c", "missing"])
+    swiftmmkv_store_remove_many(store.handle, doomed, doomed.count)
     swiftmmkv_store_remove_many(store.handle, nil, 0)
-    #expect(takeStrings(swiftmmkv_store_keys(store.handle)) == ["d"])
+    #expect(store.keys() == ["d"])
 
     swiftmmkv_store_remove_all(store.handle, true)
     #expect(swiftmmkv_store_count(store.handle) == 0)
-    #expect(takeStrings(swiftmmkv_store_keys(store.handle)) == [])
+    #expect(store.keys() == [])
+  }
+
+  @Test func `Keys That Do Not Fit Are Sized And Not Copied`() throws {
+    let store = try CStore()
+    defer { store.close() }
+    #expect(swiftmmkv_store_set_bool(store.handle, "first", true, 0) == true)
+    #expect(swiftmmkv_store_set_bool(store.handle, "second", true, 0) == true)
+
+    var buffer = [CChar](repeating: 7, count: 13)
+    var size = 0
+    var count = 0
+    swiftmmkv_store_keys(store.handle, &buffer, 12, &size, &count)
+    #expect(size == 13)
+    #expect(count == 2)
+    #expect(buffer == [CChar](repeating: 7, count: 13))
+
+    swiftmmkv_store_keys(store.handle, &buffer, 13, &size, &count)
+    #expect(size == 13)
+    #expect(count == 2)
+    #expect(unpacked(buffer).sorted() == ["first", "second"])
+  }
+
+  @Test func `The Keys Of A Store Can Be Passed Straight Back To Remove Them`() throws {
+    let store = try CStore()
+    defer { store.close() }
+    for key in ["a", "b", "c"] {
+      #expect(swiftmmkv_store_set_int32(store.handle, key, 1, 0) == true)
+    }
+
+    var buffer = [CChar](repeating: 0, count: 64)
+    var size = 0
+    var count = 0
+    swiftmmkv_store_keys(store.handle, &buffer, buffer.count, &size, &count)
+    #expect(swiftmmkv_store_set_bool(store.handle, "later", true, 0) == true)
+    swiftmmkv_store_remove_many(store.handle, buffer, size)
+
+    #expect(count == 3)
+    #expect(store.keys() == ["later"])
   }
 
   @Test func `Imports The Contents Of Another Store`() throws {
@@ -420,11 +637,8 @@ import Testing
 
     #expect(swiftmmkv_store_import_all(destination.handle, source.handle) == 2)
 
-    #expect(takeStrings(swiftmmkv_store_keys(destination.handle)).sorted() == ["a", "b", "c"])
-    var value: UnsafeMutablePointer<CChar>?
-    #expect(swiftmmkv_store_get_string(destination.handle, "b", &value, nil) == true)
-    defer { swiftmmkv_free(value) }
-    #expect(String(cString: try #require(value)) == "from source")
+    #expect(destination.keys().sorted() == ["a", "b", "c"])
+    #expect(destination.string(forKey: "b") == "from source")
   }
 
   // MARK: - Exclusive Access

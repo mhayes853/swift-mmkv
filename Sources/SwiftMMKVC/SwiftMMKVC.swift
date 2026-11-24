@@ -51,11 +51,16 @@ extension MMKVStore.ID {
   }
 }
 
-/// The strings of a C array of C strings.
-private func makeStrings(_ strings: UnsafePointer<UnsafePointer<CChar>>?, _ count: Int) -> [String]
-{
-  UnsafeBufferPointer(start: strings, count: strings == nil ? 0 : count)
-    .map { String(cString: $0) }
+/// The strings of a packed list: each is followed by a NUL, and `size` counts every byte.
+private func makeStrings(_ strings: UnsafePointer<CChar>?, _ size: Int) -> [String] {
+  var rest = UnsafeRawBufferPointer(start: strings, count: strings == nil ? 0 : size)[...]
+  var result = [String]()
+  while !rest.isEmpty {
+    let end = rest.firstIndex(of: 0) ?? rest.endIndex
+    result.append(String(decoding: rest[..<end], as: UTF8.self))
+    rest = rest[min(end + 1, rest.endIndex)...]
+  }
+  return result
 }
 
 /// The expiry of a C write, where zero seconds means never.
@@ -96,55 +101,30 @@ private func makeEncryption(
   }
 }
 
-// MARK: - Memory
+// MARK: - Buffers
 
-/// Copies `string` into memory the caller of the C interface owns.
-///
-/// - Returns: The NUL-terminated copy, and its length in bytes without the terminator.
-private func makeCString(_ string: String) -> (pointer: UnsafeMutablePointer<CChar>, length: Int) {
-  var string = string
-  return string.withUTF8 { utf8 in
-    let pointer = UnsafeMutablePointer<CChar>.allocate(capacity: utf8.count + 1)
-    UnsafeMutableRawBufferPointer(start: pointer, count: utf8.count)
-      .copyMemory(from: UnsafeRawBufferPointer(utf8))
-    pointer[utf8.count] = 0
-    return (pointer, utf8.count)
-  }
-}
-
-@c @implementation
-public func swiftmmkv_free(_ pointer: UnsafeMutableRawPointer?) {
-  pointer?.deallocate()
-}
-
-/// The object behind a `swiftmmkv_string_list`.
-private final class StringList {
-  let strings: [UnsafeMutablePointer<CChar>]
-
-  init(_ strings: some Sequence<String>) {
-    self.strings = strings.map { makeCString($0).pointer }
-  }
-
-  deinit {
-    for string in self.strings {
-      string.deallocate()
+/// Copies `strings` into a caller's buffer as a packed list, if all of it fits, and reports its
+/// size in bytes and the number of strings either way.
+private func pack(
+  _ strings: some Collection<String>,
+  into buffer: UnsafeMutablePointer<CChar>?,
+  _ capacity: Int,
+  _ outSize: UnsafeMutablePointer<Int>,
+  _ outCount: UnsafeMutablePointer<Int>
+) {
+  let size = strings.reduce(0) { $0 + $1.utf8.count + 1 }
+  outSize.pointee = size
+  outCount.pointee = strings.count
+  guard let buffer, size <= capacity else { return }
+  var offset = 0
+  for var string in strings {
+    string.withUTF8 { utf8 in
+      UnsafeMutableRawBufferPointer(start: buffer + offset, count: utf8.count)
+        .copyMemory(from: UnsafeRawBufferPointer(utf8))
+      buffer[offset + utf8.count] = 0
+      offset += utf8.count + 1
     }
   }
-}
-
-@c @implementation
-public func swiftmmkv_string_list_count(_ list: OpaquePointer) -> Int {
-  list.object(StringList.self).strings.count
-}
-
-@c @implementation
-public func swiftmmkv_string_list_get(_ list: OpaquePointer, _ index: Int) -> UnsafePointer<CChar> {
-  UnsafePointer(list.object(StringList.self).strings[index])
-}
-
-@c @implementation
-public func swiftmmkv_string_list_free(_ list: OpaquePointer?) {
-  list?.release(as: StringList.self)
 }
 
 // MARK: - Status
@@ -464,11 +444,11 @@ public func swiftmmkv_store_set_bytes(
 public func swiftmmkv_store_set_strings(
   _ store: OpaquePointer,
   _ key: UnsafePointer<CChar>,
-  _ values: UnsafePointer<UnsafePointer<CChar>>?,
-  _ count: Int,
+  _ values: UnsafePointer<CChar>?,
+  _ size: Int,
   _ expiresInSeconds: UInt32
 ) -> Bool {
-  set(makeStrings(values, count), store, key, expiresInSeconds)
+  set(makeStrings(values, size), store, key, expiresInSeconds)
 }
 
 // MARK: - Reads
@@ -549,18 +529,28 @@ public func swiftmmkv_store_get_double(
 }
 
 @c @implementation
+public func swiftmmkv_store_value_size(
+  _ store: OpaquePointer,
+  _ key: UnsafePointer<CChar>,
+  _ outSize: UnsafeMutablePointer<Int>
+) -> Bool {
+  swiftmmkv_store_get_bytes(store, key, nil, 0, outSize)
+}
+
+@c @implementation
 public func swiftmmkv_store_get_string(
   _ store: OpaquePointer,
   _ key: UnsafePointer<CChar>,
-  _ outValue: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
-  _ outLength: UnsafeMutablePointer<Int>?
+  _ buffer: UnsafeMutablePointer<CChar>?,
+  _ capacity: Int,
+  _ outLength: UnsafeMutablePointer<Int>
 ) -> Bool {
-  guard let value = store.store.value(forKey: String(cString: key), as: String.self) else {
-    return false
+  // The last byte of the buffer is kept for the terminator.
+  let room = max(capacity, 1) - 1
+  guard swiftmmkv_store_get_bytes(store, key, buffer, room, outLength) else { return false }
+  if let buffer, capacity > outLength.pointee {
+    buffer[outLength.pointee] = 0
   }
-  let (pointer, length) = makeCString(value)
-  outValue.pointee = pointer
-  outLength?.pointee = length
   return true
 }
 
@@ -568,18 +558,15 @@ public func swiftmmkv_store_get_string(
 public func swiftmmkv_store_get_bytes(
   _ store: OpaquePointer,
   _ key: UnsafePointer<CChar>,
-  _ outBytes: UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>,
+  _ buffer: UnsafeMutableRawPointer?,
+  _ capacity: Int,
   _ outCount: UnsafeMutablePointer<Int>
 ) -> Bool {
-  let copy = store.store.withUnsafeBytes(forKey: String(cString: key)) { bytes in
-    // An empty value still gets an allocation, so that the caller always has one to free.
-    let copy = UnsafeMutablePointer<UInt8>.allocate(capacity: max(bytes.count, 1))
-    UnsafeMutableRawBufferPointer(start: copy, count: bytes.count).copyMemory(from: bytes)
-    return (pointer: copy, count: bytes.count)
+  let buffer = UnsafeMutableRawBufferPointer(start: buffer, count: buffer == nil ? 0 : capacity)
+  guard let count = store.store.copyBytes(forKey: String(cString: key), into: buffer) else {
+    return false
   }
-  guard let copy else { return false }
-  outBytes.pointee = copy.pointer
-  outCount.pointee = copy.count
+  outCount.pointee = count
   return true
 }
 
@@ -587,12 +574,15 @@ public func swiftmmkv_store_get_bytes(
 public func swiftmmkv_store_get_strings(
   _ store: OpaquePointer,
   _ key: UnsafePointer<CChar>,
-  _ outValues: UnsafeMutablePointer<OpaquePointer?>
+  _ buffer: UnsafeMutablePointer<CChar>?,
+  _ capacity: Int,
+  _ outSize: UnsafeMutablePointer<Int>,
+  _ outCount: UnsafeMutablePointer<Int>
 ) -> Bool {
   guard let values = store.store.value(forKey: String(cString: key), as: [String].self) else {
     return false
   }
-  outValues.pointee = OpaquePointer(retaining: StringList(values))
+  pack(values, into: buffer, capacity, outSize, outCount)
   return true
 }
 
@@ -609,8 +599,14 @@ public func swiftmmkv_store_count(_ store: OpaquePointer) -> Int {
 }
 
 @c @implementation
-public func swiftmmkv_store_keys(_ store: OpaquePointer) -> OpaquePointer {
-  OpaquePointer(retaining: StringList(store.store.keys))
+public func swiftmmkv_store_keys(
+  _ store: OpaquePointer,
+  _ buffer: UnsafeMutablePointer<CChar>?,
+  _ capacity: Int,
+  _ outSize: UnsafeMutablePointer<Int>,
+  _ outCount: UnsafeMutablePointer<Int>
+) {
+  pack(store.store.keys, into: buffer, capacity, outSize, outCount)
 }
 
 @c @implementation
@@ -621,10 +617,10 @@ public func swiftmmkv_store_remove(_ store: OpaquePointer, _ key: UnsafePointer<
 @c @implementation
 public func swiftmmkv_store_remove_many(
   _ store: OpaquePointer,
-  _ keys: UnsafePointer<UnsafePointer<CChar>>?,
-  _ count: Int
+  _ keys: UnsafePointer<CChar>?,
+  _ size: Int
 ) {
-  store.store.removeValues(forKeys: makeStrings(keys, count))
+  store.store.removeValues(forKeys: makeStrings(keys, size))
 }
 
 @c @implementation

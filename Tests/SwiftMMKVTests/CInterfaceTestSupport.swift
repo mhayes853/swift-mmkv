@@ -40,32 +40,68 @@ struct CStore {
     swiftmmkv_store_close(self.handle)
   }
 
-  /// The string stored under `key`, read and freed through the C interface.
+  /// The string stored under `key`, read the way a binding reads a value whose size it does
+  /// not know: by asking for the size, and then reading into a buffer of that size.
   func string(forKey key: String) -> String? {
-    var value: UnsafeMutablePointer<CChar>?
-    guard swiftmmkv_store_get_string(self.handle, key, &value, nil), let value else { return nil }
-    defer { swiftmmkv_free(value) }
-    return String(cString: value)
+    var length = 0
+    guard swiftmmkv_store_get_string(self.handle, key, nil, 0, &length) else { return nil }
+    var buffer = [CChar](repeating: 0, count: length + 1)
+    guard
+      swiftmmkv_store_get_string(self.handle, key, &buffer, buffer.count, &length),
+      length < buffer.count
+    else { return nil }
+    return String(decoding: buffer[..<length].map { UInt8(bitPattern: $0) }, as: UTF8.self)
+  }
+
+  /// The bytes stored under `key`.
+  func bytes(forKey key: String) -> [UInt8]? {
+    var count = 0
+    guard swiftmmkv_store_value_size(self.handle, key, &count) else { return nil }
+    var buffer = [UInt8](repeating: 0, count: count)
+    guard
+      swiftmmkv_store_get_bytes(self.handle, key, &buffer, buffer.count, &count),
+      count == buffer.count
+    else { return nil }
+    return buffer
+  }
+
+  /// The list of strings stored under `key`.
+  func strings(forKey key: String) -> [String]? {
+    var size = 0
+    var count = 0
+    guard swiftmmkv_store_get_strings(self.handle, key, nil, 0, &size, &count) else { return nil }
+    var buffer = [CChar](repeating: 0, count: size)
+    guard
+      swiftmmkv_store_get_strings(self.handle, key, &buffer, buffer.count, &size, &count),
+      size == buffer.count
+    else { return nil }
+    let strings = unpacked(buffer)
+    return strings.count == count ? strings : nil
+  }
+
+  /// Every key in the store.
+  func keys() -> [String] {
+    var size = 0
+    var count = 0
+    swiftmmkv_store_keys(self.handle, nil, 0, &size, &count)
+    var buffer = [CChar](repeating: 0, count: size)
+    swiftmmkv_store_keys(self.handle, &buffer, buffer.count, &size, &count)
+    let keys = unpacked(buffer)
+    precondition(size == buffer.count && keys.count == count)
+    return keys
   }
 }
 
-/// Calls `body` with `strings` as a C array of C strings.
-func withCStrings<R>(
-  _ strings: [String],
-  _ body: (UnsafePointer<UnsafePointer<CChar>>?, Int) -> R
-) -> R {
-  let copies = strings.map { UnsafePointer(strdup($0)!) }
-  defer { copies.forEach { free(UnsafeMutablePointer(mutating: $0)) } }
-  return copies.withUnsafeBufferPointer { body($0.baseAddress, $0.count) }
+/// `strings` as the C interface takes a list of them: end to end, each followed by a NUL.
+func packed(_ strings: [String]) -> [CChar] {
+  strings.flatMap(\.utf8CString)
 }
 
-/// The strings of a list from the C interface, which this frees.
-func takeStrings(_ list: OpaquePointer) -> [String] {
-  defer { swiftmmkv_string_list_free(list) }
-  return (0..<swiftmmkv_string_list_count(list))
-    .map {
-      String(cString: swiftmmkv_string_list_get(list, $0))
-    }
+/// The strings of a packed list.
+func unpacked(_ list: [CChar]) -> [String] {
+  list.split(separator: 0, omittingEmptySubsequences: false)
+    .dropLast()
+    .map { String(decoding: $0.map { UInt8(bitPattern: $0) }, as: UTF8.self) }
 }
 
 /// Collects what the callbacks of the C interface are called with, as their context.

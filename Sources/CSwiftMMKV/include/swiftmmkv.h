@@ -5,10 +5,14 @@
 // - Strings are NUL-terminated UTF-8. Those passed in are borrowed for the call, and those
 //   passed to a callback are only valid inside the callback.
 // - Bytes are a pointer and a count.
-// - Values returned through an `out_` parameter are owned by the caller. Release strings and
-//   bytes with `swiftmmkv_free`, and handles with their own destroy, free, close, or cancel
-//   function. Nothing is written through an `out_` parameter when a function fails or finds
-//   nothing.
+// - A list of strings is packed: its strings lie end to end, each followed by a NUL. It is a
+//   pointer and a size in bytes, which counts the terminators. A packed list cannot hold a
+//   string that contains U+0000. A list that is passed in may leave out its last terminator.
+// - A string, a run of bytes, or a list that a function returns is copied into a buffer the
+//   caller owns: see "Buffers" below. The interface allocates nothing for the caller to free.
+// - Handles are owned by the caller, and are released with their own destroy, close, or cancel
+//   function.
+// - Nothing is written through an `out_` parameter when a function fails or finds nothing.
 // - Every function may be called from any thread unless it says otherwise.
 // - A callback's context must be safe to use from any thread.
 
@@ -47,22 +51,18 @@ extern "C" {
 /// header a binding was built against.
 uint32_t swiftmmkv_abi_version(void);
 
-// MARK: - Memory
-
-/// Releases a string or a run of bytes that was returned through an `out_` parameter. NULL is
-/// ignored.
-void swiftmmkv_free(void *_Nullable pointer);
-
-/// A list of strings, owned by the caller.
-typedef struct swiftmmkv_string_list swiftmmkv_string_list;
-
-size_t swiftmmkv_string_list_count(const swiftmmkv_string_list *_Nonnull list);
-/// The string at `index`, which must be less than the list's count. The string belongs to the
-/// list and is valid until the list is freed.
-const char *_Nonnull swiftmmkv_string_list_get(
-  const swiftmmkv_string_list *_Nonnull list, size_t index);
-/// Frees the list and its strings. NULL is ignored.
-void swiftmmkv_string_list_free(swiftmmkv_string_list *_Nullable list);
+// MARK: - Buffers
+//
+// A function that reads a value of no fixed size takes a `buffer` and its `capacity` in bytes,
+// and reports the size of the value through an `out_` parameter.
+//
+// - The value is copied to the start of the buffer only if all of it fits. Nothing is copied
+//   in part, so when the size reported is more than the capacity, the buffer is as it was.
+//   Read again with a buffer of the size reported.
+// - A NULL buffer copies nothing and reports the size, whatever the capacity.
+//
+// Another thread or process can change the value between two reads, so check the size that
+// the second read reports as well.
 
 // MARK: - Status
 
@@ -238,10 +238,11 @@ bool swiftmmkv_store_set_string(
 bool swiftmmkv_store_set_bytes(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, const void *_Nullable bytes,
   size_t count, uint32_t expires_in_seconds);
-/// `values` may be NULL when `count` is zero.
+/// Stores the strings of a packed list of `size` bytes. `values` may be NULL when `size` is
+/// zero, which stores an empty list.
 bool swiftmmkv_store_set_strings(
-  swiftmmkv_store *_Nonnull store, const char *_Nonnull key,
-  const char *_Nonnull const *_Nullable values, size_t count, uint32_t expires_in_seconds);
+  swiftmmkv_store *_Nonnull store, const char *_Nonnull key, const char *_Nullable values,
+  size_t size, uint32_t expires_in_seconds);
 
 // MARK: - Reads
 //
@@ -264,40 +265,51 @@ bool swiftmmkv_store_get_float(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, float *_Nonnull out_value);
 bool swiftmmkv_store_get_double(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, double *_Nonnull out_value);
-/// Release the string with `swiftmmkv_free`.
+/// The length in bytes of the string or bytes stored under `key`, without reading them. It is
+/// what `swiftmmkv_store_get_string` and `swiftmmkv_store_get_bytes` report.
+bool swiftmmkv_store_value_size(
+  swiftmmkv_store *_Nonnull store, const char *_Nonnull key, size_t *_Nonnull out_size);
+/// Copies the string's UTF-8 and a terminator into `buffer`, as "Buffers" describes.
 ///
-/// `out_length` receives the string's length in bytes, without its terminator. That is more
-/// than `strlen` reports when another writer stored a string that contains U+0000.
+/// `out_length` receives the string's length in bytes without its terminator, so the string
+/// was copied if the length is less than `capacity`. That length is more than `strlen` reports
+/// when another writer stored a string that contains U+0000.
 bool swiftmmkv_store_get_string(
-  swiftmmkv_store *_Nonnull store, const char *_Nonnull key,
-  char *_Nullable *_Nonnull out_value, size_t *_Nullable out_length);
-/// Release the bytes with `swiftmmkv_free`, including those of an empty value, which has a
-/// count of zero.
+  swiftmmkv_store *_Nonnull store, const char *_Nonnull key, char *_Nullable buffer,
+  size_t capacity, size_t *_Nonnull out_length);
+/// Copies the bytes into `buffer`, as "Buffers" describes. They were copied if `out_count` is
+/// no more than `capacity`. A string is read as its UTF-8, without a terminator.
 bool swiftmmkv_store_get_bytes(
-  swiftmmkv_store *_Nonnull store, const char *_Nonnull key,
-  uint8_t *_Nullable *_Nonnull out_bytes, size_t *_Nonnull out_count);
-/// Release the list with `swiftmmkv_string_list_free`.
+  swiftmmkv_store *_Nonnull store, const char *_Nonnull key, void *_Nullable buffer,
+  size_t capacity, size_t *_Nonnull out_count);
+/// Copies the strings into `buffer` as a packed list, as "Buffers" describes. `out_size`
+/// receives the list's size in bytes and `out_count` the number of strings in it. The list was
+/// copied if its size is no more than `capacity`.
 bool swiftmmkv_store_get_strings(
-  swiftmmkv_store *_Nonnull store, const char *_Nonnull key,
-  swiftmmkv_string_list *_Nullable *_Nonnull out_values);
+  swiftmmkv_store *_Nonnull store, const char *_Nonnull key, char *_Nullable buffer,
+  size_t capacity, size_t *_Nonnull out_size, size_t *_Nonnull out_count);
 
 // MARK: - Keys
 
 bool swiftmmkv_store_contains(swiftmmkv_store *_Nonnull store, const char *_Nonnull key);
 /// The number of keys in the store.
 size_t swiftmmkv_store_count(swiftmmkv_store *_Nonnull store);
-/// Every key in the store, in no particular order. Release the list with
-/// `swiftmmkv_string_list_free`.
-swiftmmkv_string_list *_Nonnull swiftmmkv_store_keys(swiftmmkv_store *_Nonnull store);
+/// Copies every key in the store into `buffer` as a packed list, in no particular order, as
+/// "Buffers" describes. `out_size` receives the list's size in bytes and `out_count` the
+/// number of keys in it. The list was copied if its size is no more than `capacity`.
+void swiftmmkv_store_keys(
+  swiftmmkv_store *_Nonnull store, char *_Nullable buffer, size_t capacity,
+  size_t *_Nonnull out_size, size_t *_Nonnull out_count);
 
 // MARK: - Removal
 
 /// Removes `key` and its value, and returns whether the store accepted the removal. MMKV also
 /// reports success for a key that had no value.
 bool swiftmmkv_store_remove(swiftmmkv_store *_Nonnull store, const char *_Nonnull key);
-/// Removes the values of several keys at once. `keys` may be NULL when `count` is zero.
+/// Removes the values of the keys in a packed list of `size` bytes, all at once. `keys` may be
+/// NULL when `size` is zero. What `swiftmmkv_store_keys` wrote can be passed straight back.
 void swiftmmkv_store_remove_many(
-  swiftmmkv_store *_Nonnull store, const char *_Nonnull const *_Nullable keys, size_t count);
+  swiftmmkv_store *_Nonnull store, const char *_Nullable keys, size_t size);
 /// Removes every key and value. With `keeping_capacity` the store's file keeps its current
 /// size, which is faster and saves growing it again. Without, it shrinks back to its initial
 /// size.

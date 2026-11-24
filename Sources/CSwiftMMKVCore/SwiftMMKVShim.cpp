@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -364,6 +365,33 @@ bool mmkv_get_bytes(
   }
   callback(context, mmkv_bytes{result.getPtr(), result.length()});
   return true;
+}
+
+bool mmkv_copy_bytes(
+  mmkv_store *store, mmkv_bytes key, void *buffer, size_t capacity, size_t *count) {
+  auto kv = core(store);
+  uint8_t nothing;
+  auto target = buffer != nullptr ? buffer : &nothing;
+  auto limit = buffer != nullptr ? std::min<size_t>(capacity, INT32_MAX) : 0;
+  // The core reports a value that does not fit the same way as a missing one, and gives up its
+  // lock between calls, so the value can change between the copy and the look at its size. A
+  // second round settles that. A value that still cannot be copied is not bytes or a string.
+  for (auto attempt = 0; attempt < 2; attempt++) {
+    auto written = kv->writeValueToBuffer(view(key), target, static_cast<int32_t>(limit));
+    if (written >= 0) {
+      *count = static_cast<size_t>(written);
+      return true;
+    }
+    if (!kv->containsKey(view(key))) {
+      return false;
+    }
+    auto size = kv->getValueSize(view(key), true);
+    if (size > limit) {
+      *count = size;
+      return true;
+    }
+  }
+  return false;
 }
 
 bool mmkv_get_strings(
