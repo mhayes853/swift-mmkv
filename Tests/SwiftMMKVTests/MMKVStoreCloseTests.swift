@@ -309,9 +309,11 @@ import Testing
 }
 
 @Suite struct MMKVStoreCloseListenerTests {
+  // The core reports a change another copy of a store made by the store's identifier alone,
+  // so each test has an identifier that no other test's store has.
   @Test func `Closing Tells Listeners Once And Then Nothing`() throws {
     let rootDirectory = temporaryRootDirectory()
-    let store = try makeStore(id: "settings", rootDirectory: rootDirectory)
+    let store = try makeStore(id: "close-listeners-0", rootDirectory: rootDirectory)
     let recorder = ChangeRecorder()
     let subscription = store.subscribe(recorder.record)
     store.set("dark", forKey: "theme")
@@ -319,7 +321,7 @@ import Testing
     store.close()
     store.close()
     store.set("light", forKey: "theme")
-    let reopened = try makeStore(id: "settings", rootDirectory: rootDirectory)
+    let reopened = try makeStore(id: "close-listeners-0", rootDirectory: rootDirectory)
     reopened.set("light", forKey: "theme")
 
     #expect(recorder.all == [.key("theme"), .external])
@@ -327,7 +329,7 @@ import Testing
   }
 
   @Test func `Closing Tells A Value Listener That The Value Is Gone`() throws {
-    let store = try makeStore()
+    let store = try makeStore(id: "close-listeners-1")
     store.set("dark", forKey: "theme")
     let recorder = ValueRecorder<String?>()
     let subscription = store.subscribe(forKey: "theme", as: String.self, recorder.record)
@@ -339,7 +341,7 @@ import Testing
   }
 
   @Test func `A Listener Added To A Closed Store Is Told Nothing`() throws {
-    let store = try makeStore()
+    let store = try makeStore(id: "close-listeners-2")
     store.close()
     let recorder = ChangeRecorder()
     let subscription = store.subscribe(recorder.record)
@@ -352,7 +354,7 @@ import Testing
   }
 
   @Test func `Closing Inside An Exclusive Lock Still Tells Listeners`() throws {
-    let store = try makeStore()
+    let store = try makeStore(id: "close-listeners-3")
     let recorder = ChangeRecorder()
     let subscription = store.subscribe(recorder.record)
 
@@ -367,7 +369,7 @@ import Testing
   }
 
   @Test func `Closing Ends The Sequence Of Changes`() async throws {
-    let store = try makeStore()
+    let store = try makeStore(id: "close-listeners-4")
     let (started, startedContinuation) = AsyncStream.makeStream(of: Void.self)
     let task = Task {
       var changes = [MMKVStore.Change]()
@@ -387,7 +389,7 @@ import Testing
   }
 
   @Test func `The Sequence Of Changes Of A Closed Store Is Empty`() async throws {
-    let store = try makeStore()
+    let store = try makeStore(id: "close-listeners-5")
     store.close()
 
     var changes = [MMKVStore.Change]()
@@ -399,7 +401,7 @@ import Testing
   }
 
   @Test func `Closing Ends The Sequence Of A Key's Values`() async throws {
-    let store = try makeStore()
+    let store = try makeStore(id: "close-listeners-6")
     store.set("dark", forKey: "theme")
     let (started, startedContinuation) = AsyncStream.makeStream(of: Void.self)
     let task = Task {
@@ -418,7 +420,7 @@ import Testing
   }
 
   @Test func `Closing Ends A Decoding Sequence With The Closure`() async throws {
-    let store = try makeStore()
+    let store = try makeStore(id: "close-listeners-7")
     try store.encode(1, forKey: "count", with: TextCoder.shared)
     let (started, startedContinuation) = AsyncStream.makeStream(of: Void.self)
     let task = Task {
