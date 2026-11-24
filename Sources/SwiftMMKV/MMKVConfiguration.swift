@@ -51,6 +51,17 @@ public struct MMKVConfiguration: Sendable, Hashable {
   /// platforms. A read-only store's files are left as they are.
   public var fileProtection: FileProtection
 
+  /// How long the store keeps a value written without an expiry of its own.
+  ///
+  /// This belongs to the ``MMKVStore`` opened with this configuration and not to the store's
+  /// files, so it applies to that store's writes alone. Values that are already stored keep
+  /// whatever expiry they were written with.
+  ///
+  /// The first write that expires switches the store's file to a format that react-native-mmkv
+  /// has no option for, so leave this as ``MMKVExpiry/never`` for a store shared with
+  /// JavaScript.
+  public var defaultExpiry: MMKVExpiry
+
   /// Creates a configuration.
   ///
   /// - Parameters:
@@ -65,6 +76,7 @@ public struct MMKVConfiguration: Sendable, Hashable {
   ///   - compareBeforeSet: Whether a write of an identical value is skipped.
   ///   - itemSizeLimit: The largest key-value pair the store accepts, in bytes.
   ///   - fileProtection: The data protection the store's files are given on Apple's platforms.
+  ///   - defaultExpiry: How long the store keeps a value written without an expiry of its own.
   public init(
     id: MMKVStore.ID = .default,
     directory: MMKVDirectory,
@@ -75,7 +87,8 @@ public struct MMKVConfiguration: Sendable, Hashable {
     recovery: Recovery = .discard,
     compareBeforeSet: Bool = false,
     itemSizeLimit: Int? = nil,
-    fileProtection: FileProtection = .completeUntilFirstUserAuthentication
+    fileProtection: FileProtection = .completeUntilFirstUserAuthentication,
+    defaultExpiry: MMKVExpiry = .never
   ) {
     self.id = id
     self.directory = directory
@@ -87,6 +100,7 @@ public struct MMKVConfiguration: Sendable, Hashable {
     self.compareBeforeSet = compareBeforeSet
     self.itemSizeLimit = itemSizeLimit
     self.fileProtection = fileProtection
+    self.defaultExpiry = defaultExpiry
   }
 }
 

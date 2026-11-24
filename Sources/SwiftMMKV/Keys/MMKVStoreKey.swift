@@ -76,11 +76,11 @@ extension MMKVStore {
   /// - Parameters:
   ///   - value: The value to store.
   ///   - key: The key.
-  ///   - expiringIn: How long to keep the value. See ``set(_:forKey:expiringIn:)``.
+  ///   - expiry: How long to keep the value. See ``set(_:forKey:expiry:)``.
   /// - Returns: Whether the value was stored.
   @discardableResult
-  public func set<V>(_ value: V, for key: Key<V>, expiringIn: Duration? = nil) -> Bool {
-    self.set(value, forKey: key.name, expiringIn: expiringIn)
+  public func set<V>(_ value: V, for key: Key<V>, expiry: MMKVExpiry? = nil) -> Bool {
+    self.set(value, forKey: key.name, expiry: expiry)
   }
 
   /// Whether `key` has a value.
@@ -194,18 +194,18 @@ extension MMKVStore {
   ///
   /// - Parameters:
   ///   - values: Each key with the value to store under it.
-  ///   - expiringIn: How long to keep the values. See ``set(_:forKey:expiringIn:)``.
+  ///   - expiry: How long to keep the values. See ``set(_:forKey:expiry:)``.
   /// - Returns: Whether every value was stored. A value that cannot be stored does not stop
   ///   the others from being stored.
   @discardableResult
   public func set<each V>(
     _ values: repeat (Key<each V>, each V),
-    expiringIn: Duration? = nil
+    expiry: MMKVExpiry? = nil
   ) -> Bool {
     self.withExclusiveLock { store in
       var didStoreAll = true
       func write<T>(_ value: T, for key: Key<T>) {
-        if !store.set(value, for: key, expiringIn: expiringIn) {
+        if !store.set(value, for: key, expiry: expiry) {
           didStoreAll = false
         }
       }

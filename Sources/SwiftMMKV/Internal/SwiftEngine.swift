@@ -224,6 +224,14 @@ extension SwiftEngine {
     self.store.sync()
   }
 
+  var isExpiryEnabled: Bool {
+    self.store.isExpiryEnabled
+  }
+
+  func disableExpiry() -> Bool {
+    self.store.disableExpiry()
+  }
+
   func rekey(_ encryption: MMKVConfiguration.Encryption?) -> Bool {
     self.store.rekey(key: encryption?.key, isAES256: encryption?.isAES256 ?? false)
   }

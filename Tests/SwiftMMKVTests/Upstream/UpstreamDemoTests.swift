@@ -383,7 +383,7 @@ import Testing
 
     // Upstream writes this key before expiration is enabled and relies on the store's default
     // duration of one second, which the package cannot set; the port gives the key its own.
-    #expect(store.set(true, forKey: "auto_expire_key_1", expiringIn: .seconds(1)))
+    #expect(store.set(true, forKey: "auto_expire_key_1", expiry: .after(.seconds(1))))
     #expect(store.set("never_expire_value_1", forKey: "never_expire_key_1"))
     #expect(store.set("", forKey: "never_expire_key_2"))
     #expect(store.set([UInt8](), forKey: "never_expire_key_3"))
@@ -407,11 +407,11 @@ import Testing
     let store = try makeStore(id: "testAutoExpire", recovery: .recover)
     try enableExpiration(on: store)
     #expect(store.set("never_expire_value_1", forKey: "never_expire_key_1"))
-    #expect(store.set(true, forKey: "auto_expire_key_1", expiringIn: .seconds(3600)))
+    #expect(store.set(true, forKey: "auto_expire_key_1", expiry: .after(.seconds(3600))))
 
     #expect(store.removeValue(forKey: "never_expire_key_1"))
     #expect(store.set("never_expire_value_1", forKey: "never_expire_key_1"))
-    #expect(store.set(true, forKey: "auto_expire_key_1", expiringIn: .seconds(1)))
+    #expect(store.set(true, forKey: "auto_expire_key_1", expiry: .after(.seconds(1))))
     try await Task.sleep(for: oneSecondExpiry)
 
     #expect(store.contains("never_expire_key_1"))
@@ -482,10 +482,10 @@ import Testing
     let key = "name"
     #expect(store.value(forKey: key, as: String.self) == nil)
 
-    #expect(store.set(prefix, forKey: key, expiringIn: expiry.map { _ in .seconds(1000) }))
+    #expect(store.set(prefix, forKey: key, expiry: expiry.map { _ in .after(.seconds(1000)) }))
     #expect(store.value(forKey: key, as: String.self) == prefix)
     for index in 0..<10 {
-      #expect(store.set("\(prefix)_\(index)", forKey: key, expiringIn: expiry))
+      #expect(store.set("\(prefix)_\(index)", forKey: key, expiry: expiry.map(MMKVExpiry.after)))
       #expect(store.value(forKey: key, as: String.self) == "\(prefix)_\(index)")
     }
 
@@ -529,24 +529,24 @@ import Testing
       encryption: encryption
     )
 
-    #expect(store.set("world1", forKey: "key1", expiringIn: expiry))
+    #expect(store.set("world1", forKey: "key1", expiry: expiry.map(MMKVExpiry.after)))
     #expect(store.value(forKey: "key1", as: String.self) == "world1")
-    #expect(store.set("world2", forKey: "key2", expiringIn: expiry))
+    #expect(store.set("world2", forKey: "key2", expiry: expiry.map(MMKVExpiry.after)))
     #expect(store.value(forKey: "key2", as: String.self) == "world2")
     store.removeValue(forKey: "key1")
     store.removeValue(forKey: "key2")
 
-    #expect(store.set("world3", forKey: "key3", expiringIn: expiry))
+    #expect(store.set("world3", forKey: "key3", expiry: expiry.map(MMKVExpiry.after)))
     #expect(store.value(forKey: "key3", as: String.self) == "world3")
     store.removeValue(forKey: "key3")
 
     // A value large enough to grow the file.
     let bigValue = String(repeating: "0", count: 100_000)
-    #expect(store.set(bigValue, forKey: "key1", expiringIn: expiry))
+    #expect(store.set(bigValue, forKey: "key1", expiry: expiry.map(MMKVExpiry.after)))
     #expect(store.value(forKey: "key1", as: String.self) == bigValue)
     store.removeValue(forKey: "key1")
 
-    #expect(store.set("OK", forKey: "key2", expiringIn: expiry))
+    #expect(store.set("OK", forKey: "key2", expiry: expiry.map(MMKVExpiry.after)))
     #expect(store.value(forKey: "key2", as: String.self) == "OK")
 
     try copyFiles(of: store, in: rootDirectory, to: "reopened")

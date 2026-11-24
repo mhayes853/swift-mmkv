@@ -22,7 +22,7 @@ let oneSecondExpiry = Duration.milliseconds(1100)
 
 /// Enables expiration on `store` the only way the package can: with an expiring write.
 func enableExpiration(on store: MMKVStore) throws {
-  #expect(store.set(true, forKey: "enable-expiration", expiringIn: .seconds(3600)))
+  #expect(store.set(true, forKey: "enable-expiration", expiry: .after(.seconds(3600))))
   #expect(store.removeValue(forKey: "enable-expiration"))
 }
 

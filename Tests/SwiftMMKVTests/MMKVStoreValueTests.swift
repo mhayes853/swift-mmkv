@@ -234,7 +234,7 @@ import Testing
     let store = try makeStore()
 
     store.set("kept", forKey: "kept")
-    store.set("123456", forKey: "otp", expiringIn: .seconds(1))
+    store.set("123456", forKey: "otp", expiry: .after(.seconds(1)))
     #expect(store.value(forKey: "otp", as: String.self) == "123456")
 
     try await Task.sleep(for: .seconds(2.1))

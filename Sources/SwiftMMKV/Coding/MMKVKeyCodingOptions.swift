@@ -1,4 +1,4 @@
-/// How ``MMKVStore/encode(_:intoKeysUnder:removingOtherKeys:expiringIn:options:)`` and
+/// How ``MMKVStore/encode(_:intoKeysUnder:removingOtherKeys:expiry:options:)`` and
 /// ``MMKVStore/decode(_:fromKeysUnder:options:)`` spread a value over the keys of a store.
 ///
 /// The defaults store values the way a React Native app reads and writes them.

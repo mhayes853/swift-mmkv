@@ -208,7 +208,7 @@ extension MMKVStore.DefaultedCodedKey where Value == Bool {
   @Test func `Stored Values Can Expire`() async throws {
     let store = try makeStore()
 
-    store.set((.username, "blob"), (.volume, 0.8), expiringIn: .seconds(1))
+    store.set((.username, "blob"), (.volume, 0.8), expiry: .after(.seconds(1)))
     #expect(store[.username] == "blob")
 
     try await Task.sleep(for: .seconds(2.1))

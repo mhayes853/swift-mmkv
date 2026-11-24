@@ -64,10 +64,10 @@ import Testing
     try enableExpiration(on: store)
     #expect(store.keys.isEmpty)
 
-    let expiry = Duration.seconds(expireDuringEnumeration ? 2 : 1)
+    let expiry = MMKVExpiry.after(.seconds(expireDuringEnumeration ? 2 : 1))
     for index in 0..<16 {
       let key = "expired-dynamically-allocated-enumeration-key-\(index)"
-      #expect(store.set(Int32(42), forKey: key, expiringIn: expiry))
+      #expect(store.set(Int32(42), forKey: key, expiry: expiry))
     }
     #expect(store.set(Int32(7), forKey: "live-key"))
     if !expireDuringEnumeration {

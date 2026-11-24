@@ -209,7 +209,7 @@ import Testing
   @Test func `Expiring Values End With Their Expiry Time`() throws {
     let before = UInt32(Date().timeIntervalSince1970)
     let file = try Self.cxxStoreFile { store in
-      store.set(42.0, forKey: "expiring", expiringIn: .seconds(100))
+      store.set(42.0, forKey: "expiring", expiry: .after(.seconds(100)))
       store.set("forever", forKey: "forever")
     }
     let after = UInt32(Date().timeIntervalSince1970)

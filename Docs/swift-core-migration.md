@@ -90,7 +90,8 @@ plus the operations that do not open a store:
 - **Per store** (`MMKVEngine`): typed reads and writes, with optional expiry; keys, count, and
   `contains`; removing one key, several, or all, optionally keeping the file's size; importing
   another store's keys; the recursive lock; the file's size and the size of its data; checking for
-  external changes; `trim`; `sync`; and `rekey`.
+  external changes; `trim`; `sync`; `rekey`; and whether the file records expiries, and rewriting
+  it without them (`disableAutoKeyExpire`).
 - **Per directory** (`MMKVStorage`, which calls the C interface directly today): whether a store's
   files exist (`checkExist`), removing a store's files (`removeStorage`), the directory as MMKV
   resolves it (`NameSpace`), on Android the file name an older MMKV used, and backing up and

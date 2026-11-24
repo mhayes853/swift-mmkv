@@ -95,6 +95,45 @@ extension StoreState {
     return self.doFullWriteBack(records)
   }
 
+  /// Turns expiry off for the whole store, taking the expiry time off every value in it
+  /// (`disableAutoKeyExpire`). Keys that have expired but are still in the index are kept.
+  ///
+  /// As with turning it on, the records are rewritten in the order they are in the file, where
+  /// the C++ core uses the order of its hash table.
+  @discardableResult
+  mutating func disableAutoKeyExpire() -> Bool {
+    guard self.checkWritable() else { return false }
+    self.lockProcess(.exclusive)
+    defer { self.unlockProcess(.exclusive) }
+    self.checkLoadData(checkingFileSize: true)
+    guard self.isFileValid, self.metaFile.isFileValid else {
+      Log.warning("[\(self.id)] file not valid")
+      return false
+    }
+    guard self.checkDecodable() else { return false }
+    self.expiredInSeconds = 0
+    self.enableKeyExpire = false
+    guard self.metaInfo.hasFlag(MetaInfo.Flag.enableKeyExpire) else { return true }
+    var records = [(key: StoreKey, value: [UInt8])]()
+    for key in self.keysInRecordOrder() {
+      let value = key.bytes.withUnsafeBytes { self.getRawDataForKey($0) }
+      guard value.count >= fixed32Size else {
+        Log.warning("key has invalid value size \(value.count)")
+        continue
+      }
+      records.append((key, value.prefix(value.count - fixed32Size).array))
+    }
+    self.metaInfo.flags &= ~MetaInfo.Flag.enableKeyExpire
+    self.metaInfo.version = MetaInfo.Version.flag
+    if self.file.size == self.expectedCapacity && self.actualSize == 0 {
+      // A new file needs no rewrite, only the metadata.
+      self.writeActualSize(0, crcDigest: 0, iv: nil, increaseSequence: true)
+      self.metaFile.msync(synchronously: true)
+      return true
+    }
+    return self.doFullWriteBack(records)
+  }
+
   /// The bytes of `key`'s value without its expiry time. An expired key is removed and reads as
   /// empty (`getDataWithoutMTimeForKey`).
   mutating func getDataWithoutMTimeForKey(_ key: UnsafeRawBufferPointer) -> RawValue {

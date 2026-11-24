@@ -131,9 +131,9 @@
     public func encode<T: Encodable>(
       _ value: T,
       forKey key: String,
-      expiringIn: Duration? = nil
+      expiry: MMKVExpiry? = nil
     ) throws -> Bool {
-      try self.encode(value, forKey: key, expiringIn: expiringIn, with: JSONEncoder())
+      try self.encode(value, forKey: key, expiry: expiry, with: JSONEncoder())
     }
 
     /// Reads the JSON string stored under `key` and decodes it as a `T`.
@@ -213,5 +213,23 @@
   private enum JSONCoders {
     static let encoder = JSONEncoder()
     static let decoder = JSONDecoder()
+  }
+#endif
+
+#if Foundation
+  // MARK: - Expiry
+
+  extension MMKVExpiry {
+    /// The value is kept until `date`, rounded up to a whole second.
+    ///
+    /// ```swift
+    /// store.set(token, forKey: "token", expiry: .at(response.expiresAt))
+    /// ```
+    ///
+    /// A value written after `date` is kept for one second.
+    public static func at(_ date: Date) -> MMKVExpiry {
+      let seconds = date.timeIntervalSince1970.rounded(.up)
+      return .at(secondsSince1970: Int64(exactly: seconds) ?? (seconds < 0 ? .min : .max))
+    }
   }
 #endif

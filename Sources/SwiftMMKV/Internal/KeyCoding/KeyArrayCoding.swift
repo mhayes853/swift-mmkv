@@ -18,7 +18,7 @@ enum KeyArrayCoding: Sendable {
     self = .coded(
       encode: { value in
         let output = try encoder.encode(value)
-        return { store, key, expiringIn in store.set(output, forKey: key, expiringIn: expiringIn) }
+        return { store, key, expiry in store.set(output, forKey: key, expiry: expiry) }
       },
       decode: { type, store, key in
         guard let input = store.value(forKey: key, as: Decoder.Input.self) else { return nil }
@@ -29,4 +29,4 @@ enum KeyArrayCoding: Sendable {
 }
 
 /// Stores one encoded value under a key.
-typealias KeyWrite = (MMKVStore, String, Duration?) -> Bool
+typealias KeyWrite = (MMKVStore, String, MMKVExpiry?) -> Bool

@@ -180,7 +180,7 @@ import Testing
     // Upstream calls `enableAutoKeyExpire()`, which the package does on the first expiring
     // write. Four bytes of expiry would push the value's length prefix to two bytes and overflow
     // the pair's 16-bit size, so expiration stays off and the write fails.
-    #expect(!store.set("x", forKey: "other", expiringIn: .seconds(60)))
+    #expect(!store.set("x", forKey: "other", expiry: .after(.seconds(60))))
 
     #expect(store.value(forKey: key, as: String.self) == value)
     #expect(!store.contains("other"))
@@ -235,12 +235,12 @@ import Testing
           count: Int(UInt32.max) + 1
         ),
         forKey: "value",
-        expiringIn: .seconds(60)
+        expiry: .after(.seconds(60))
       )
     }
 
     #expect(!didSetOversized)
-    #expect(store.set("after", forKey: "value", expiringIn: .seconds(60)))
+    #expect(store.set("after", forKey: "value", expiry: .after(.seconds(60))))
     #expect(store.value(forKey: "value", as: String.self) == "after")
   }
 
@@ -343,13 +343,17 @@ import Testing
     // package has no way to set, and writes this key with it.
     #expect(store.set(true, forKey: "expiration_overflow_auto"))
     #expect(
-      store.set("manual", forKey: "expiration_overflow_manual", expiringIn: .seconds(UInt32.max))
+      store.set(
+        "manual",
+        forKey: "expiration_overflow_manual",
+        expiry: .after(.seconds(UInt32.max))
+      )
     )
     let didSetBytes = bytes.withUnsafeBytes {
       store.set(
         unsafeBytes: $0,
         forKey: "expiration_overflow_bytes",
-        expiringIn: .seconds(UInt32.max)
+        expiry: .after(.seconds(UInt32.max))
       )
     }
     #expect(didSetBytes)
@@ -376,7 +380,7 @@ import Testing
   private func expectExpiringValuesOfEveryShortLengthRoundTrip(in store: MMKVStore) throws {
     for length in 1...4 {
       let value = String(repeating: "x", count: length)
-      #expect(store.set(value, forKey: "alignment-\(length)", expiringIn: .seconds(60)))
+      #expect(store.set(value, forKey: "alignment-\(length)", expiry: .after(.seconds(60))))
       #expect(store.value(forKey: "alignment-\(length)", as: String.self) == value)
     }
     #expect(store.count == 4)
@@ -387,7 +391,7 @@ import Testing
     // Upstream: UnitTest.cpp testFirstReadAfterReopenRespectsExpiration
     let rootDirectory = temporaryRootDirectory()
     let store = try makeStore(id: "first-read-expiration", rootDirectory: rootDirectory)
-    #expect(store.set(UInt32(123), forKey: "expired", expiringIn: .seconds(1)))
+    #expect(store.set(UInt32(123), forKey: "expired", expiry: .after(.seconds(1))))
     try copyFiles(of: store, in: rootDirectory, to: "reopened")
     try await Task.sleep(for: oneSecondExpiry)
 
@@ -414,7 +418,7 @@ import Testing
   ) async throws {
     let rootDirectory = temporaryRootDirectory()
     let store = try makeStore(id: "source", rootDirectory: rootDirectory, encryption: encryption)
-    #expect(store.set(UInt32(123), forKey: "expired", expiringIn: .seconds(1)))
+    #expect(store.set(UInt32(123), forKey: "expired", expiry: .after(.seconds(1))))
     #expect(store.set("live", forKey: "live"))
     store.sync()
     try await Task.sleep(for: oneSecondExpiry)
@@ -469,37 +473,37 @@ import Testing
       try copyFiles(of: store, in: rootDirectory, to: "reopened-\(reopenings)")
       return try makeStore(id: "reopened-\(reopenings)", rootDirectory: rootDirectory)
     }
-    let minute = Duration.seconds(60)
+    let minute = MMKVExpiry.after(.seconds(60))
     var kv = try reopen()
-    #expect(kv.set(true, forKey: "bool", expiringIn: minute))
+    #expect(kv.set(true, forKey: "bool", expiry: minute))
     #expect(kv.value(forKey: "bool", as: Bool.self) == true)
     kv = try reopen()
-    #expect(kv.set(Int32(-123), forKey: "i32", expiringIn: minute))
+    #expect(kv.set(Int32(-123), forKey: "i32", expiry: minute))
     #expect(kv.value(forKey: "i32", as: Int32.self) == -123)
     kv = try reopen()
-    #expect(kv.set(UInt32(123), forKey: "u32", expiringIn: minute))
+    #expect(kv.set(UInt32(123), forKey: "u32", expiry: minute))
     #expect(kv.value(forKey: "u32", as: UInt32.self) == 123)
     kv = try reopen()
-    #expect(kv.set(Int64(-123), forKey: "i64", expiringIn: minute))
+    #expect(kv.set(Int64(-123), forKey: "i64", expiry: minute))
     #expect(kv.value(forKey: "i64", as: Int64.self) == -123)
     kv = try reopen()
-    #expect(kv.set(UInt64(123), forKey: "u64", expiringIn: minute))
+    #expect(kv.set(UInt64(123), forKey: "u64", expiry: minute))
     #expect(kv.value(forKey: "u64", as: UInt64.self) == 123)
     kv = try reopen()
-    #expect(kv.set(Float(1.5), forKey: "float", expiringIn: minute))
+    #expect(kv.set(Float(1.5), forKey: "float", expiry: minute))
     #expect(kv.value(forKey: "float", as: Float.self) == 1.5)
     kv = try reopen()
-    #expect(kv.set(1.5, forKey: "double", expiringIn: minute))
+    #expect(kv.set(1.5, forKey: "double", expiry: minute))
     #expect(kv.value(forKey: "double", as: Double.self) == 1.5)
     kv = try reopen()
-    #expect(kv.set("ABCD", forKey: "string", expiringIn: minute))
+    #expect(kv.set("ABCD", forKey: "string", expiry: minute))
     #expect(kv.value(forKey: "string", as: String.self) == "ABCD")
     kv = try reopen()
     let bytes = Array("ABCD".utf8)
-    #expect(bytes.withUnsafeBytes { kv.set(unsafeBytes: $0, forKey: "bytes", expiringIn: minute) })
+    #expect(bytes.withUnsafeBytes { kv.set(unsafeBytes: $0, forKey: "bytes", expiry: minute) })
     #expect(kv.value(forKey: "bytes", as: [UInt8].self) == bytes)
     kv = try reopen()
-    #expect(kv.set(["ABCD", "EFGH"], forKey: "strings", expiringIn: minute))
+    #expect(kv.set(["ABCD", "EFGH"], forKey: "strings", expiry: minute))
     #expect(kv.value(forKey: "strings", as: [String].self) == ["ABCD", "EFGH"])
   }
 

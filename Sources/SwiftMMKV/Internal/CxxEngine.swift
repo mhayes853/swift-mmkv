@@ -250,6 +250,14 @@ extension CxxEngine {
     mmkv_sync(self.handle)
   }
 
+  var isExpiryEnabled: Bool {
+    mmkv_is_expiry_enabled(self.handle)
+  }
+
+  func disableExpiry() -> Bool {
+    mmkv_disable_expiry(self.handle)
+  }
+
   func rekey(_ encryption: MMKVConfiguration.Encryption?) -> Bool {
     (encryption?.key ?? [])
       .withUnsafeBytes { key in

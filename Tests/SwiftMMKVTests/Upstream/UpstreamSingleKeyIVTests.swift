@@ -174,7 +174,7 @@ import Testing
   ) throws {
     var kv = try Instance(id: id, configuration: configuration)
     let initial = String(repeating: "Z", count: 10)
-    #expect(kv.store.set(initial, forKey: "k", expiringIn: configuration.expiry))
+    #expect(kv.store.set(initial, forKey: "k", expiry: configuration.expiry.map(MMKVExpiry.after)))
     var previous = try Snapshot(kv)
     var knownPlaintext: Snapshot?
     let values = [
@@ -185,7 +185,7 @@ import Testing
     ]
 
     for (index, value) in values.enumerated() {
-      #expect(kv.store.set(value, forKey: "k", expiringIn: configuration.expiry))
+      #expect(kv.store.set(value, forKey: "k", expiry: configuration.expiry.map(MMKVExpiry.after)))
       let current = try Snapshot(kv)
       if configuration.encryption != nil {
         #expect(current.isSafeReplacement(of: previous), "Replacing with \(value.count) bytes")

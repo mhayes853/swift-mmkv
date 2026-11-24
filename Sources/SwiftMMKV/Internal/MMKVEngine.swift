@@ -81,6 +81,14 @@ protocol MMKVEngine: Sendable {
   func trim()
   func sync()
 
+  /// Whether the store's file records when each key expires.
+  var isExpiryEnabled: Bool { get }
+
+  /// Rewrites the store's file without its expiries, keeping every key the engine holds.
+  ///
+  /// - Returns: Whether the file was rewritten, or had no expiries to begin with.
+  func disableExpiry() -> Bool
+
   /// Re-encrypts the store with `encryption`, which has already been validated, or decrypts it
   /// when `encryption` is `nil`.
   ///

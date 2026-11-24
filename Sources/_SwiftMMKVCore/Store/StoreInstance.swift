@@ -675,6 +675,19 @@ extension StoreInstance {
     self.withState { $0.checkLoadData() }
   }
 
+  /// Whether the store's file records when each key expires (`isExpirationEnabled`).
+  package var isExpiryEnabled: Bool {
+    self.withState { state in
+      state.checkLoadData()
+      return state.enableKeyExpire
+    }
+  }
+
+  /// Rewrites the file without its expiry times (`disableAutoKeyExpire`).
+  package func disableExpiry() -> Bool {
+    self.withState { $0.disableAutoKeyExpire() }
+  }
+
   /// Writes the files' mapped memory to disk (`sync`). A synchronous sync does not return until
   /// the drive has it, and then everything written so far survives a loss of power, whatever is
   /// written afterwards.

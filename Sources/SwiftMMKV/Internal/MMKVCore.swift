@@ -9,6 +9,7 @@
 final class MMKVCore: Sendable {
   let engine: any MMKVEngine
   let state: MMKVStoreState
+  private let defaultExpiry: MMKVExpiry
 
   /// Opens the instance described by `configuration`, creating its files if they do not exist.
   init(_ configuration: MMKVConfiguration) throws(MMKVError) {
@@ -29,6 +30,7 @@ final class MMKVCore: Sendable {
       }
     }
     self.engine = engine
+    self.defaultExpiry = configuration.defaultExpiry
     self.state = MMKVStoreState.shared(
       for: engine.instance,
       id: configuration.id,
@@ -169,6 +171,34 @@ extension MMKVCore {
 
   func sync() {
     self.perform { $0.sync() }
+  }
+
+  /// The number of seconds the core should keep a key written now with `expiry` for, or zero
+  /// for good. A write that names no expiry has the one this store was opened with.
+  func expirySeconds(for expiry: MMKVExpiry?) -> UInt32 {
+    SwiftMMKV.expirySeconds(for: expiry ?? self.defaultExpiry)
+  }
+
+  /// Whether the store's file records when each key expires.
+  var isExpiryEnabled: Bool {
+    self.perform { engine in
+      // Another process may have changed the file's format since it was last read.
+      engine.checkContentChanged()
+      return engine.isExpiryEnabled
+    } ?? false
+  }
+
+  func disableExpiry() throws(MMKVError) {
+    let didDisable = self.perform { engine in
+      engine.lock()
+      defer { engine.unlock() }
+      // The engine keeps every key it holds, and it holds an expired key until it is asked to
+      // look for them, which counting the keys does.
+      _ = engine.count
+      return engine.disableExpiry()
+    }
+    guard let didDisable else { throw .storeIsSuspended(id: self.state.id) }
+    guard didDisable else { throw .disableExpiryFailed }
   }
 
   func rekey(_ encryption: MMKVConfiguration.Encryption?) throws(MMKVError) {

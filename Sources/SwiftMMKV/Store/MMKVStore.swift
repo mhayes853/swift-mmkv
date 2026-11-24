@@ -81,26 +81,26 @@ extension MMKVStore {
   ///
   /// ```swift
   /// store.set(true, forKey: "hasOnboarded")
-  /// store.set("123456", forKey: "otp", expiringIn: .seconds(30))
+  /// store.set("123456", forKey: "otp", expiry: .after(.seconds(30)))
   /// ```
   ///
   /// - Parameters:
   ///   - value: The value to store.
   ///   - key: The key, which must not be empty.
-  ///   - expiringIn: How long to keep the value, rounded up to a whole second, or `nil` to keep
-  ///     it until it is removed. The first expiring write switches the store's file to a format
-  ///     that react-native-mmkv has no option for, so avoid it on a store shared with
-  ///     JavaScript.
+  ///   - expiry: How long to keep the value, or `nil` for the store's
+  ///     ``MMKVConfiguration/defaultExpiry``. The first write that expires switches the store's
+  ///     file to a format that react-native-mmkv has no option for, so avoid it on a store
+  ///     shared with JavaScript. ``disableExpiry()`` switches it back.
   /// - Returns: Whether the value was stored. A write fails when the key is empty, the store is
   ///   read-only, or the pair exceeds the store's item size limit.
   @discardableResult
   public func set<V: MMKVValue>(
     _ value: V,
     forKey key: String,
-    expiringIn: Duration? = nil
+    expiry: MMKVExpiry? = nil
   ) -> Bool {
     self.write(forKey: key) {
-      self.core.set(value, forKey: key, expiresInSeconds: expiringIn.mmkvExpirySeconds)
+      self.core.set(value, forKey: key, expiresInSeconds: self.core.expirySeconds(for: expiry))
     }
   }
 
@@ -138,10 +138,11 @@ extension MMKVStore {
   ///
   /// - Returns: Whether the bytes were stored.
   @discardableResult
-  public func set(bytes: RawSpan, forKey key: String, expiringIn: Duration? = nil) -> Bool {
-    self.write(forKey: key) {
+  public func set(bytes: RawSpan, forKey key: String, expiry: MMKVExpiry? = nil) -> Bool {
+    let expiresInSeconds = self.core.expirySeconds(for: expiry)
+    return self.write(forKey: key) {
       self.core.write {
-        $0.set(bytes: bytes, forKey: key, expiresInSeconds: expiringIn.mmkvExpirySeconds)
+        $0.set(bytes: bytes, forKey: key, expiresInSeconds: expiresInSeconds)
       }
     }
   }
@@ -173,9 +174,9 @@ extension MMKVStore {
   public func set(
     unsafeBytes: UnsafeRawBufferPointer,
     forKey key: String,
-    expiringIn: Duration? = nil
+    expiry: MMKVExpiry? = nil
   ) -> Bool {
-    self.set(bytes: RawSpan(_unsafeBytes: unsafeBytes), forKey: key, expiringIn: expiringIn)
+    self.set(bytes: RawSpan(_unsafeBytes: unsafeBytes), forKey: key, expiry: expiry)
   }
 
   /// Reads the raw bytes stored under `key` through a buffer pointer, which is only valid for
@@ -253,12 +254,12 @@ extension MMKVStore {
   ///
   /// - Parameters:
   ///   - values: The values to store, by key.
-  ///   - expiringIn: How long to keep the values. See ``set(_:forKey:expiringIn:)``.
+  ///   - expiry: How long to keep the values. See ``set(_:forKey:expiry:)``.
   /// - Returns: Whether every value was stored. A value that cannot be stored does not stop
-  ///   the others from being stored. See ``set(_:forKey:expiringIn:)`` for why a write fails.
+  ///   the others from being stored. See ``set(_:forKey:expiry:)`` for why a write fails.
   @discardableResult
-  public func set<V: MMKVValue>(_ values: [String: V], expiringIn: Duration? = nil) -> Bool {
-    let expiresInSeconds = expiringIn.mmkvExpirySeconds
+  public func set<V: MMKVValue>(_ values: [String: V], expiry: MMKVExpiry? = nil) -> Bool {
+    let expiresInSeconds = self.core.expirySeconds(for: expiry)
     let stored = self.core.locked {
       values.keys.filter { key in
         self.core.set(values[key]!, forKey: key, expiresInSeconds: expiresInSeconds)
@@ -713,6 +714,28 @@ extension MMKVStore {
   public func sync() {
     self.core.sync()
     self.core.operationDidFinish()
+  }
+
+  /// Whether the store's file records when each key expires, which it does from the first
+  /// write that expires until ``disableExpiry()``. A suspended store answers `false`.
+  public var isExpiryEnabled: Bool {
+    defer { self.core.operationDidFinish() }
+    return self.core.isExpiryEnabled
+  }
+
+  /// Rewrites the store's file in the format it had before its first expiring write, which is
+  /// the format react-native-mmkv reads.
+  ///
+  /// Keys that have expired are dropped, and every other key is kept until it is removed,
+  /// whatever expiry it was written with. The next write that expires switches the file back,
+  /// so a store with a ``MMKVConfiguration/defaultExpiry`` stays this way only until it is
+  /// next written to.
+  ///
+  /// - Throws: ``MMKVError/disableExpiryFailed`` if the store could not be rewritten, or
+  ///   ``MMKVError/storeIsSuspended(id:)`` if the store is suspended.
+  public func disableExpiry() throws(MMKVError) {
+    defer { self.core.operationDidFinish() }
+    try self.core.disableExpiry()
   }
 
   /// Re-encrypts the store with `encryption`, or decrypts it when `encryption` is `nil`.
