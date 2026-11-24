@@ -91,11 +91,11 @@ extension MMKVStoreIntegrityFailureTests {
 
     #expect(
       recorder.events.filter { $0.hasSuffix(checksumID.rawValue) }
-        == ["\(code(SWIFTMMKV_INTEGRITY_FAILURE_CHECKSUM)) \(checksumID)"]
+        == ["\(SWIFTMMKV_INTEGRITY_FAILURE_CHECKSUM) \(checksumID)"]
     )
     #expect(
       recorder.events.filter { $0.hasSuffix(lengthID.rawValue) }
-        == ["\(code(SWIFTMMKV_INTEGRITY_FAILURE_FILE_LENGTH)) \(lengthID)"]
+        == ["\(SWIFTMMKV_INTEGRITY_FAILURE_FILE_LENGTH) \(lengthID)"]
     )
     #expect(!recorder.events.contains { $0.hasSuffix(laterID.rawValue) })
     #expect(recorder.isReleasedOnce)

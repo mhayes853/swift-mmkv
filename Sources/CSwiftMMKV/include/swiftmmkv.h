@@ -68,47 +68,45 @@ void swiftmmkv_string_list_free(swiftmmkv_string_list *_Nullable list);
 
 /// Whether a function succeeded, and why not if it did not.
 typedef int32_t swiftmmkv_status;
-enum {
-  SWIFTMMKV_OK = 0,
-  /// The store could not be opened, for example because its identifier or its directory's path
-  /// is empty.
-  SWIFTMMKV_OPEN_FAILED = 1,
-  /// The encryption key is empty or longer than its cipher allows.
-  SWIFTMMKV_INVALID_ENCRYPTION_KEY = 2,
-  /// The store could not be re-encrypted, for example because it is read-only.
-  SWIFTMMKV_REKEY_FAILED = 3,
-  /// The store is open in this process, so its files cannot be removed or replaced.
-  SWIFTMMKV_STORE_IS_OPEN = 4,
-  /// Some stores are open in this process, so they were left alone while the rest of their
-  /// directory's stores were dealt with.
-  SWIFTMMKV_STORES_ARE_OPEN = 5,
-  /// The directory exists but its contents cannot be listed.
-  SWIFTMMKV_DIRECTORY_UNREADABLE = 6,
-  /// The store is suspended, so it turned the operation away. Try again once it is resumed.
-  SWIFTMMKV_STORE_IS_SUSPENDED = 7,
-  /// An argument is a value this version of the interface does not know, such as a mode that
-  /// is not one of the `SWIFTMMKV_MODE_` constants.
-  SWIFTMMKV_INVALID_ARGUMENT = 8,
-  /// The store's files could not be copied into the backup directory.
-  SWIFTMMKV_BACKUP_FAILED = 9,
-  /// The store could not be overwritten with its copy in the backup directory, for example
-  /// because it is open as read-only.
-  SWIFTMMKV_RESTORE_FAILED = 10,
-  /// Some stores could not be copied into the backup directory. The others were.
-  SWIFTMMKV_STORES_NOT_BACKED_UP = 11,
-  /// Some stores could not be overwritten with their copies in the backup directory. The
-  /// others were.
-  SWIFTMMKV_STORES_NOT_RESTORED = 12,
-  /// The store's copy in the backup directory does not match its checksum, so nothing was
-  /// restored from it.
-  SWIFTMMKV_BACKUP_INVALID = 13,
-  /// The backup directory is the directory the stores are in.
-  SWIFTMMKV_BACKUP_IS_STORE_DIRECTORY = 14,
-  /// The store did not accept a write.
-  SWIFTMMKV_WRITE_FAILED = 15,
-  /// The app group has no container this process can reach.
-  SWIFTMMKV_APP_GROUP_CONTAINER_UNAVAILABLE = 16,
-};
+#define SWIFTMMKV_OK 0
+/// The store could not be opened, for example because its identifier or its directory's path
+/// is empty.
+#define SWIFTMMKV_OPEN_FAILED 1
+/// The encryption key is empty or longer than its cipher allows.
+#define SWIFTMMKV_INVALID_ENCRYPTION_KEY 2
+/// The store could not be re-encrypted, for example because it is read-only.
+#define SWIFTMMKV_REKEY_FAILED 3
+/// The store is open in this process, so its files cannot be removed or replaced.
+#define SWIFTMMKV_STORE_IS_OPEN 4
+/// Some stores are open in this process, so they were left alone while the rest of their
+/// directory's stores were dealt with.
+#define SWIFTMMKV_STORES_ARE_OPEN 5
+/// The directory exists but its contents cannot be listed.
+#define SWIFTMMKV_DIRECTORY_UNREADABLE 6
+/// The store is suspended, so it turned the operation away. Try again once it is resumed.
+#define SWIFTMMKV_STORE_IS_SUSPENDED 7
+/// An argument is a value this version of the interface does not know, such as a mode that
+/// is not one of the `SWIFTMMKV_MODE_` constants.
+#define SWIFTMMKV_INVALID_ARGUMENT 8
+/// The store's files could not be copied into the backup directory.
+#define SWIFTMMKV_BACKUP_FAILED 9
+/// The store could not be overwritten with its copy in the backup directory, for example
+/// because it is open as read-only.
+#define SWIFTMMKV_RESTORE_FAILED 10
+/// Some stores could not be copied into the backup directory. The others were.
+#define SWIFTMMKV_STORES_NOT_BACKED_UP 11
+/// Some stores could not be overwritten with their copies in the backup directory. The
+/// others were.
+#define SWIFTMMKV_STORES_NOT_RESTORED 12
+/// The store's copy in the backup directory does not match its checksum, so nothing was
+/// restored from it.
+#define SWIFTMMKV_BACKUP_INVALID 13
+/// The backup directory is the directory the stores are in.
+#define SWIFTMMKV_BACKUP_IS_STORE_DIRECTORY 14
+/// The store did not accept a write.
+#define SWIFTMMKV_WRITE_FAILED 15
+/// The app group has no container this process can reach.
+#define SWIFTMMKV_APP_GROUP_CONTAINER_UNAVAILABLE 16
 
 /// A description of `status` in English. The string is static and must not be freed.
 const char *_Nonnull swiftmmkv_status_message(swiftmmkv_status status);
@@ -118,33 +116,27 @@ const char *_Nonnull swiftmmkv_status_message(swiftmmkv_status status);
 /// Whether anything other than this copy of MMKV may have a store's files open. Every opener
 /// of a file must agree on the mode, because the wrong choice loses writes.
 typedef int32_t swiftmmkv_mode;
-enum {
-  /// Nothing else has the store's files open, so reads and writes take no file lock.
-  SWIFTMMKV_MODE_SINGLE_PROCESS = 0,
-  /// Another process, or another copy of MMKV in this process, may have the store's files
-  /// open. Every operation takes a file lock and picks up the other side's changes.
-  SWIFTMMKV_MODE_MULTI_PROCESS = 1,
-};
+/// Nothing else has the store's files open, so reads and writes take no file lock.
+#define SWIFTMMKV_MODE_SINGLE_PROCESS 0
+/// Another process, or another copy of MMKV in this process, may have the store's files
+/// open. Every operation takes a file lock and picks up the other side's changes.
+#define SWIFTMMKV_MODE_MULTI_PROCESS 1
 
 /// The cipher a store's contents are encrypted with.
 typedef int32_t swiftmmkv_encryption;
-enum {
-  SWIFTMMKV_ENCRYPTION_NONE = 0,
-  /// AES-128 in CFB mode, with a key of 1 to 16 bytes.
-  SWIFTMMKV_ENCRYPTION_AES128 = 1,
-  /// AES-256 in CFB mode, with a key of 1 to 32 bytes.
-  SWIFTMMKV_ENCRYPTION_AES256 = 2,
-};
+#define SWIFTMMKV_ENCRYPTION_NONE 0
+/// AES-128 in CFB mode, with a key of 1 to 16 bytes.
+#define SWIFTMMKV_ENCRYPTION_AES128 1
+/// AES-256 in CFB mode, with a key of 1 to 32 bytes.
+#define SWIFTMMKV_ENCRYPTION_AES256 2
 
 /// What to do when a store's file fails its integrity check, which can happen after the
 /// process is killed in the middle of a write.
 typedef int32_t swiftmmkv_recovery;
-enum {
-  /// Discard the file's contents and start empty.
-  SWIFTMMKV_RECOVERY_DISCARD = 0,
-  /// Keep whatever key-value pairs can still be read.
-  SWIFTMMKV_RECOVERY_RECOVER = 1,
-};
+/// Discard the file's contents and start empty.
+#define SWIFTMMKV_RECOVERY_DISCARD 0
+/// Keep whatever key-value pairs can still be read.
+#define SWIFTMMKV_RECOVERY_RECOVER 1
 
 /// Which store to open and how to open it. A configuration is not thread-safe: use it from one
 /// thread at a time.
@@ -336,13 +328,11 @@ void swiftmmkv_store_with_exclusive_lock(
 // MARK: - Changes
 
 typedef int32_t swiftmmkv_change_kind;
-enum {
-  /// The value of a key was set or removed through this package, in this process.
-  SWIFTMMKV_CHANGE_KEY = 0,
-  /// Another process, or another copy of MMKV in this process, changed the store. Which keys
-  /// changed is not known.
-  SWIFTMMKV_CHANGE_EXTERNAL = 1,
-};
+/// The value of a key was set or removed through this package, in this process.
+#define SWIFTMMKV_CHANGE_KEY 0
+/// Another process, or another copy of MMKV in this process, changed the store. Which keys
+/// changed is not known.
+#define SWIFTMMKV_CHANGE_EXTERNAL 1
 
 /// Receives a change to a store. `key` is the key that changed, or NULL for an external
 /// change.
@@ -475,16 +465,14 @@ swiftmmkv_status swiftmmkv_directory_restore_all_stores(
 // log on Android.
 
 typedef int32_t swiftmmkv_log_level;
-enum {
-  /// What MMKV is doing, such as loading a file or growing one.
-  SWIFTMMKV_LOG_INFO = 1,
-  /// Something unexpected that MMKV carried on from.
-  SWIFTMMKV_LOG_WARNING = 2,
-  /// A failure, such as a file that cannot be opened or that fails its integrity check.
-  SWIFTMMKV_LOG_ERROR = 3,
-  /// As a minimum level, logs nothing. No message has this level.
-  SWIFTMMKV_LOG_NONE = 4,
-};
+/// What MMKV is doing, such as loading a file or growing one.
+#define SWIFTMMKV_LOG_INFO 1
+/// Something unexpected that MMKV carried on from.
+#define SWIFTMMKV_LOG_WARNING 2
+/// A failure, such as a file that cannot be opened or that fails its integrity check.
+#define SWIFTMMKV_LOG_ERROR 3
+/// As a minimum level, logs nothing. No message has this level.
+#define SWIFTMMKV_LOG_NONE 4
 
 /// The least severe level that is logged, which starts as `SWIFTMMKV_LOG_WARNING`.
 swiftmmkv_log_level swiftmmkv_log_minimum_level(void);
@@ -510,12 +498,10 @@ void swiftmmkv_log_set_handler(
 
 /// The check a store's file failed as it was loaded.
 typedef int32_t swiftmmkv_integrity_failure_kind;
-enum {
-  /// The file's contents do not match their checksum.
-  SWIFTMMKV_INTEGRITY_FAILURE_CHECKSUM = 0,
-  /// The file is not as long as it records itself to be.
-  SWIFTMMKV_INTEGRITY_FAILURE_FILE_LENGTH = 1,
-};
+/// The file's contents do not match their checksum.
+#define SWIFTMMKV_INTEGRITY_FAILURE_CHECKSUM 0
+/// The file is not as long as it records itself to be.
+#define SWIFTMMKV_INTEGRITY_FAILURE_FILE_LENGTH 1
 
 /// Receives the identifier of a store whose file failed its integrity check. MMKV reports the
 /// identifier alone, so stores with the same identifier in different directories cannot be

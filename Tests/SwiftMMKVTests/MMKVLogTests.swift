@@ -169,26 +169,26 @@ import Testing
 extension MMKVLogTests {
   @Test func `The C Interface Reads And Sets The Minimum Level`() {
     defer { resetLogging() }
-    #expect(swiftmmkv_log_minimum_level() == code(SWIFTMMKV_LOG_WARNING))
+    #expect(swiftmmkv_log_minimum_level() == SWIFTMMKV_LOG_WARNING)
 
-    swiftmmkv_log_set_minimum_level(code(SWIFTMMKV_LOG_INFO))
-    #expect(swiftmmkv_log_minimum_level() == code(SWIFTMMKV_LOG_INFO))
+    swiftmmkv_log_set_minimum_level(SWIFTMMKV_LOG_INFO)
+    #expect(swiftmmkv_log_minimum_level() == SWIFTMMKV_LOG_INFO)
     #expect(MMKVLog.minimumLevel == .info)
 
-    swiftmmkv_log_set_minimum_level(code(SWIFTMMKV_LOG_NONE))
-    #expect(swiftmmkv_log_minimum_level() == code(SWIFTMMKV_LOG_NONE))
+    swiftmmkv_log_set_minimum_level(SWIFTMMKV_LOG_NONE)
+    #expect(swiftmmkv_log_minimum_level() == SWIFTMMKV_LOG_NONE)
     #expect(MMKVLog.minimumLevel == nil)
 
-    swiftmmkv_log_set_minimum_level(code(SWIFTMMKV_LOG_ERROR))
+    swiftmmkv_log_set_minimum_level(SWIFTMMKV_LOG_ERROR)
     swiftmmkv_log_set_minimum_level(99)
-    #expect(swiftmmkv_log_minimum_level() == code(SWIFTMMKV_LOG_ERROR))
+    #expect(swiftmmkv_log_minimum_level() == SWIFTMMKV_LOG_ERROR)
   }
 
   @Test func `The C Interface's Handler Receives Messages Until It Is Replaced`() throws {
     defer { resetLogging() }
     let first = CCallbackRecorder()
     let second = CCallbackRecorder()
-    swiftmmkv_log_set_minimum_level(code(SWIFTMMKV_LOG_INFO))
+    swiftmmkv_log_set_minimum_level(SWIFTMMKV_LOG_INFO)
     swiftmmkv_log_set_handler(first.context, CCallbackRecorder.onLog, CCallbackRecorder.release)
 
     let firstID = uniqueStoreID()
@@ -196,7 +196,7 @@ extension MMKVLogTests {
 
     let message = try #require(first.events.first { $0.contains(firstID.rawValue) })
     let fields = message.split(separator: " ", maxSplits: 3)
-    #expect(fields[0] == "\(code(SWIFTMMKV_LOG_INFO))")
+    #expect(fields[0] == "\(SWIFTMMKV_LOG_INFO)")
     #expect(fields[1].contains(".cpp:"))
     #expect(!fields[2].isEmpty)
     #expect(first.releases == 0)

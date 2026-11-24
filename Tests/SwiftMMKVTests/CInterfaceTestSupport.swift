@@ -7,12 +7,6 @@ import SwiftMMKV
 // its arguments before making it, by which time the C string that Swift made for a string
 // argument, or the pointer it made for an array, no longer points anywhere.
 
-/// A constant of the C interface as the type its functions take and return. Swift imports the
-/// constants of an unnamed C enum with a type of its own choosing.
-func code(_ constant: some BinaryInteger) -> Int32 {
-  Int32(constant)
-}
-
 /// A status other than `SWIFTMMKV_OK` from the C interface.
 struct CStatusError: Error, Equatable {
   let status: swiftmmkv_status
@@ -29,16 +23,16 @@ struct CStore {
   init(
     id: String = "mmkv.default",
     directory: String = temporaryRootDirectory(),
-    mode: some BinaryInteger = SWIFTMMKV_MODE_SINGLE_PROCESS,
+    mode: swiftmmkv_mode = SWIFTMMKV_MODE_SINGLE_PROCESS,
     configure: (OpaquePointer) -> Void = { _ in }
   ) throws {
-    let configuration = swiftmmkv_configuration_create(directory, code(mode))
+    let configuration = swiftmmkv_configuration_create(directory, mode)
     defer { swiftmmkv_configuration_destroy(configuration) }
     swiftmmkv_configuration_set_id(configuration, id)
     configure(configuration)
     var handle: OpaquePointer?
     let status = swiftmmkv_store_open(configuration, &handle)
-    guard status == code(SWIFTMMKV_OK), let handle else { throw CStatusError(status: status) }
+    guard status == SWIFTMMKV_OK, let handle else { throw CStatusError(status: status) }
     self.handle = handle
   }
 
@@ -122,9 +116,9 @@ final class CCallbackRecorder: Sendable {
 
   /// Records `key:<name>` or `external`.
   static let onChange: swiftmmkv_change_callback = { context, kind, key in
-    if kind == code(SWIFTMMKV_CHANGE_KEY), let key {
+    if kind == SWIFTMMKV_CHANGE_KEY, let key {
       CCallbackRecorder.from(context).record("key:\(String(cString: key))")
-    } else if kind == code(SWIFTMMKV_CHANGE_EXTERNAL), key == nil {
+    } else if kind == SWIFTMMKV_CHANGE_EXTERNAL, key == nil {
       CCallbackRecorder.from(context).record("external")
     } else {
       CCallbackRecorder.from(context).record("unexpected")

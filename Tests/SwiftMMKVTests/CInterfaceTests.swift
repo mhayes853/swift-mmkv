@@ -12,7 +12,7 @@ import Testing
   }
 
   @Test func `Every Status Has A Message Of Its Own`() {
-    let statuses = code(SWIFTMMKV_OK)...code(SWIFTMMKV_APP_GROUP_CONTAINER_UNAVAILABLE)
+    let statuses = SWIFTMMKV_OK...SWIFTMMKV_APP_GROUP_CONTAINER_UNAVAILABLE
     let messages = statuses.map { String(cString: swiftmmkv_status_message($0)) }
     let unknown = String(cString: swiftmmkv_status_message(9999))
 
@@ -31,7 +31,7 @@ import Testing
     swiftmmkv_configuration_destroy(configuration)
     defer { swiftmmkv_store_close(handle) }
 
-    #expect(status == code(SWIFTMMKV_OK))
+    #expect(status == SWIFTMMKV_OK)
     let store = try #require(handle)
     #expect(swiftmmkv_store_count(store) == 0)
     #expect(swiftmmkv_store_set_bool(store, "flag", true, 0) == true)
@@ -57,35 +57,35 @@ import Testing
     var handle: OpaquePointer?
     defer { swiftmmkv_store_close(handle) }
 
-    #expect(swiftmmkv_store_open(configuration, &handle) == code(SWIFTMMKV_INVALID_ARGUMENT))
+    #expect(swiftmmkv_store_open(configuration, &handle) == SWIFTMMKV_INVALID_ARGUMENT)
     #expect(handle == nil)
 
-    swiftmmkv_configuration_set_mode(configuration, code(SWIFTMMKV_MODE_MULTI_PROCESS))
-    #expect(swiftmmkv_store_open(configuration, &handle) == code(SWIFTMMKV_OK))
+    swiftmmkv_configuration_set_mode(configuration, SWIFTMMKV_MODE_MULTI_PROCESS)
+    #expect(swiftmmkv_store_open(configuration, &handle) == SWIFTMMKV_OK)
     #expect(handle != nil)
   }
 
   @Test func `An Unknown Cipher Or Recovery Fails The Open`() {
-    #expect(throws: CStatusError(status: code(SWIFTMMKV_INVALID_ARGUMENT))) {
+    #expect(throws: CStatusError(status: SWIFTMMKV_INVALID_ARGUMENT)) {
       try CStore { swiftmmkv_configuration_set_encryption($0, 99, "key", 3) }
     }
-    #expect(throws: CStatusError(status: code(SWIFTMMKV_INVALID_ARGUMENT))) {
+    #expect(throws: CStatusError(status: SWIFTMMKV_INVALID_ARGUMENT)) {
       try CStore { swiftmmkv_configuration_set_recovery($0, 99) }
     }
   }
 
   @Test func `An Encryption Key Of The Wrong Length Fails The Open`() {
-    #expect(throws: CStatusError(status: code(SWIFTMMKV_INVALID_ENCRYPTION_KEY))) {
+    #expect(throws: CStatusError(status: SWIFTMMKV_INVALID_ENCRYPTION_KEY)) {
       try CStore {
-        swiftmmkv_configuration_set_encryption($0, code(SWIFTMMKV_ENCRYPTION_AES128), nil, 0)
+        swiftmmkv_configuration_set_encryption($0, SWIFTMMKV_ENCRYPTION_AES128, nil, 0)
       }
     }
-    #expect(throws: CStatusError(status: code(SWIFTMMKV_INVALID_ENCRYPTION_KEY))) {
+    #expect(throws: CStatusError(status: SWIFTMMKV_INVALID_ENCRYPTION_KEY)) {
       try CStore {
         let key = [UInt8](repeating: 1, count: 17)
         swiftmmkv_configuration_set_encryption(
           $0,
-          code(SWIFTMMKV_ENCRYPTION_AES128),
+          SWIFTMMKV_ENCRYPTION_AES128,
           key,
           key.count
         )
@@ -94,7 +94,7 @@ import Testing
   }
 
   @Test func `An Empty Identifier Fails The Open`() {
-    #expect(throws: CStatusError(status: code(SWIFTMMKV_OPEN_FAILED))) {
+    #expect(throws: CStatusError(status: SWIFTMMKV_OPEN_FAILED)) {
       try CStore(id: "")
     }
   }
@@ -119,7 +119,7 @@ import Testing
       let key = Array("secret".utf8)
       swiftmmkv_configuration_set_encryption(
         $0,
-        code(SWIFTMMKV_ENCRYPTION_AES256),
+        SWIFTMMKV_ENCRYPTION_AES256,
         key,
         key.count
       )
@@ -153,8 +153,9 @@ import Testing
     let store = try CStore {
       swiftmmkv_configuration_set_item_size_limit($0, 64)
       swiftmmkv_configuration_set_compare_before_set($0, true)
-      swiftmmkv_configuration_set_recovery($0, code(SWIFTMMKV_RECOVERY_RECOVER))
+      swiftmmkv_configuration_set_recovery($0, SWIFTMMKV_RECOVERY_RECOVER)
     }
+    defer { store.close() }
 
     #expect(swiftmmkv_store_set_string(store.handle, "small", "value", 0) == true)
     #expect(
@@ -169,6 +170,7 @@ import Testing
     let store = try CStore {
       swiftmmkv_configuration_set_expected_capacity($0, 1 << 20)
     }
+    defer { store.close() }
 
     #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == true)
     #expect(swiftmmkv_store_byte_size(store.handle) >= 1 << 20)
@@ -347,13 +349,29 @@ import Testing
     #expect(answer == 42)
   }
 
-  @Test func `A Value With An Expiry Is Stored`() throws {
+  @Test func `Values Of Every Type Disappear After Their Expiry`() async throws {
     let store = try CStore()
     defer { store.close() }
+    let bytes: [UInt8] = [1, 2, 3]
 
-    #expect(swiftmmkv_store_set_string(store.handle, "token", "abc", 3600) == true)
+    #expect(swiftmmkv_store_set_string(store.handle, "kept", "kept", 0) == true)
+    #expect(swiftmmkv_store_set_bool(store.handle, "bool", true, 1) == true)
+    #expect(swiftmmkv_store_set_int32(store.handle, "int32", 1, 1) == true)
+    #expect(swiftmmkv_store_set_uint32(store.handle, "uint32", 1, 1) == true)
+    #expect(swiftmmkv_store_set_int64(store.handle, "int64", 1, 1) == true)
+    #expect(swiftmmkv_store_set_uint64(store.handle, "uint64", 1, 1) == true)
+    #expect(swiftmmkv_store_set_float(store.handle, "float", 1, 1) == true)
+    #expect(swiftmmkv_store_set_double(store.handle, "double", 1, 1) == true)
+    #expect(swiftmmkv_store_set_string(store.handle, "string", "abc", 1) == true)
+    #expect(swiftmmkv_store_set_bytes(store.handle, "bytes", bytes, bytes.count, 1) == true)
+    #expect(withCStrings(["a"]) { swiftmmkv_store_set_strings(store.handle, "strings", $0, $1, 1) })
+    #expect(swiftmmkv_store_count(store.handle) == 11)
 
-    #expect(store.string(forKey: "token") == "abc")
+    try await Task.sleep(for: .seconds(2.1))
+
+    #expect(takeStrings(swiftmmkv_store_keys(store.handle)) == ["kept"])
+    #expect(store.string(forKey: "string") == nil)
+    #expect(store.string(forKey: "kept") == "kept")
   }
 
   @Test func `Freeing Nothing Does Nothing`() {
@@ -570,12 +588,12 @@ import Testing
     #expect(swiftmmkv_store_set_string(store.handle, "username", "changed", 0) == false)
     #expect(swiftmmkv_store_count(store.handle) == 0)
     #expect(
-      swiftmmkv_store_rekey(store.handle, code(SWIFTMMKV_ENCRYPTION_AES128), key, key.count)
-        == code(SWIFTMMKV_STORE_IS_SUSPENDED)
+      swiftmmkv_store_rekey(store.handle, SWIFTMMKV_ENCRYPTION_AES128, key, key.count)
+        == SWIFTMMKV_STORE_IS_SUSPENDED
     )
     #expect(
       swiftmmkv_store_back_up(store.handle, temporaryRootDirectory())
-        == code(SWIFTMMKV_STORE_IS_SUSPENDED)
+        == SWIFTMMKV_STORE_IS_SUSPENDED
     )
 
     swiftmmkv_store_resume(store.handle)
@@ -624,15 +642,15 @@ import Testing
     #expect(swiftmmkv_store_set_string(store.handle, "key", marker, 0) == true)
 
     #expect(
-      swiftmmkv_store_rekey(store.handle, code(SWIFTMMKV_ENCRYPTION_AES256), key, key.count)
-        == code(SWIFTMMKV_OK)
+      swiftmmkv_store_rekey(store.handle, SWIFTMMKV_ENCRYPTION_AES256, key, key.count)
+        == SWIFTMMKV_OK
     )
     #expect(store.string(forKey: "key") == marker)
     #expect(try Data(contentsOf: path).range(of: Data(marker.utf8)) == nil)
 
     #expect(
-      swiftmmkv_store_rekey(store.handle, code(SWIFTMMKV_ENCRYPTION_NONE), nil, 0)
-        == code(SWIFTMMKV_OK)
+      swiftmmkv_store_rekey(store.handle, SWIFTMMKV_ENCRYPTION_NONE, nil, 0)
+        == SWIFTMMKV_OK
     )
     #expect(store.string(forKey: "key") == marker)
     #expect(try Data(contentsOf: path).range(of: Data(marker.utf8)) != nil)
@@ -642,10 +660,10 @@ import Testing
     let store = try CStore()
     defer { store.close() }
 
-    #expect(swiftmmkv_store_rekey(store.handle, 99, "key", 3) == code(SWIFTMMKV_INVALID_ARGUMENT))
+    #expect(swiftmmkv_store_rekey(store.handle, 99, "key", 3) == SWIFTMMKV_INVALID_ARGUMENT)
     #expect(
-      swiftmmkv_store_rekey(store.handle, code(SWIFTMMKV_ENCRYPTION_AES128), nil, 0)
-        == code(SWIFTMMKV_INVALID_ENCRYPTION_KEY)
+      swiftmmkv_store_rekey(store.handle, SWIFTMMKV_ENCRYPTION_AES128, nil, 0)
+        == SWIFTMMKV_INVALID_ENCRYPTION_KEY
     )
   }
 
@@ -658,17 +676,17 @@ import Testing
     defer { store.close() }
     #expect(swiftmmkv_store_set_string(store.handle, "username", "blob", 0) == true)
 
-    #expect(swiftmmkv_store_back_up(store.handle, backup) == code(SWIFTMMKV_OK))
+    #expect(swiftmmkv_store_back_up(store.handle, backup) == SWIFTMMKV_OK)
     #expect(swiftmmkv_directory_contains_store(backup, "settings") == true)
     #expect(swiftmmkv_directory_is_store_valid(backup, "settings") == true)
 
     #expect(swiftmmkv_store_set_string(store.handle, "username", "changed", 0) == true)
     var didRestore = false
-    #expect(swiftmmkv_store_restore(store.handle, backup, &didRestore) == code(SWIFTMMKV_OK))
+    #expect(swiftmmkv_store_restore(store.handle, backup, &didRestore) == SWIFTMMKV_OK)
     #expect(didRestore)
     #expect(store.string(forKey: "username") == "blob")
 
-    #expect(swiftmmkv_store_restore(store.handle, backup, nil) == code(SWIFTMMKV_OK))
+    #expect(swiftmmkv_store_restore(store.handle, backup, nil) == SWIFTMMKV_OK)
   }
 
   @Test func `Restoring From A Directory Without A Copy Restores Nothing`() throws {
@@ -679,7 +697,7 @@ import Testing
     var didRestore = true
     #expect(
       swiftmmkv_store_restore(store.handle, temporaryRootDirectory(), &didRestore)
-        == code(SWIFTMMKV_OK)
+        == SWIFTMMKV_OK
     )
 
     #expect(!didRestore)
@@ -695,11 +713,11 @@ import Testing
     var didRestore = true
     #expect(
       swiftmmkv_store_back_up(store.handle, directory)
-        == code(SWIFTMMKV_BACKUP_IS_STORE_DIRECTORY)
+        == SWIFTMMKV_BACKUP_IS_STORE_DIRECTORY
     )
     #expect(
       swiftmmkv_store_restore(store.handle, directory, &didRestore)
-        == code(SWIFTMMKV_BACKUP_IS_STORE_DIRECTORY)
+        == SWIFTMMKV_BACKUP_IS_STORE_DIRECTORY
     )
     #expect(didRestore)
   }
@@ -717,16 +735,16 @@ import Testing
 
     var didRemove = false
     #expect(
-      swiftmmkv_directory_remove_store(directory, "first", &didRemove) == code(SWIFTMMKV_OK)
+      swiftmmkv_directory_remove_store(directory, "first", &didRemove) == SWIFTMMKV_OK
     )
     #expect(didRemove)
     #expect(swiftmmkv_directory_contains_store(directory, "first") == false)
 
     #expect(
-      swiftmmkv_directory_remove_store(directory, "first", &didRemove) == code(SWIFTMMKV_OK)
+      swiftmmkv_directory_remove_store(directory, "first", &didRemove) == SWIFTMMKV_OK
     )
     #expect(!didRemove)
-    #expect(swiftmmkv_directory_remove_store(directory, "first", nil) == code(SWIFTMMKV_OK))
+    #expect(swiftmmkv_directory_remove_store(directory, "first", nil) == SWIFTMMKV_OK)
   }
 
   @Test func `An Open Store Cannot Be Removed`() throws {
@@ -740,11 +758,11 @@ import Testing
     var count = 7
     #expect(
       swiftmmkv_directory_remove_store(directory, "open", &didRemove)
-        == code(SWIFTMMKV_STORE_IS_OPEN)
+        == SWIFTMMKV_STORE_IS_OPEN
     )
     #expect(
       swiftmmkv_directory_remove_all_stores(directory, &count)
-        == code(SWIFTMMKV_STORES_ARE_OPEN)
+        == SWIFTMMKV_STORES_ARE_OPEN
     )
 
     #expect(!didRemove)
@@ -761,29 +779,29 @@ import Testing
 
     var count = 0
     #expect(
-      swiftmmkv_directory_back_up_all_stores(directory, backup, &count) == code(SWIFTMMKV_OK)
+      swiftmmkv_directory_back_up_all_stores(directory, backup, &count) == SWIFTMMKV_OK
     )
     #expect(count == 2)
     #expect(swiftmmkv_directory_contains_store(backup, "first") == true)
     #expect(swiftmmkv_directory_contains_store(backup, "second") == true)
 
-    #expect(swiftmmkv_directory_remove_all_stores(directory, &count) == code(SWIFTMMKV_OK))
+    #expect(swiftmmkv_directory_remove_all_stores(directory, &count) == SWIFTMMKV_OK)
     #expect(count == 2)
     #expect(swiftmmkv_directory_contains_store(directory, "first") == false)
 
     #expect(
-      swiftmmkv_directory_restore_all_stores(directory, backup, &count) == code(SWIFTMMKV_OK)
+      swiftmmkv_directory_restore_all_stores(directory, backup, &count) == SWIFTMMKV_OK
     )
     #expect(count == 2)
     #expect(swiftmmkv_directory_is_store_valid(directory, "first") == true)
     #expect(swiftmmkv_directory_is_store_valid(directory, "second") == true)
 
-    #expect(swiftmmkv_directory_remove_all_stores(directory, nil) == code(SWIFTMMKV_OK))
+    #expect(swiftmmkv_directory_remove_all_stores(directory, nil) == SWIFTMMKV_OK)
     #expect(
-      swiftmmkv_directory_back_up_all_stores(directory, backup, nil) == code(SWIFTMMKV_OK)
+      swiftmmkv_directory_back_up_all_stores(directory, backup, nil) == SWIFTMMKV_OK
     )
     #expect(
-      swiftmmkv_directory_restore_all_stores(directory, backup, nil) == code(SWIFTMMKV_OK)
+      swiftmmkv_directory_restore_all_stores(directory, backup, nil) == SWIFTMMKV_OK
     )
   }
 
@@ -796,35 +814,35 @@ import Testing
     var didRestore = false
     #expect(
       swiftmmkv_directory_back_up_store(directory, "first", backup, &didBackUp)
-        == code(SWIFTMMKV_OK)
+        == SWIFTMMKV_OK
     )
     #expect(didBackUp)
     #expect(
       swiftmmkv_directory_back_up_store(directory, "missing", backup, &didBackUp)
-        == code(SWIFTMMKV_OK)
+        == SWIFTMMKV_OK
     )
     #expect(!didBackUp)
 
-    #expect(swiftmmkv_directory_remove_store(directory, "first", nil) == code(SWIFTMMKV_OK))
+    #expect(swiftmmkv_directory_remove_store(directory, "first", nil) == SWIFTMMKV_OK)
     #expect(
       swiftmmkv_directory_restore_store(directory, "first", backup, &didRestore)
-        == code(SWIFTMMKV_OK)
+        == SWIFTMMKV_OK
     )
     #expect(didRestore)
     #expect(swiftmmkv_directory_is_store_valid(directory, "first") == true)
     #expect(
       swiftmmkv_directory_restore_store(directory, "missing", backup, &didRestore)
-        == code(SWIFTMMKV_OK)
+        == SWIFTMMKV_OK
     )
     #expect(!didRestore)
 
     #expect(
       swiftmmkv_directory_back_up_store(directory, "first", directory, nil)
-        == code(SWIFTMMKV_BACKUP_IS_STORE_DIRECTORY)
+        == SWIFTMMKV_BACKUP_IS_STORE_DIRECTORY
     )
     #expect(
       swiftmmkv_directory_restore_store(directory, "first", directory, nil)
-        == code(SWIFTMMKV_BACKUP_IS_STORE_DIRECTORY)
+        == SWIFTMMKV_BACKUP_IS_STORE_DIRECTORY
     )
   }
 }
