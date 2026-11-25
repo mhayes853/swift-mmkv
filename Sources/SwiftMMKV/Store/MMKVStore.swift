@@ -197,6 +197,35 @@ extension MMKVStore {
     }
   }
 
+  /// Copies the raw bytes stored under `key` into `buffer`, if they fit, without any other
+  /// copy or allocation being made on the way.
+  ///
+  /// ```swift
+  /// let count = store.copyBytes(forKey: "avatar", into: buffer)
+  /// if let count, count > buffer.count {
+  ///   // Nothing was copied. Read again with a buffer of `count` bytes.
+  /// }
+  /// ```
+  ///
+  /// The bytes of a string are its UTF-8, because MMKV stores the two the same way. MMKV does
+  /// not record a value's type, so a key that holds anything else gives bytes that mean nothing.
+  ///
+  /// - Returns: The number of bytes the value has, or `nil` if the key has no value. The bytes
+  ///   were copied to the start of `buffer` if there are no more of them than `buffer` has room
+  ///   for, and otherwise `buffer` is left alone.
+  public func copyBytes(forKey key: String, into buffer: UnsafeMutableRawBufferPointer) -> Int? {
+    defer { self.core.operationDidFinish() }
+    return self.core.copyBytes(forKey: key, into: buffer)
+  }
+
+  /// The number of bytes stored under `key`, without reading them.
+  ///
+  /// - Returns: The count, which for a string is that of its UTF-8, or `nil` if the key has no
+  ///   value.
+  public func byteCount(forKey key: String) -> Int? {
+    self.copyBytes(forKey: key, into: UnsafeMutableRawBufferPointer(start: nil, count: 0))
+  }
+
   private func write(forKey key: String, _ body: () -> Bool) -> Bool {
     let didWrite = body()
     self.core.operationDidFinish()

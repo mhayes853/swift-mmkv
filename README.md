@@ -35,7 +35,7 @@ targets: [
 ]
 ```
 
-The package needs Swift 6.2 or later. Consumers do not need C++ interoperability: the core is
+The package needs Swift 6.3 or later. Consumers do not need C++ interoperability: the core is
 reached through a C interface.
 
 ## Values
@@ -1036,6 +1036,68 @@ it, the property is stored as any `Codable` value is, so an integer follows the 
 and is a `Double` by default. With it, the property is an `MMKVValue` and is stored as itself, so
 a `Tagged<User, Int>` becomes a 64-bit integer. A `Tagged<User, Int.MMKVNumber>` is a `Double`
 either way. The trait does not need the `Foundation` trait.
+
+## The C interface
+
+Other languages can use the package through a C interface. The `SwiftMMKVC` product implements
+the functions that [`swiftmmkv.h`](Sources/CSwiftMMKV/include/swiftmmkv.h) declares, and the
+header documents each of them.
+
+```c
+#include "swiftmmkv.h"
+
+swiftmmkv_configuration *configuration =
+  swiftmmkv_configuration_create("/path/to/app/files/mmkv", SWIFTMMKV_MODE_SINGLE_PROCESS);
+swiftmmkv_store *store = NULL;
+swiftmmkv_status status = swiftmmkv_store_open(configuration, &store);
+swiftmmkv_configuration_destroy(configuration);
+if (status != SWIFTMMKV_OK) {
+  fprintf(stderr, "%s\n", swiftmmkv_status_message(status));
+  return;
+}
+
+swiftmmkv_store_set_string(store, "username", "blob", SWIFTMMKV_EXPIRY_DEFAULT);
+swiftmmkv_store_set_string(store, "otp", "123456", swiftmmkv_expiry_after(30));
+
+char username[64];
+size_t length = 0;
+if (swiftmmkv_store_get_string(store, "username", username, sizeof username, &length)
+    && length < sizeof username) {
+  printf("%s\n", username);
+}
+swiftmmkv_store_destroy(store);
+```
+
+A string, a run of bytes, or a list of strings is copied into a buffer the caller owns, so the
+interface allocates nothing that a binding has to free. Each such function reports the size of
+the value, and copies nothing when the buffer is too small, which is the cue to read again with
+a larger one. Bytes and strings go from the store's file to the buffer in a single copy.
+
+```c
+size_t count = 0;
+if (swiftmmkv_store_get_bytes(store, "avatar", buffer, capacity, &count) && count > capacity) {
+  buffer = realloc(buffer, count);
+  capacity = count;
+  swiftmmkv_store_get_bytes(store, "avatar", buffer, capacity, &count);
+}
+```
+
+The interface covers what a binding builds on: configurations, the stored value types, keys and
+removal, exclusive access, change listeners, suspension, closing, maintenance, backups, store
+directories, logging, and integrity failures. Typed keys, `Codable` values, async sequences, and the traits
+are left to each language to build in its own idiom.
+
+- Strings are NUL-terminated UTF-8, and bytes are a pointer and a count. A list of strings is
+  its strings end to end, each with its terminator, and a size in bytes.
+- A function that can fail returns a `swiftmmkv_status`, which `swiftmmkv_status_message`
+  describes.
+- A handle is released with the function that matches the one that made it.
+- A callback takes a context pointer, and an optional function that releases the context once
+  the callback can no longer be called.
+
+The interface is written with `@c` and `@implementation`, so the compiler checks every function
+against the header. `Scripts/check-c-interface.sh` checks the other direction, that everything
+the header declares is implemented.
 
 ## Platforms
 

@@ -1,3 +1,4 @@
+import CSwiftMMKV
 import Foundation
 import SwiftMMKV
 import Testing
@@ -62,6 +63,42 @@ import Testing
     _ = try makeStore(id: id, rootDirectory: rootDirectory).count
 
     #expect(!recorder.all.contains { $0.id == id })
+  }
+}
+
+// MARK: - C Interface
+
+extension MMKVStoreIntegrityFailureTests {
+  @Test func `The C Interface Reports Failures Until Its Subscription Is Cancelled`() throws {
+    let recorder = CCallbackRecorder()
+    let subscription = swiftmmkv_subscribe_to_integrity_failures(
+      recorder.context,
+      CCallbackRecorder.onIntegrityFailure,
+      CCallbackRecorder.release
+    )
+    let (checksumID, checksumDirectory) = try makeUnopenedStore()
+    try overwriteChecksum(ofStoreAt: "\(checksumDirectory)/\(checksumID)")
+    let (lengthID, lengthDirectory) = try makeUnopenedStore()
+    try overwriteRecordedSize(ofStoreAt: "\(lengthDirectory)/\(lengthID)")
+    let (laterID, laterDirectory) = try makeUnopenedStore()
+    try overwriteChecksum(ofStoreAt: "\(laterDirectory)/\(laterID)")
+
+    _ = try makeStore(id: checksumID, rootDirectory: checksumDirectory).count
+    _ = try makeStore(id: lengthID, rootDirectory: lengthDirectory).count
+    #expect(recorder.releases == 0)
+    swiftmmkv_subscription_cancel(subscription)
+    _ = try makeStore(id: laterID, rootDirectory: laterDirectory).count
+
+    #expect(
+      recorder.events.filter { $0.hasSuffix(checksumID.rawValue) }
+        == ["\(SWIFTMMKV_INTEGRITY_FAILURE_CHECKSUM) \(checksumID)"]
+    )
+    #expect(
+      recorder.events.filter { $0.hasSuffix(lengthID.rawValue) }
+        == ["\(SWIFTMMKV_INTEGRITY_FAILURE_FILE_LENGTH) \(lengthID)"]
+    )
+    #expect(!recorder.events.contains { $0.hasSuffix(laterID.rawValue) })
+    #expect(recorder.isReleasedOnce)
   }
 }
 
