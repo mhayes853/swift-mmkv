@@ -34,6 +34,9 @@ enum EngineFeature: String, CaseIterable, CustomStringConvertible {
   case integrityFailures
   /// Refusing to open, or to write over, a store whose encryption key is wrong.
   case encryptionKeyCheck
+  /// The C interface in `swiftmmkv.h`, which opens its stores with the default engine. A test
+  /// that also opens them with ``makeStore`` would have two cores on the same files.
+  case cInterface
 
   var description: String { self.rawValue }
 }

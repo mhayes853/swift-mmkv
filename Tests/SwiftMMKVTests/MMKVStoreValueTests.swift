@@ -106,6 +106,47 @@ import Testing
     #expect(store.value(forKey: "raw", as: [UInt8].self) == bytes)
   }
 
+  @Test func `Copies Raw Bytes Into A Buffer They Fit`() throws {
+    let store = try makeStore()
+    store.set([UInt8]([1, 2, 3]), forKey: "raw")
+    store.set("héllo", forKey: "text")
+    store.set([UInt8](), forKey: "empty")
+
+    var exact = [UInt8](repeating: 7, count: 3)
+    var roomy = [UInt8](repeating: 7, count: 8)
+    #expect(exact.withUnsafeMutableBytes { store.copyBytes(forKey: "raw", into: $0) } == 3)
+    #expect(exact == [1, 2, 3])
+    #expect(roomy.withUnsafeMutableBytes { store.copyBytes(forKey: "text", into: $0) } == 6)
+    #expect(roomy == Array("héllo".utf8) + [7, 7])
+    #expect(roomy.withUnsafeMutableBytes { store.copyBytes(forKey: "empty", into: $0) } == 0)
+    #expect(roomy.withUnsafeMutableBytes { store.copyBytes(forKey: "missing", into: $0) } == nil)
+    #expect(roomy == Array("héllo".utf8) + [7, 7])
+  }
+
+  @Test func `Raw Bytes That Do Not Fit Are Counted And Not Copied`() throws {
+    let store = try makeStore()
+    store.set([UInt8]([1, 2, 3]), forKey: "raw")
+
+    var small = [UInt8](repeating: 7, count: 2)
+    #expect(small.withUnsafeMutableBytes { store.copyBytes(forKey: "raw", into: $0) } == 3)
+    #expect(small == [7, 7])
+  }
+
+  @Test func `Counts The Bytes Of A Value Without Reading Them`() throws {
+    let store = try makeStore(mode: .multiProcess)
+    store.set([UInt8]([1, 2, 3]), forKey: "raw")
+    store.set("héllo", forKey: "text")
+    store.set([UInt8](), forKey: "empty")
+
+    #expect(store.byteCount(forKey: "raw") == 3)
+    #expect(store.byteCount(forKey: "text") == 6)
+    #expect(store.byteCount(forKey: "empty") == 0)
+    #expect(store.byteCount(forKey: "missing") == nil)
+
+    store.suspend()
+    #expect(store.byteCount(forKey: "raw") == nil)
+  }
+
   @Test func `With Bytes Propagates The Body's Error`() throws {
     struct Failure: Error, Equatable {}
     let store = try makeStore()

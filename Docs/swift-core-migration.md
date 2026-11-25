@@ -99,6 +99,8 @@ plus the operations that do not open a store:
   restoring stores. The C++ core copies the files for a backup or a restore and does not know
   which stores the Swift core has open, so `StoreInstance.withFilesHandedOver` keeps those
   instances off their files meanwhile and has them load again after a restore.
+- **The C interface** (`swiftmmkv.h`): it opens its stores with the default engine, which is
+  the C++ core, so its tests are skipped when the suite runs against the Swift core.
 - **Opening**: the C interface's own rules (an empty identifier or directory fails, the directory is
   created unless the store is read-only), and the instance registry, so that every open of the
   same files in a process shares one instance.

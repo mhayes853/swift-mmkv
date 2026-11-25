@@ -16,12 +16,13 @@ extern "C" {
 #endif
 
 // React Native apps link their own copy of MMKV, and other libraries are free to pick the same
-// short names used here. Each function therefore links under a `swiftmmkv_` symbol, whatever it
-// is called in source.
+// short names used here. Each function therefore links under a `swiftmmkv_core_` symbol, whatever
+// it is called in source. The plain `swiftmmkv_` prefix belongs to the package's public C
+// interface.
 #define CSWIFTMMKV_STRINGIFY_(x) #x
 #define CSWIFTMMKV_STRINGIFY(x) CSWIFTMMKV_STRINGIFY_(x)
 #define CSWIFTMMKV_SYMBOL(name) \
-  __asm__(CSWIFTMMKV_STRINGIFY(__USER_LABEL_PREFIX__) "swiftmmkv_" #name)
+  __asm__(CSWIFTMMKV_STRINGIFY(__USER_LABEL_PREFIX__) "swiftmmkv_core_" #name)
 
 // Atomic integers. Swift only has them from the 2024 Apple releases on, and the Swift side
 // counts the operations under way on a store with one, on every read and write.
@@ -223,6 +224,14 @@ bool mmkv_get_bytes(
   mmkv_store *_Nonnull store, mmkv_bytes key, void *_Nullable context,
   mmkv_bytes_callback _Nonnull callback)
   CSWIFTMMKV_SYMBOL(get_bytes);
+/// Copies the bytes or string stored under `key` into `buffer`, if they fit in `capacity`
+/// bytes, and writes their count to `count` whether or not they do. Nothing is copied in part.
+///
+/// Returns false, leaving `count` alone, if the key has no such value.
+bool mmkv_copy_bytes(
+  mmkv_store *_Nonnull store, mmkv_bytes key, void *_Nullable buffer, size_t capacity,
+  size_t *_Nonnull count)
+  CSWIFTMMKV_SYMBOL(copy_bytes);
 /// Calls `callback` once per string, in order.
 bool mmkv_get_strings(
   mmkv_store *_Nonnull store, mmkv_bytes key, void *_Nullable context,

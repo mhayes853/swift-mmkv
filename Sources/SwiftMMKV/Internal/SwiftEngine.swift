@@ -104,6 +104,15 @@ extension SwiftEngine {
       }
       .get()
   }
+
+  func copyBytes(forKey key: String, into buffer: UnsafeMutableRawBufferPointer) -> Int? {
+    // The value is copied out of the store first. The C++ core copies it once.
+    guard let bytes = self.store.bytes(forKey: key) else { return nil }
+    if bytes.count <= buffer.count {
+      buffer.copyBytes(from: bytes)
+    }
+    return bytes.count
+  }
 }
 
 // MARK: - Writes

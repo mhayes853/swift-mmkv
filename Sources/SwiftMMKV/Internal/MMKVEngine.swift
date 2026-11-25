@@ -30,6 +30,13 @@ protocol MMKVEngine: Sendable {
   func string(forKey key: String) -> String?
   func strings(forKey key: String) -> [String]?
 
+  /// Copies the bytes or string stored under `key` to the start of `buffer`, if they fit.
+  /// Nothing is copied in part.
+  ///
+  /// - Returns: The number of bytes the value has, whether or not they fit, or `nil` if the key
+  ///   has no such value.
+  func copyBytes(forKey key: String, into buffer: UnsafeMutableRawBufferPointer) -> Int?
+
   /// Calls `body` with the bytes stored under `key`, which are only valid during the call.
   ///
   /// - Returns: The result of `body`, or `nil` if the key has no value.

@@ -115,6 +115,14 @@ extension CxxEngine {
       }
       .get()
   }
+
+  func copyBytes(forKey key: String, into buffer: UnsafeMutableRawBufferPointer) -> Int? {
+    var count = 0
+    let hasValue = key.withMMKVBytes {
+      mmkv_copy_bytes(self.handle, $0, buffer.baseAddress, buffer.count, &count)
+    }
+    return hasValue ? count : nil
+  }
 }
 
 // MARK: - Writes
