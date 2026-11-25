@@ -1065,7 +1065,7 @@ if (swiftmmkv_store_get_string(store, "username", username, sizeof username, &le
     && length < sizeof username) {
   printf("%s\n", username);
 }
-swiftmmkv_store_close(store);
+swiftmmkv_store_destroy(store);
 ```
 
 A string, a run of bytes, or a list of strings is copied into a buffer the caller owns, so the
@@ -1083,8 +1083,8 @@ if (swiftmmkv_store_get_bytes(store, "avatar", buffer, capacity, &count) && coun
 ```
 
 The interface covers what a binding builds on: configurations, the stored value types, keys and
-removal, exclusive access, change listeners, suspension, maintenance, backups, store directories,
-logging, and integrity failures. Typed keys, `Codable` values, async sequences, and the traits
+removal, exclusive access, change listeners, suspension, closing, maintenance, backups, store
+directories, logging, and integrity failures. Typed keys, `Codable` values, async sequences, and the traits
 are left to each language to build in its own idiom.
 
 - Strings are NUL-terminated UTF-8, and bytes are a pointer and a count. A list of strings is

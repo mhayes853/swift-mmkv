@@ -219,6 +219,7 @@ private func status<T>(
     case .backupIsStoreDirectory: SWIFTMMKV_BACKUP_IS_STORE_DIRECTORY
     case .storeIsSuspended: SWIFTMMKV_STORE_IS_SUSPENDED
     case .disableExpiryFailed: SWIFTMMKV_DISABLE_EXPIRY_FAILED
+    case .storeIsClosed: SWIFTMMKV_STORE_IS_CLOSED
     default: SWIFTMMKV_UNKNOWN_ERROR
     }
   }
@@ -254,6 +255,7 @@ public func swiftmmkv_status_message(_ status: swiftmmkv_status) -> UnsafePointe
       "The store's file could not be rewritten without its expiries."
     case SWIFTMMKV_UNKNOWN_ERROR:
       "The operation failed in a way this version of the interface has no status for."
+    case SWIFTMMKV_STORE_IS_CLOSED: "The store is closed."
     default: "An unknown status."
     }
   // A static string's bytes are NUL-terminated and live for the rest of the process.
@@ -416,7 +418,7 @@ public func swiftmmkv_store_open(
 }
 
 @c @implementation
-public func swiftmmkv_store_close(_ store: OpaquePointer?) {
+public func swiftmmkv_store_destroy(_ store: OpaquePointer?) {
   store?.release(as: MMKVStore.self)
 }
 
@@ -697,6 +699,28 @@ public func swiftmmkv_store_keys(
   pack(store.store.keys, into: buffer, capacity, outSize, outCount)
 }
 
+/// The separator of a C call, where `nil` is the one the Swift interface defaults to.
+private func makeSeparator(_ separator: UnsafePointer<CChar>?) -> String {
+  separator.map { String(cString: $0) } ?? "."
+}
+
+@c @implementation
+public func swiftmmkv_store_keys_under(
+  _ store: OpaquePointer,
+  _ prefix: UnsafePointer<CChar>,
+  _ separator: UnsafePointer<CChar>?,
+  _ buffer: UnsafeMutablePointer<CChar>?,
+  _ capacity: Int,
+  _ outSize: UnsafeMutablePointer<Int>,
+  _ outCount: UnsafeMutablePointer<Int>
+) {
+  let keys = store.store.keys(
+    underKey: String(cString: prefix),
+    separator: makeSeparator(separator)
+  )
+  pack(keys, into: buffer, capacity, outSize, outCount)
+}
+
 @c @implementation
 public func swiftmmkv_store_remove(_ store: OpaquePointer, _ key: UnsafePointer<CChar>) -> Bool {
   store.store.removeValue(forKey: String(cString: key))
@@ -709,6 +733,18 @@ public func swiftmmkv_store_remove_many(
   _ size: Int
 ) {
   store.store.removeValues(forKeys: makeStrings(keys, size))
+}
+
+@c @implementation
+public func swiftmmkv_store_remove_under(
+  _ store: OpaquePointer,
+  _ prefix: UnsafePointer<CChar>,
+  _ separator: UnsafePointer<CChar>?
+) {
+  store.store.removeValues(
+    underKey: String(cString: prefix),
+    separator: makeSeparator(separator)
+  )
 }
 
 @c @implementation
@@ -769,11 +805,11 @@ public func swiftmmkv_subscription_cancel(_ subscription: OpaquePointer?) {
 
 // MARK: - Changes
 
-/// Subscribes a C callback to the changes of a store, or to those that `key` is part of. The
-/// callback is lent each key for the length of its call.
+/// Subscribes a C callback to the changes of a store, or to those of the keys that `isHeard`
+/// accepts. The callback is lent each key for the length of its call.
 private func subscribe(
   _ store: OpaquePointer,
-  key: String? = nil,
+  where isHeard: @escaping @Sendable (String) -> Bool = { _ in true },
   _ context: UnsafeMutableRawPointer?,
   _ onChange: swiftmmkv_change_callback,
   _ release: swiftmmkv_context_release?
@@ -782,7 +818,7 @@ private func subscribe(
   let subscription = store.store.subscribe { change in
     switch change {
     case .key(let changed):
-      guard key == nil || key == changed else { return }
+      guard isHeard(changed) else { return }
       changed.withCString { onChange(context.pointer, SWIFTMMKV_CHANGE_KEY, $0) }
     case .external:
       onChange(context.pointer, SWIFTMMKV_CHANGE_EXTERNAL, nil)
@@ -809,7 +845,29 @@ public func swiftmmkv_store_subscribe_key(
   _ onChange: swiftmmkv_change_callback,
   _ release: swiftmmkv_context_release?
 ) -> OpaquePointer {
-  subscribe(store, key: String(cString: key), context, onChange, release)
+  let key = String(cString: key)
+  return subscribe(store, where: { $0 == key }, context, onChange, release)
+}
+
+@c @implementation
+public func swiftmmkv_store_subscribe_under(
+  _ store: OpaquePointer,
+  _ prefix: UnsafePointer<CChar>,
+  _ separator: UnsafePointer<CChar>?,
+  _ context: UnsafeMutableRawPointer?,
+  _ onChange: swiftmmkv_change_callback,
+  _ release: swiftmmkv_context_release?
+) -> OpaquePointer {
+  // What `MMKVStore.keys(underKey:separator:)` goes by, which compares the bytes of the keys.
+  let prefix = String(cString: prefix)
+  let start = Array((prefix + makeSeparator(separator)).utf8)
+  return subscribe(
+    store,
+    where: { prefix.isEmpty || $0 == prefix || $0.utf8.starts(with: start) },
+    context,
+    onChange,
+    release
+  )
 }
 
 @c @implementation
@@ -832,6 +890,18 @@ public func swiftmmkv_store_suspend(_ store: OpaquePointer) {
 @c @implementation
 public func swiftmmkv_store_resume(_ store: OpaquePointer) {
   store.store.resume()
+}
+
+// MARK: - Closing
+
+@c @implementation
+public func swiftmmkv_store_is_closed(_ store: OpaquePointer) -> Bool {
+  store.store.isClosed
+}
+
+@c @implementation
+public func swiftmmkv_store_close(_ store: OpaquePointer) {
+  store.store.close()
 }
 
 // MARK: - Maintenance

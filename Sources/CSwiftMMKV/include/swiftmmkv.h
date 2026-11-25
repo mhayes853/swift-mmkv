@@ -112,6 +112,8 @@ typedef int32_t swiftmmkv_status;
 #define SWIFTMMKV_DISABLE_EXPIRY_FAILED 17
 /// The operation failed in a way this version of the interface has no status for.
 #define SWIFTMMKV_UNKNOWN_ERROR 18
+/// The store is closed, so it turns every operation away. Open the store again to use it.
+#define SWIFTMMKV_STORE_IS_CLOSED 19
 
 /// A description of `status` in English. The string is static and must not be freed.
 const char *_Nonnull swiftmmkv_status_message(swiftmmkv_status status);
@@ -267,9 +269,9 @@ swiftmmkv_status swiftmmkv_store_open(
   swiftmmkv_store *_Nullable *_Nonnull out_store);
 /// Releases a handle, which must not be used afterwards. NULL is ignored.
 ///
-/// MMKV keeps the store's files open for the rest of the process, so this does not make the
-/// store removable.
-void swiftmmkv_store_close(swiftmmkv_store *_Nullable store);
+/// This does not close the store: its files stay open, and its other handles work as before.
+/// To make the store removable, call `swiftmmkv_store_close` first.
+void swiftmmkv_store_destroy(swiftmmkv_store *_Nullable store);
 
 // MARK: - Writes
 //
@@ -371,6 +373,17 @@ size_t swiftmmkv_store_count(swiftmmkv_store *_Nonnull store);
 void swiftmmkv_store_keys(
   swiftmmkv_store *_Nonnull store, char *_Nullable buffer, size_t capacity,
   size_t *_Nonnull out_size, size_t *_Nonnull out_count);
+/// Copies `prefix`, if it has a value, and every key under it into `buffer`, as
+/// `swiftmmkv_store_keys` does. These are the keys `swiftmmkv_store_remove_under` removes.
+///
+/// A key is under `prefix` when it starts with `prefix` and then `separator`, so
+/// "settings.theme" is under "settings" with the separator ".", and "settingsTheme" is not. An
+/// empty `prefix` has every key under it. A NULL `separator` is ".". The keys are whole keys,
+/// with the prefix. This reads every key in the store.
+void swiftmmkv_store_keys_under(
+  swiftmmkv_store *_Nonnull store, const char *_Nonnull prefix,
+  const char *_Nullable separator, char *_Nullable buffer, size_t capacity,
+  size_t *_Nonnull out_size, size_t *_Nonnull out_count);
 
 // MARK: - Removal
 
@@ -381,6 +394,11 @@ bool swiftmmkv_store_remove(swiftmmkv_store *_Nonnull store, const char *_Nonnul
 /// NULL when `size` is zero. What `swiftmmkv_store_keys` wrote can be passed straight back.
 void swiftmmkv_store_remove_many(
   swiftmmkv_store *_Nonnull store, const char *_Nullable keys, size_t size);
+/// Removes `prefix` and every key under it, all at once, as `swiftmmkv_store_keys_under`
+/// describes. A NULL `separator` is ".".
+void swiftmmkv_store_remove_under(
+  swiftmmkv_store *_Nonnull store, const char *_Nonnull prefix,
+  const char *_Nullable separator);
 /// Removes every key and value. With `keeping_capacity` the store's file keeps its current
 /// size, which is faster and saves growing it again. Without, it shrinks back to its initial
 /// size.
@@ -449,6 +467,15 @@ swiftmmkv_subscription *_Nonnull swiftmmkv_store_subscribe(
 swiftmmkv_subscription *_Nonnull swiftmmkv_store_subscribe_key(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, void *_Nullable context,
   swiftmmkv_change_callback _Nonnull on_change, swiftmmkv_context_release _Nullable release);
+/// Calls `on_change` whenever `prefix` or a key under it may have changed, until the
+/// subscription is cancelled, which makes a value spread over several keys observable as one.
+/// That is whenever such a key is set or removed, and on every external change.
+/// `swiftmmkv_store_keys_under` says which keys are under `prefix`, and a NULL `separator` is
+/// ".".
+swiftmmkv_subscription *_Nonnull swiftmmkv_store_subscribe_under(
+  swiftmmkv_store *_Nonnull store, const char *_Nonnull prefix,
+  const char *_Nullable separator, void *_Nullable context,
+  swiftmmkv_change_callback _Nonnull on_change, swiftmmkv_context_release _Nullable release);
 
 /// Checks whether another process, or another copy of MMKV, changed the store, reloading it
 /// and notifying listeners if so. Reads and writes make the same check, so this is only needed
@@ -471,6 +498,28 @@ bool swiftmmkv_store_is_suspended(swiftmmkv_store *_Nonnull store);
 void swiftmmkv_store_suspend(swiftmmkv_store *_Nonnull store);
 /// Lets the store take its file lock again, and tells listeners of an external change.
 void swiftmmkv_store_resume(swiftmmkv_store *_Nonnull store);
+
+// MARK: - Closing
+//
+// An open store cannot be removed, and its directory cannot restore over it. Closing a store
+// releases its memory and its files for good, so that both can be done.
+//
+// A closed store stays closed: reads find nothing, writes and removals do nothing, and
+// functions that return a status return `SWIFTMMKV_STORE_IS_CLOSED`. Its handle is still
+// valid, and is still released with `swiftmmkv_store_destroy`. To use the store again, open it
+// again, which reads its files as they then are.
+
+bool swiftmmkv_store_is_closed(swiftmmkv_store *_Nonnull store);
+/// Turns new operations away, waits for those under way, and returns once the store's files
+/// are closed. Closing twice does nothing more.
+///
+/// Every handle that was opened over the same files is closed with this one, since they share
+/// the open files. Listeners are told once more, of an external change, because every value
+/// now reads as missing, and are told nothing after that, so each listener's context is
+/// released then. Their subscriptions are still released with `swiftmmkv_subscription_cancel`.
+///
+/// Do not call this from inside `swiftmmkv_store_with_exclusive_lock`.
+void swiftmmkv_store_close(swiftmmkv_store *_Nonnull store);
 
 // MARK: - Maintenance
 
@@ -520,8 +569,9 @@ bool swiftmmkv_directory_is_store_valid(
   const char *_Nonnull directory, const char *_Nonnull id);
 /// Deletes a store's files. `out_removed` receives whether there were any.
 ///
-/// Fails with `SWIFTMMKV_STORE_IS_OPEN` if the store has been opened in this process, even if
-/// its handles have since been closed.
+/// Fails with `SWIFTMMKV_STORE_IS_OPEN` if the store is open in this process, which it is
+/// from `swiftmmkv_store_open` until `swiftmmkv_store_close`, even if its handles have since
+/// been destroyed.
 swiftmmkv_status swiftmmkv_directory_remove_store(
   const char *_Nonnull directory, const char *_Nonnull id, bool *_Nullable out_removed);
 /// Deletes the files of every store in `directory`. `out_count` receives the number removed.

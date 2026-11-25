@@ -36,8 +36,20 @@ struct CStore {
     self.handle = handle
   }
 
-  func close() {
-    swiftmmkv_store_close(self.handle)
+  func destroy() {
+    swiftmmkv_store_destroy(self.handle)
+  }
+
+  /// The keys at or under `prefix`, read by asking for their size and then reading them.
+  func keys(under prefix: String, separator: String? = nil) -> [String] {
+    var size = 0
+    var count = 0
+    swiftmmkv_store_keys_under(self.handle, prefix, separator, nil, 0, &size, &count)
+    var buffer = [CChar](repeating: 0, count: size)
+    swiftmmkv_store_keys_under(self.handle, prefix, separator, &buffer, size, &size, &count)
+    let keys = unpacked(buffer)
+    precondition(keys.count == count)
+    return keys
   }
 
   /// The string stored under `key`, read the way a binding reads a value whose size it does

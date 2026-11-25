@@ -12,7 +12,7 @@ import Testing
   }
 
   @Test func `Every Status Has A Message Of Its Own`() {
-    let statuses = SWIFTMMKV_OK...SWIFTMMKV_UNKNOWN_ERROR
+    let statuses = SWIFTMMKV_OK...SWIFTMMKV_STORE_IS_CLOSED
     let messages = statuses.map { String(cString: swiftmmkv_status_message($0)) }
     let unknown = String(cString: swiftmmkv_status_message(9999))
 
@@ -29,7 +29,7 @@ import Testing
     var handle: OpaquePointer?
     let status = swiftmmkv_store_open(configuration, &handle)
     swiftmmkv_configuration_destroy(configuration)
-    defer { swiftmmkv_store_close(handle) }
+    defer { swiftmmkv_store_destroy(handle) }
 
     #expect(status == SWIFTMMKV_OK)
     let store = try #require(handle)
@@ -41,9 +41,9 @@ import Testing
   @Test func `A Store Opened Twice Shares Its Contents`() throws {
     let directory = temporaryRootDirectory()
     let first = try CStore(id: "shared", directory: directory)
-    defer { first.close() }
+    defer { first.destroy() }
     let second = try CStore(id: "shared", directory: directory)
-    defer { second.close() }
+    defer { second.destroy() }
 
     #expect(swiftmmkv_store_set_string(first.handle, "username", "blob", 0) == true)
 
@@ -55,7 +55,7 @@ import Testing
     let configuration = swiftmmkv_configuration_create(temporaryRootDirectory(), 99)
     defer { swiftmmkv_configuration_destroy(configuration) }
     var handle: OpaquePointer?
-    defer { swiftmmkv_store_close(handle) }
+    defer { swiftmmkv_store_destroy(handle) }
 
     #expect(swiftmmkv_store_open(configuration, &handle) == SWIFTMMKV_INVALID_ARGUMENT)
     #expect(handle == nil)
@@ -89,7 +89,7 @@ import Testing
       swiftmmkv_configuration_set_file_protection($0, 99)
       swiftmmkv_configuration_set_file_protection($0, protection)
     }
-    defer { store.close() }
+    defer { store.destroy() }
 
     #expect(swiftmmkv_store_set_string(store.handle, "name", "blob", 0) == true)
     #expect(store.string(forKey: "name") == "blob")
@@ -125,7 +125,7 @@ import Testing
     let store = try CStore(id: "moved", directory: temporaryRootDirectory()) {
       swiftmmkv_configuration_set_directory($0, directory)
     }
-    defer { store.close() }
+    defer { store.destroy() }
 
     #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == true)
     #expect(swiftmmkv_directory_contains_store(directory, "moved") == true)
@@ -135,7 +135,7 @@ import Testing
     let directory = temporaryRootDirectory()
     let marker = "plain-text-marker"
     let plain = try CStore(id: "plain", directory: directory)
-    defer { plain.close() }
+    defer { plain.destroy() }
     let encrypted = try CStore(id: "encrypted", directory: directory) {
       let key = Array("secret".utf8)
       swiftmmkv_configuration_set_encryption(
@@ -145,7 +145,7 @@ import Testing
         key.count
       )
     }
-    defer { encrypted.close() }
+    defer { encrypted.destroy() }
 
     #expect(swiftmmkv_store_set_string(plain.handle, "key", marker, 0) == true)
     #expect(swiftmmkv_store_set_string(encrypted.handle, "key", marker, 0) == true)
@@ -163,7 +163,7 @@ import Testing
     let store = try CStore(id: "frozen", directory: directory) {
       swiftmmkv_configuration_set_read_only($0, true)
     }
-    defer { store.close() }
+    defer { store.destroy() }
 
     #expect(store.string(forKey: "key") == "value")
     #expect(swiftmmkv_store_set_string(store.handle, "key", "changed", 0) == false)
@@ -176,7 +176,7 @@ import Testing
       swiftmmkv_configuration_set_compare_before_set($0, true)
       swiftmmkv_configuration_set_recovery($0, SWIFTMMKV_RECOVERY_RECOVER)
     }
-    defer { store.close() }
+    defer { store.destroy() }
 
     #expect(swiftmmkv_store_set_string(store.handle, "small", "value", 0) == true)
     #expect(
@@ -191,7 +191,7 @@ import Testing
     let store = try CStore {
       swiftmmkv_configuration_set_expected_capacity($0, 1 << 20)
     }
-    defer { store.close() }
+    defer { store.destroy() }
 
     #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == true)
     #expect(swiftmmkv_store_byte_size(store.handle) >= 1 << 20)
@@ -201,7 +201,7 @@ import Testing
 
   @Test func `Scalars Round Trip`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
 
     #expect(swiftmmkv_store_set_bool(store.handle, "bool", true, 0) == true)
     #expect(swiftmmkv_store_set_int32(store.handle, "int32", .min, 0) == true)
@@ -236,7 +236,7 @@ import Testing
 
   @Test func `A Missing Key Reads Nothing And Leaves The Output Alone`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
 
     var bool = true
     var int32: Int32 = 7
@@ -279,7 +279,7 @@ import Testing
 
   @Test func `A String Is Copied With Its Terminator Into A Buffer It Fits`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let text = "héllo wörld 👋"
     #expect(swiftmmkv_store_set_string(store.handle, "greeting", text, 0) == true)
 
@@ -302,7 +302,7 @@ import Testing
 
   @Test func `A String That Does Not Fit Is Sized And Not Copied`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     #expect(swiftmmkv_store_set_string(store.handle, "username", "blob", 0) == true)
 
     // Four bytes hold the string, but not its terminator.
@@ -327,7 +327,7 @@ import Testing
   @Test func `A String With An Embedded NUL Is Copied Whole`() throws {
     let directory = temporaryRootDirectory()
     let store = try CStore(directory: directory)
-    defer { store.close() }
+    defer { store.destroy() }
     try makeStore(rootDirectory: directory).set("a\0b", forKey: "text")
 
     var buffer = [CChar](repeating: 7, count: 4)
@@ -341,7 +341,7 @@ import Testing
 
   @Test func `An Empty String Is A Value Of No Length`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     #expect(swiftmmkv_store_set_string(store.handle, "empty", "", 0) == true)
 
     var buffer: [CChar] = [7]
@@ -354,7 +354,7 @@ import Testing
 
   @Test func `Bytes Are Copied Into A Buffer They Fit`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let payload: [UInt8] = [0, 1, 2, 255, 0]
     #expect(swiftmmkv_store_set_bytes(store.handle, "payload", payload, payload.count, 0) == true)
 
@@ -373,7 +373,7 @@ import Testing
 
   @Test func `Bytes That Do Not Fit Are Sized And Not Copied`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let payload: [UInt8] = [1, 2, 3, 4, 5]
     #expect(swiftmmkv_store_set_bytes(store.handle, "payload", payload, payload.count, 0) == true)
 
@@ -395,7 +395,7 @@ import Testing
 
   @Test func `Empty Bytes Are A Value Of No Size`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     #expect(swiftmmkv_store_set_bytes(store.handle, "empty", nil, 0, 0) == true)
 
     var buffer: [UInt8] = [7]
@@ -411,7 +411,7 @@ import Testing
 
   @Test func `Bytes Larger Than A Page Round Trip`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let payload = (0..<100_000).map { UInt8(truncatingIfNeeded: $0) }
 
     #expect(swiftmmkv_store_set_bytes(store.handle, "payload", payload, payload.count, 0) == true)
@@ -421,7 +421,7 @@ import Testing
 
   @Test func `A String Is Read As Bytes Without Its Terminator`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let utf8 = Array("ünï".utf8)
     #expect(swiftmmkv_store_set_string(store.handle, "text", "ünï", 0) == true)
     #expect(swiftmmkv_store_set_bytes(store.handle, "bytes", utf8, utf8.count, 0) == true)
@@ -438,7 +438,7 @@ import Testing
       let key = Array("secret".utf8)
       swiftmmkv_configuration_set_encryption($0, SWIFTMMKV_ENCRYPTION_AES256, key, key.count)
     }
-    defer { store.close() }
+    defer { store.destroy() }
     let small: [UInt8] = [1, 2, 3]
     let large = (0..<10_000).map { UInt8(truncatingIfNeeded: $0) }
 
@@ -451,7 +451,7 @@ import Testing
 
   @Test func `A Value With An Expiry Is Copied Without It`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let payload: [UInt8] = [1, 2, 3]
     let later = swiftmmkv_expiry_after(60)
 
@@ -466,7 +466,7 @@ import Testing
 
   @Test func `String Lists Round Trip Packed`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let tags = packed(["a", "", "ünï"])
     let blank = packed([""])
 
@@ -491,7 +491,7 @@ import Testing
 
   @Test func `A Packed List May Leave Out Its Last Terminator`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let tags = packed(["a", "bc"])
 
     #expect(swiftmmkv_store_set_strings(store.handle, "tags", tags, tags.count - 1, 0) == true)
@@ -505,7 +505,7 @@ import Testing
 
   @Test func `A String List That Does Not Fit Is Sized And Not Copied`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let tags = packed(["a", "bc"])
     #expect(swiftmmkv_store_set_strings(store.handle, "tags", tags, tags.count, 0) == true)
 
@@ -525,7 +525,7 @@ import Testing
   @Test func `A Packed List Is The One The Swift Interface Reads And Writes`() throws {
     let directory = temporaryRootDirectory()
     let store = try CStore(directory: directory)
-    defer { store.close() }
+    defer { store.destroy() }
     let swiftStore = try makeStore(rootDirectory: directory)
     let tags = packed(["a", "b"])
 
@@ -539,7 +539,7 @@ import Testing
   @Test func `Values Are The Ones The Swift Interface Reads And Writes`() throws {
     let directory = temporaryRootDirectory()
     let store = try CStore(directory: directory)
-    defer { store.close() }
+    defer { store.destroy() }
     let swiftStore = try makeStore(rootDirectory: directory)
 
     #expect(swiftmmkv_store_set_double(store.handle, "volume", 0.5, 0) == true)
@@ -555,7 +555,7 @@ import Testing
 
   @Test func `Values Of Every Type Disappear After Their Expiry`() async throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let bytes: [UInt8] = [1, 2, 3]
     let soon = swiftmmkv_expiry_after(1)
 
@@ -581,7 +581,7 @@ import Testing
 
   @Test func `Releasing Nothing Does Nothing`() {
     swiftmmkv_configuration_destroy(nil)
-    swiftmmkv_store_close(nil)
+    swiftmmkv_store_destroy(nil)
     swiftmmkv_subscription_cancel(nil)
   }
 
@@ -598,7 +598,7 @@ import Testing
 
   @Test func `A Store Keeps Its Values Until They Are Removed By Default`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
 
     #expect(
       swiftmmkv_store_set_bool(store.handle, "default", true, SWIFTMMKV_EXPIRY_DEFAULT) == true
@@ -610,7 +610,7 @@ import Testing
 
   @Test func `Values Expire After A Duration Or At A Moment`() async throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let now = Date().timeIntervalSince1970
 
     #expect(swiftmmkv_store_set_bool(store.handle, "kept", true, swiftmmkv_expiry_never()) == true)
@@ -633,7 +633,7 @@ import Testing
 
   @Test func `The Shortest Expiry Is One Second`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
 
     #expect(swiftmmkv_store_set_bool(store.handle, "none", true, swiftmmkv_expiry_after(0)) == true)
     #expect(
@@ -650,7 +650,7 @@ import Testing
 
   @Test func `An Expiry Later Than MMKV Can Record Is Never`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let far = [
       swiftmmkv_expiry_after(.infinity), swiftmmkv_expiry_at(.infinity),
       swiftmmkv_expiry_after(1e300), swiftmmkv_expiry_at(1e12)
@@ -665,7 +665,7 @@ import Testing
 
   @Test func `A Write With An Expiry No Function Made Stores Nothing`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let bytes: [UInt8] = [1]
 
     for expiry in [1, 42, .max, swiftmmkv_expiry_after(.nan), swiftmmkv_expiry_at(.nan)] {
@@ -682,7 +682,7 @@ import Testing
     let store = try CStore {
       swiftmmkv_configuration_set_default_expiry($0, swiftmmkv_expiry_after(1))
     }
-    defer { store.close() }
+    defer { store.destroy() }
 
     #expect(swiftmmkv_store_set_bool(store.handle, "default", true, 0) == true)
     #expect(swiftmmkv_store_set_bool(store.handle, "kept", true, swiftmmkv_expiry_never()) == true)
@@ -709,7 +709,7 @@ import Testing
       swiftmmkv_configuration_set_default_expiry($0, 42)
       swiftmmkv_configuration_set_default_expiry($0, swiftmmkv_expiry_never())
     }
-    defer { store.close() }
+    defer { store.destroy() }
 
     #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == true)
     #expect(swiftmmkv_store_is_expiry_enabled(store.handle) == false)
@@ -717,7 +717,7 @@ import Testing
 
   @Test func `Disabling Expiry Keeps Every Value That Has Not Expired`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     #expect(swiftmmkv_store_set_bool(store.handle, "kept", true, 0) == true)
     #expect(
       swiftmmkv_store_set_bool(store.handle, "later", true, swiftmmkv_expiry_after(60)) == true
@@ -735,7 +735,7 @@ import Testing
     // The copy in the backup has never been opened for writing in this process.
     let backup = temporaryRootDirectory()
     let writer = try CStore(id: "expiring")
-    defer { writer.close() }
+    defer { writer.destroy() }
     #expect(
       swiftmmkv_store_set_bool(writer.handle, "flag", true, swiftmmkv_expiry_after(60)) == true
     )
@@ -743,7 +743,7 @@ import Testing
     let store = try CStore(id: "expiring", directory: backup) {
       swiftmmkv_configuration_set_read_only($0, true)
     }
-    defer { store.close() }
+    defer { store.destroy() }
 
     #expect(swiftmmkv_store_is_expiry_enabled(store.handle) == true)
     #expect(swiftmmkv_store_disable_expiry(store.handle) == SWIFTMMKV_DISABLE_EXPIRY_FAILED)
@@ -754,7 +754,7 @@ import Testing
 
   @Test func `Lists Counts And Removes Keys`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     for key in ["a", "b", "c", "d"] {
       #expect(swiftmmkv_store_set_int32(store.handle, key, 1, 0) == true)
     }
@@ -779,7 +779,7 @@ import Testing
 
   @Test func `Keys That Do Not Fit Are Sized And Not Copied`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     #expect(swiftmmkv_store_set_bool(store.handle, "first", true, 0) == true)
     #expect(swiftmmkv_store_set_bool(store.handle, "second", true, 0) == true)
 
@@ -799,7 +799,7 @@ import Testing
 
   @Test func `The Keys Of A Store Can Be Passed Straight Back To Remove Them`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     for key in ["a", "b", "c"] {
       #expect(swiftmmkv_store_set_int32(store.handle, key, 1, 0) == true)
     }
@@ -817,9 +817,9 @@ import Testing
 
   @Test func `Imports The Contents Of Another Store`() throws {
     let source = try CStore()
-    defer { source.close() }
+    defer { source.destroy() }
     let destination = try CStore()
-    defer { destination.close() }
+    defer { destination.destroy() }
     #expect(swiftmmkv_store_set_string(source.handle, "a", "from source", 0) == true)
     #expect(swiftmmkv_store_set_string(source.handle, "b", "from source", 0) == true)
     #expect(swiftmmkv_store_set_string(destination.handle, "b", "from destination", 0) == true)
@@ -831,11 +831,64 @@ import Testing
     #expect(destination.string(forKey: "b") == "from source")
   }
 
+  @Test func `Keys Under A Prefix Are Listed And Removed Together`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    for key in ["settings", "settings.theme", "settings.sync.isEnabled", "settingsTheme", "user"] {
+      #expect(swiftmmkv_store_set_bool(store.handle, key, true, 0) == true)
+    }
+
+    #expect(
+      store.keys(under: "settings").sorted()
+        == ["settings", "settings.sync.isEnabled", "settings.theme"]
+    )
+    #expect(store.keys(under: "settings.sync") == ["settings.sync.isEnabled"])
+    #expect(store.keys(under: "missing").isEmpty)
+    #expect(store.keys(under: "").count == 5)
+
+    swiftmmkv_store_remove_under(store.handle, "settings", nil)
+
+    #expect(store.keys().sorted() == ["settingsTheme", "user"])
+  }
+
+  @Test func `Keys Under A Prefix Can Be Joined By Another Separator`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    for key in ["settings/theme", "settings.theme", "settings/sync/isEnabled"] {
+      #expect(swiftmmkv_store_set_bool(store.handle, key, true, 0) == true)
+    }
+
+    #expect(
+      store.keys(under: "settings", separator: "/").sorted()
+        == ["settings/sync/isEnabled", "settings/theme"]
+    )
+
+    swiftmmkv_store_remove_under(store.handle, "settings", "/")
+
+    #expect(store.keys() == ["settings.theme"])
+  }
+
+  @Test func `Keys Under A Prefix That Do Not Fit Are Sized And Not Copied`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    #expect(swiftmmkv_store_set_bool(store.handle, "a.b", true, 0) == true)
+    #expect(swiftmmkv_store_set_bool(store.handle, "c", true, 0) == true)
+    var buffer = [CChar](repeating: 7, count: 3)
+    var size = 0
+    var count = 0
+
+    swiftmmkv_store_keys_under(store.handle, "a", nil, &buffer, 3, &size, &count)
+
+    #expect(size == 4)
+    #expect(count == 1)
+    #expect(buffer == [7, 7, 7])
+  }
+
   // MARK: - Exclusive Access
 
   @Test func `Runs A Read Modify Write With The Lock Held`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     var calls = 0
 
     for _ in 0..<3 {
@@ -860,7 +913,7 @@ import Testing
 
   @Test func `Listeners Hear Of A Locked Batch Once It Is Done`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let recorder = CCallbackRecorder()
     let subscription = swiftmmkv_store_subscribe(
       store.handle,
@@ -886,7 +939,7 @@ import Testing
 
   @Test func `A Subscription Hears Of Every Key Until It Is Cancelled`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let recorder = CCallbackRecorder()
     let subscription = swiftmmkv_store_subscribe(
       store.handle,
@@ -911,7 +964,7 @@ import Testing
 
   @Test func `A Key Subscription Only Hears Of Its Key`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let recorder = CCallbackRecorder()
     let subscription = swiftmmkv_store_subscribe_key(
       store.handle,
@@ -929,9 +982,56 @@ import Testing
     #expect(recorder.releases == 1)
   }
 
+  @Test func `A Prefix Subscription Only Hears Of The Keys Under It`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    let recorder = CCallbackRecorder()
+    let subscription = swiftmmkv_store_subscribe_under(
+      store.handle,
+      "settings",
+      nil,
+      recorder.context,
+      CCallbackRecorder.onChange,
+      CCallbackRecorder.release
+    )
+
+    #expect(swiftmmkv_store_set_bool(store.handle, "user", true, 0) == true)
+    #expect(swiftmmkv_store_set_bool(store.handle, "settingsTheme", true, 0) == true)
+    #expect(swiftmmkv_store_set_bool(store.handle, "settings", true, 0) == true)
+    #expect(swiftmmkv_store_set_bool(store.handle, "settings.theme", true, 0) == true)
+    #expect(swiftmmkv_store_remove(store.handle, "settings.theme") == true)
+    #expect(
+      recorder.events == ["key:settings", "key:settings.theme", "key:settings.theme"]
+    )
+
+    swiftmmkv_subscription_cancel(subscription)
+    #expect(recorder.releases == 1)
+  }
+
+  @Test func `A Prefix Subscription Takes A Separator, And An Empty Prefix Hears All`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    let slashes = CCallbackRecorder()
+    let all = CCallbackRecorder()
+    let first = swiftmmkv_store_subscribe_under(
+      store.handle, "settings", "/", slashes.context, CCallbackRecorder.onChange, nil
+    )
+    let second = swiftmmkv_store_subscribe_under(
+      store.handle, "", nil, all.context, CCallbackRecorder.onChange, nil
+    )
+
+    #expect(swiftmmkv_store_set_bool(store.handle, "settings.theme", true, 0) == true)
+    #expect(swiftmmkv_store_set_bool(store.handle, "settings/theme", true, 0) == true)
+
+    #expect(slashes.events == ["key:settings/theme"])
+    #expect(all.events == ["key:settings.theme", "key:settings/theme"])
+    swiftmmkv_subscription_cancel(first)
+    swiftmmkv_subscription_cancel(second)
+  }
+
   @Test func `A Subscription Works Without A Context Or A Release`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     let subscription = swiftmmkv_store_subscribe(store.handle, nil, { _, _, _ in }, nil)
 
     #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == true)
@@ -947,7 +1047,7 @@ import Testing
       directory: configuration.directory.path,
       mode: SWIFTMMKV_MODE_MULTI_PROCESS
     )
-    defer { store.close() }
+    defer { store.destroy() }
     let recorder = CCallbackRecorder()
     let all = swiftmmkv_store_subscribe(
       store.handle,
@@ -980,7 +1080,7 @@ import Testing
       id: "suspension-\(UUID().uuidString)",
       mode: SWIFTMMKV_MODE_MULTI_PROCESS
     )
-    defer { store.close() }
+    defer { store.destroy() }
     #expect(swiftmmkv_store_set_string(store.handle, "username", "blob", 0) == true)
     #expect(swiftmmkv_store_is_suspended(store.handle) == false)
 
@@ -1010,7 +1110,7 @@ import Testing
 
   @Test func `A Single Process Store Is Never Suspended`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
 
     swiftmmkv_store_suspend(store.handle)
 
@@ -1019,11 +1119,105 @@ import Testing
     swiftmmkv_store_resume(store.handle)
   }
 
+  // MARK: - Closing
+
+  @Test func `A Closed Store Turns Everything Away And Can Be Removed`() throws {
+    let directory = temporaryRootDirectory()
+    let store = try CStore(id: "settings", directory: directory)
+    defer { store.destroy() }
+    #expect(swiftmmkv_store_set_string(store.handle, "name", "blob", 0) == true)
+    #expect(swiftmmkv_store_is_closed(store.handle) == false)
+
+    swiftmmkv_store_close(store.handle)
+    swiftmmkv_store_close(store.handle)
+
+    #expect(swiftmmkv_store_is_closed(store.handle) == true)
+    #expect(swiftmmkv_store_is_suspended(store.handle) == false)
+    #expect(store.string(forKey: "name") == nil)
+    #expect(store.keys().isEmpty)
+    #expect(swiftmmkv_store_count(store.handle) == 0)
+    #expect(swiftmmkv_store_set_string(store.handle, "name", "blob", 0) == false)
+    #expect(swiftmmkv_store_disable_expiry(store.handle) == SWIFTMMKV_STORE_IS_CLOSED)
+    #expect(
+      swiftmmkv_store_back_up(store.handle, temporaryRootDirectory())
+        == SWIFTMMKV_STORE_IS_CLOSED
+    )
+    var didRemove = false
+    #expect(
+      swiftmmkv_directory_remove_store(directory, "settings", &didRemove) == SWIFTMMKV_OK
+    )
+    #expect(didRemove)
+  }
+
+  @Test func `Destroying A Handle Leaves Its Store Open`() throws {
+    let directory = temporaryRootDirectory()
+    let first = try CStore(id: "settings", directory: directory)
+    let second = try CStore(id: "settings", directory: directory)
+    defer { second.destroy() }
+    #expect(swiftmmkv_store_set_string(first.handle, "name", "blob", 0) == true)
+
+    first.destroy()
+
+    #expect(swiftmmkv_store_is_closed(second.handle) == false)
+    #expect(second.string(forKey: "name") == "blob")
+    #expect(
+      swiftmmkv_directory_remove_store(directory, "settings", nil) == SWIFTMMKV_STORE_IS_OPEN
+    )
+  }
+
+  @Test func `Closing A Store Closes Every Handle Over Its Files`() throws {
+    let directory = temporaryRootDirectory()
+    let first = try CStore(id: "settings", directory: directory)
+    let second = try CStore(id: "settings", directory: directory)
+    defer {
+      first.destroy()
+      second.destroy()
+    }
+
+    swiftmmkv_store_close(first.handle)
+
+    #expect(swiftmmkv_store_is_closed(second.handle) == true)
+  }
+
+  @Test func `A Closed Store Can Be Opened Again`() throws {
+    let directory = temporaryRootDirectory()
+    let store = try CStore(id: "settings", directory: directory)
+    #expect(swiftmmkv_store_set_string(store.handle, "name", "blob", 0) == true)
+    swiftmmkv_store_close(store.handle)
+    store.destroy()
+
+    let reopened = try CStore(id: "settings", directory: directory)
+    defer { reopened.destroy() }
+
+    #expect(swiftmmkv_store_is_closed(reopened.handle) == false)
+    #expect(reopened.string(forKey: "name") == "blob")
+  }
+
+  @Test func `Closing Tells Listeners Once And Releases Their Contexts`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    let recorder = CCallbackRecorder()
+    let subscription = swiftmmkv_store_subscribe(
+      store.handle,
+      recorder.context,
+      CCallbackRecorder.onChange,
+      CCallbackRecorder.release
+    )
+
+    swiftmmkv_store_close(store.handle)
+    #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == false)
+
+    #expect(recorder.events == ["external"])
+    #expect(recorder.releases == 1)
+    swiftmmkv_subscription_cancel(subscription)
+    #expect(recorder.releases == 1)
+  }
+
   // MARK: - Maintenance
 
   @Test func `Reports Sizes And Survives A Trim And A Sync`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     #expect(swiftmmkv_store_set_string(store.handle, "username", "blob", 0) == true)
 
     #expect(swiftmmkv_store_byte_size(store.handle) > 0)
@@ -1041,7 +1235,7 @@ import Testing
   @Test func `Rekeys A Store And Keeps Its Values`() throws {
     let directory = temporaryRootDirectory()
     let store = try CStore(directory: directory)
-    defer { store.close() }
+    defer { store.destroy() }
     let marker = "plain-text-marker"
     let path = URL(fileURLWithPath: "\(directory)/mmkv.default")
     let key = Array("secret".utf8)
@@ -1064,7 +1258,7 @@ import Testing
 
   @Test func `Rekeying Reports What Is Wrong With Its Arguments`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
 
     #expect(swiftmmkv_store_rekey(store.handle, 99, "key", 3) == SWIFTMMKV_INVALID_ARGUMENT)
     #expect(
@@ -1079,7 +1273,7 @@ import Testing
     let directory = temporaryRootDirectory()
     let backup = temporaryRootDirectory()
     let store = try CStore(id: "settings", directory: directory)
-    defer { store.close() }
+    defer { store.destroy() }
     #expect(swiftmmkv_store_set_string(store.handle, "username", "blob", 0) == true)
 
     #expect(swiftmmkv_store_back_up(store.handle, backup) == SWIFTMMKV_OK)
@@ -1097,7 +1291,7 @@ import Testing
 
   @Test func `Restoring From A Directory Without A Copy Restores Nothing`() throws {
     let store = try CStore()
-    defer { store.close() }
+    defer { store.destroy() }
     #expect(swiftmmkv_store_set_string(store.handle, "username", "blob", 0) == true)
 
     var didRestore = true
@@ -1113,7 +1307,7 @@ import Testing
   @Test func `A Store Cannot Be Backed Up Into Its Own Directory`() throws {
     let directory = temporaryRootDirectory()
     let store = try CStore(directory: directory)
-    defer { store.close() }
+    defer { store.destroy() }
     #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == true)
 
     var didRestore = true
@@ -1157,7 +1351,7 @@ import Testing
     let directory = temporaryRootDirectory()
     try makeUnopenedStoreFiles(at: "\(directory)/closed")
     let store = try CStore(id: "open", directory: directory)
-    defer { store.close() }
+    defer { store.destroy() }
     #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == true)
 
     var didRemove = false
