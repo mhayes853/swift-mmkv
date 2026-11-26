@@ -423,6 +423,21 @@ and listeners are told about the keys it changed once it returns.
 
 A batch is not atomic if the process is killed during it: the values written by then are kept.
 
+`update` reads a value, lets a closure change it, and writes the result under the same lock, so
+that a counter or a toggle loses nothing to another thread or process:
+
+```swift
+store.update(forKey: "launchCount", as: Int.self) { $0 = ($0 ?? 0) + 1 }
+store.update(for: .launchCount) { $0 += 1 }            // DefaultedKey<Int>
+try store.update(for: .settings) { $0.theme = .dark }  // DefaultedCodedKey<Settings>
+try store.update(keysUnder: "settings", as: Settings.self) { $0.theme = "dark" }
+```
+
+The closure gets `nil` for a key without a value, or the default of a defaulted key, and setting
+an optional value to `nil` removes the key. Nothing is written if the closure throws. The write
+gives the key a new expiry, since the one it had cannot be read back. A suspended or closed store
+does not run the closure: the versions that cannot throw return `false`, and the others throw.
+
 A store's file grows as values are written and does not shrink by itself. `byteSize` is the size
 of the file, `usedByteSize` is how much of it holds data, and `trim()` rewrites the file without
 the space that removed and overwritten values left behind:
