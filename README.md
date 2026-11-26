@@ -267,8 +267,25 @@ let subscription = store.subscribe(underKey: "settings") {
 }
 ```
 
-The subscription runs once for each key that changes, after the whole value is written, so
-the closure above never reads a value that is half written.
+The subscription runs once for each operation that changes such keys, after everything the
+operation writes is written, so the closure above never reads a value that is half written.
+
+`subscribe(fromKeysUnder:as:)` does the decoding too, and `values(fromKeysUnder:as:)` gives the
+same values as an `AsyncSequence`:
+
+```swift
+let subscription = store.subscribe(fromKeysUnder: "settings", as: Settings.self) { result in
+  settings = (try? result.get()) ?? Settings()
+}
+
+for try await settings in store.values(fromKeysUnder: "settings", as: Settings?.self) {
+  apply(settings ?? Settings())
+}
+```
+
+Both read the value the way `decode(_:fromKeysUnder:)` does. A type that needs keys the store
+does not have is a failure, which ends the sequence, so observe an optional if the keys may be
+missing.
 
 ## Typed keys
 
@@ -927,6 +944,14 @@ coders, and a coder's error or a rejected write shows up in `loadError` or `save
 @Shared(.mmkv(.username)) var username: String?  // MMKVStore.Key<String>
 @Shared(.mmkv(.volume)) var volume               // MMKVStore.DefaultedKey<Double>
 @Shared(.mmkv(.settings)) var settings           // MMKVStore.DefaultedCodedKey<Settings>
+```
+
+A `Codable` value can also be spread over the keys under a prefix, one key for each of its
+properties, as [`encode(_:intoKeysUnder:)`](#spreading-a-value-over-keys) stores it. The state follows a
+change to any of those keys:
+
+```swift
+@Shared(.mmkv(keysUnder: "profile")) var profile = Profile()  // profile.name, profile.age
 ```
 
 The keys use the store in the `defaultMMKVStore` dependency unless one is passed as `store:`.

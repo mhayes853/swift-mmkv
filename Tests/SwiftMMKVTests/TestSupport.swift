@@ -115,6 +115,11 @@ extension Result {
   var success: Success? {
     try? self.get()
   }
+
+  /// The failure, or `nil` for a success.
+  var failure: Failure? {
+    if case .failure(let error) = self { error } else { nil }
+  }
 }
 
 /// Encodes a value as its description and decodes it back, to stand in for a coder that is a

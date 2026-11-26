@@ -76,6 +76,46 @@ extension MMKVStore {
   }
 }
 
+// MARK: - Keys Under A Prefix
+
+extension MMKVStore {
+  /// The values decoded from `prefix` and the keys under it over time, starting with the value
+  /// the store holds when iteration begins.
+  ///
+  /// ```swift
+  /// for try await settings in store.values(fromKeysUnder: "settings", as: Settings.self) {
+  ///   apply(settings)
+  /// }
+  /// ```
+  ///
+  /// Each element is read as ``decode(_:fromKeysUnder:options:)`` reads it, and what that would
+  /// throw is thrown from the iteration, which ends the sequence. So a `T` that needs keys the
+  /// store does not have ends the sequence, and an optional `T` is `nil` while the store has
+  /// neither `prefix` nor any key under it.
+  ///
+  /// An element is never a value that is only partly written: an operation that writes several
+  /// of the keys, such as ``encode(_:intoKeysUnder:removingOtherKeys:expiry:options:)``,
+  /// produces one element once all of them are written. In every other respect this behaves
+  /// like ``values(forKey:as:)``, including producing repeated values.
+  ///
+  /// - Parameters:
+  ///   - prefix: The start of the keys to observe and decode from.
+  ///   - type: The type to decode.
+  ///   - options: How the value is laid out in keys. Use the options it was encoded with.
+  public func values<T: Decodable & Sendable>(
+    fromKeysUnder prefix: String,
+    as type: T.Type = T.self,
+    options: MMKVKeyCodingOptions = MMKVKeyCodingOptions()
+  ) -> MMKVThrowingValues<T> {
+    MMKVThrowingValues(
+      store: self,
+      keys: .under(prefix, separator: options.separator)
+    ) { store in
+      try store.decode(T.self, fromKeysUnder: prefix, options: options)
+    }
+  }
+}
+
 // MARK: - Typed Keys
 
 extension MMKVStore {
@@ -170,7 +210,7 @@ public struct MMKVValues<Element: Sendable>: AsyncSequence, Sendable {
     fileprivate init(store: MMKVStore, key: String, read: @escaping Read) {
       self.store = store
       self.read = read
-      self.signals = KeyChangeSignals(store: store, key: key)
+      self.signals = KeyChangeSignals(store: store, keys: .one(key))
     }
 
     public mutating func next() async -> Element? {
@@ -199,19 +239,23 @@ public struct MMKVValues<Element: Sendable>: AsyncSequence, Sendable {
 /// and the value itself for a key with a default. An error ends the sequence.
 public struct MMKVThrowingValues<Element: Sendable>: AsyncSequence, Sendable {
   private let store: MMKVStore
-  private let key: String
+  private let keys: KeyChangeSignals.Keys
   private let read: Read
 
   fileprivate typealias Read = @Sendable (MMKVStore) throws -> Element
 
   fileprivate init(store: MMKVStore, key: String, read: @escaping Read) {
+    self.init(store: store, keys: .one(key), read: read)
+  }
+
+  fileprivate init(store: MMKVStore, keys: KeyChangeSignals.Keys, read: @escaping Read) {
     self.store = store
-    self.key = key
+    self.keys = keys
     self.read = read
   }
 
   public func makeAsyncIterator() -> AsyncIterator {
-    AsyncIterator(store: self.store, key: self.key, read: self.read)
+    AsyncIterator(store: self.store, keys: self.keys, read: self.read)
   }
 
   public struct AsyncIterator: AsyncIteratorProtocol {
@@ -219,10 +263,10 @@ public struct MMKVThrowingValues<Element: Sendable>: AsyncSequence, Sendable {
     private let read: Read
     private var signals: KeyChangeSignals?
 
-    fileprivate init(store: MMKVStore, key: String, read: @escaping Read) {
+    fileprivate init(store: MMKVStore, keys: KeyChangeSignals.Keys, read: @escaping Read) {
       self.store = store
       self.read = read
-      self.signals = KeyChangeSignals(store: store, key: key)
+      self.signals = KeyChangeSignals(store: store, keys: keys)
     }
 
     public mutating func next() async throws -> Element? {

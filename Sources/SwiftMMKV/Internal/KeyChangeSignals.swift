@@ -1,4 +1,5 @@
-/// Waits for changes to one key of a store, for the async sequences over a key.
+/// Waits for changes to one key of a store, or to the keys under a prefix, for the async
+/// sequences over them.
 ///
 /// The first wait returns at once, so that a sequence starts with the value the store holds.
 /// Changes that arrive between waits are folded into one, so a slow consumer only ever sees the
@@ -7,18 +8,30 @@ struct KeyChangeSignals {
   private var iterator: AsyncStream<Void>.Iterator
   private let subscription: MMKVSubscription
 
-  init(store: MMKVStore, key: String) {
+  /// The keys whose changes are waited for.
+  enum Keys: Sendable {
+    case one(String)
+    case under(String, separator: String)
+  }
+
+  init(store: MMKVStore, keys: Keys) {
     let (stream, continuation) = AsyncStream.makeStream(
       of: Void.self,
       bufferingPolicy: .bufferingNewest(1)
     )
     // A closed store tells its listeners so once, and nothing after that.
-    self.subscription = store.subscribe(forKey: key) {
+    let onChange: @Sendable () -> Void = {
       continuation.yield()
       if store.isClosed {
         continuation.finish()
       }
     }
+    self.subscription =
+      switch keys {
+      case .one(let key): store.subscribe(forKey: key, onChange)
+      case .under(let prefix, let separator):
+        store.subscribe(underKey: prefix, separator: separator, onChange)
+      }
     continuation.yield()
     if store.isClosed {
       continuation.finish()

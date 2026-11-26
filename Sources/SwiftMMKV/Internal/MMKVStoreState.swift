@@ -5,7 +5,9 @@ import CSwiftMMKVCore
 /// The core hands back the same instance for every open of a root directory and identifier, so
 /// this is shared by every ``MMKVStore`` over that instance.
 final class MMKVStoreState: Sendable {
-  typealias Listener = @Sendable (MMKVStore.Change) -> Void
+  /// Called with the changes one operation made, in order. Changes that are held back while the
+  /// store is locked arrive together, once it is unlocked.
+  typealias Listener = @Sendable ([MMKVStore.Change]) -> Void
 
   private struct Registrations: Sendable {
     var nextIdentifier: UInt64 = 0
@@ -48,21 +50,30 @@ final class MMKVStoreState: Sendable {
   /// Tells listeners about a change made through this package, or holds it back while changes
   /// are being deferred. A key that is changed more than once in that time is reported once.
   func notify(_ change: MMKVStore.Change) {
+    self.notify([change])
+  }
+
+  /// Tells listeners about the changes one operation made, together, or holds them back
+  /// while changes are being deferred.
+  func notify(_ changes: [MMKVStore.Change]) {
+    guard !changes.isEmpty else { return }
     let listeners: [Listener]? = self.registrations.withLock { registrations in
       guard registrations.deferralDepth > 0 else { return Array(registrations.listeners.values) }
-      switch change {
-      case .key(let key):
-        if !registrations.pendingKeys.contains(key) {
-          registrations.pendingKeys.append(key)
+      for change in changes {
+        switch change {
+        case .key(let key):
+          if !registrations.pendingKeys.contains(key) {
+            registrations.pendingKeys.append(key)
+          }
+        case .external:
+          registrations.hasPendingExternalChange = true
         }
-      case .external:
-        registrations.hasPendingExternalChange = true
       }
       return nil
     }
     guard let listeners else { return }
     for listener in listeners {
-      listener(change)
+      listener(changes)
     }
   }
 
@@ -78,7 +89,7 @@ final class MMKVStoreState: Sendable {
       return Array(registrations.listeners.values)
     }
     for listener in listeners {
-      listener(.external)
+      listener([.external])
     }
   }
 
@@ -113,10 +124,8 @@ final class MMKVStoreState: Sendable {
         return (changes, Array(registrations.listeners.values))
       }
     guard let pending else { return }
-    for change in pending.changes {
-      for listener in pending.listeners {
-        listener(change)
-      }
+    for listener in pending.listeners {
+      listener(pending.changes)
     }
   }
 }

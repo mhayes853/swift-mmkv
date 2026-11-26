@@ -257,42 +257,43 @@ extension MMKVStore {
     return self.keys.filter { names.isAtOrUnder($0, prefix) }
   }
 
-  /// Calls `onChange` whenever `prefix` or a key under it may have changed, until the returned
-  /// subscription is cancelled or released.
+  /// Calls `onChange` with the value decoded from `prefix` and the keys under it, once before
+  /// this function returns and then whenever one of those keys may have changed, until the
+  /// returned subscription is cancelled or released.
   ///
   /// ```swift
-  /// let subscription = store.subscribe(underKey: "settings") {
-  ///   settings = try? store.decode(Settings.self, fromKeysUnder: "settings")
+  /// let subscription = store.subscribe(fromKeysUnder: "settings", as: Settings.self) { result in
+  ///   settings = (try? result.get()) ?? Settings()
   /// }
   /// ```
   ///
-  /// That is whenever such a key is set or removed through this package, and whenever a
-  /// ``Change/external`` change is noticed, since such a change does not say which keys it
-  /// touched. `onChange` runs once for each key that changes, so an
-  /// ``encode(_:intoKeysUnder:removingOtherKeys:expiry:options:)`` that writes three keys runs
-  /// it three times, after all three are written. In other respects this behaves like
-  /// ``subscribe(_:)``.
+  /// The value is read as ``decode(_:fromKeysUnder:options:)`` reads it, and what that would
+  /// throw is the failure here. So a `T` that needs keys the store does not have gives a
+  /// failure, and an optional `T` gives `nil` when the store has neither `prefix` nor any key
+  /// under it.
   ///
-  /// A key is under `prefix` when it starts with `prefix` and `separator`. An empty `prefix`
-  /// has every key under it.
+  /// `onChange` runs once for each operation that changes such keys, with the value all of the
+  /// operation's writes left behind, and never with a value that is only partly written. It
+  /// may be given the value it was last given: it runs whenever such a key is written, and
+  /// whenever a ``Change/external`` change is noticed, since such a change does not say which
+  /// keys it touched. In other respects this behaves like ``subscribe(_:)``.
   ///
   /// - Parameters:
-  ///   - prefix: The start of the keys to observe.
-  ///   - separator: What joins a prefix and the rest of a key.
-  ///   - onChange: Runs after each change.
-  public func subscribe(
-    underKey prefix: String,
-    separator: String = ".",
-    _ onChange: @escaping @Sendable () -> Void
+  ///   - prefix: The start of the keys to observe and decode from.
+  ///   - type: The type to decode.
+  ///   - options: How the value is laid out in keys. Use the options it was encoded with.
+  ///   - onChange: Runs with the value, or with why it could not be decoded.
+  public func subscribe<T: Decodable & SendableMetatype>(
+    fromKeysUnder prefix: String,
+    as type: T.Type = T.self,
+    options: MMKVKeyCodingOptions = MMKVKeyCodingOptions(),
+    _ onChange: @escaping @Sendable (Result<T, any Error>) -> Void
   ) -> MMKVSubscription {
-    self.subscribe { change in
-      if case .key(let changed) = change,
-        !KeyNames(separator: separator).isAtOrUnder(changed, prefix)
-      {
-        return
-      }
-      onChange()
+    let subscription = self.subscribe(underKey: prefix, separator: options.separator) {
+      onChange(Result { try self.decode(T.self, fromKeysUnder: prefix, options: options) })
     }
+    onChange(Result { try self.decode(T.self, fromKeysUnder: prefix, options: options) })
+    return subscription
   }
 }
 

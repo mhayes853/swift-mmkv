@@ -293,9 +293,7 @@ extension MMKVStore {
         self.core.set(values[key]!, forKey: key, expiresInSeconds: expiresInSeconds)
       }
     }
-    for key in stored {
-      self.core.state.notify(.key(key))
-    }
+    self.core.state.notify(stored.map(Change.key))
     return stored.count == values.count
   }
 }
@@ -397,9 +395,7 @@ extension MMKVStore {
   }
 
   private func didRemove(_ keys: [String]) {
-    for key in keys {
-      self.core.state.notify(.key(key))
-    }
+    self.core.state.notify(keys.map(Change.key))
   }
 }
 
@@ -429,9 +425,7 @@ extension MMKVStore {
     let count = self.core.importAll(from: other.core)
     if hasListeners && count > 0 {
       keys.formUnion(other.core.keys)
-      for key in keys {
-        self.core.state.notify(.key(key))
-      }
+      self.core.state.notify(keys.map(Change.key))
     }
     self.core.operationDidFinish()
     other.core.operationDidFinish()
@@ -517,7 +511,11 @@ extension MMKVStore {
   public func subscribe(
     _ onChange: @escaping @Sendable (Change) -> Void
   ) -> MMKVSubscription {
-    self.core.state.subscribe(onChange)
+    self.core.state.subscribe { changes in
+      for change in changes {
+        onChange(change)
+      }
+    }
   }
 
   /// Calls `onChange` whenever the value of `key` may have changed, until the returned
@@ -537,6 +535,52 @@ extension MMKVStore {
     self.subscribe { change in
       if case .key(let changed) = change, changed != key { return }
       onChange()
+    }
+  }
+
+  /// Calls `onChange` whenever `prefix` or a key under it may have changed, until the returned
+  /// subscription is cancelled or released.
+  ///
+  /// ```swift
+  /// let subscription = store.subscribe(underKey: "settings") {
+  ///   settings = try? store.decode(Settings.self, fromKeysUnder: "settings")
+  /// }
+  /// ```
+  ///
+  /// That is whenever such a key is set or removed through this package, and whenever a
+  /// ``Change/external`` change is noticed, since such a change does not say which keys it
+  /// touched. `onChange` runs once for each operation that changes such keys, however many of
+  /// them it changes. So an ``encode(_:intoKeysUnder:removingOtherKeys:expiry:options:)`` that
+  /// writes three keys runs it once, after all three are written, and so does a
+  /// ``withExclusiveLock(_:)`` whose body writes them one at a time. In other respects this
+  /// behaves like ``subscribe(_:)``.
+  ///
+  /// A key is under `prefix` when it starts with `prefix` and `separator`. An empty `prefix`
+  /// has every key under it.
+  ///
+  /// To be given the value those keys hold, use
+  /// ``subscribe(fromKeysUnder:as:options:_:)``.
+  ///
+  /// - Parameters:
+  ///   - prefix: The start of the keys to observe.
+  ///   - separator: What joins a prefix and the rest of a key.
+  ///   - onChange: Runs after each operation that changes such a key.
+  public func subscribe(
+    underKey prefix: String,
+    separator: String = ".",
+    _ onChange: @escaping @Sendable () -> Void
+  ) -> MMKVSubscription {
+    let names = KeyNames(separator: separator)
+    return self.core.state.subscribe { changes in
+      let isAffected = changes.contains { change in
+        switch change {
+        case .key(let changed): names.isAtOrUnder(changed, prefix)
+        case .external: true
+        }
+      }
+      if isAffected {
+        onChange()
+      }
     }
   }
 
