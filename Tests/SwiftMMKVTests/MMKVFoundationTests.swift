@@ -233,6 +233,71 @@
       #expect(try store.decode(Settings.self, forKey: "settings") == settings)
     }
 
+    @Test func `Updates A JSON Value In Place`() throws {
+      let store = try makeStore()
+      try store.encode(Settings(notificationsEnabled: true, fontSize: 16), forKey: "settings")
+
+      #expect(try store.update(jsonForKey: "settings", as: Settings.self) { $0?.fontSize = 18 })
+
+      #expect(
+        try store.decode(Settings.self, forKey: "settings")
+          == Settings(notificationsEnabled: true, fontSize: 18)
+      )
+      #expect(store.value(forKey: "settings", as: String.self)?.hasPrefix("{") == true)
+    }
+
+    @Test func `A JSON Update Starts From Nil And Removes The Key When Set To Nil`() throws {
+      let store = try makeStore()
+      var seen = [Settings?]()
+      let settings = Settings(notificationsEnabled: false, fontSize: 12)
+
+      try store.update(jsonForKey: "settings", as: Settings.self) {
+        seen.append($0)
+        $0 = settings
+      }
+      #expect(seen == [nil])
+      #expect(try store.decode(Settings.self, forKey: "settings") == settings)
+
+      try store.update(jsonForKey: "settings", as: Settings.self) { $0 = nil }
+      #expect(!store.contains("settings"))
+    }
+
+    @Test func `A JSON Update Stores JSON For A Type MMKV Also Stores Natively`() throws {
+      let store = try makeStore()
+
+      try store.update(jsonForKey: "name") { (name: inout String?) in name = "blob" }
+
+      #expect(store.value(forKey: "name", as: String.self) == #""blob""#)
+      #expect(try store.decode(String.self, forKey: "name") == "blob")
+    }
+
+    @Test func `A JSON Update Of A Value That Is Not JSON Throws Without Running The Body`()
+      throws
+    {
+      let store = try makeStore()
+      store.set("not json", forKey: "settings")
+      var runs = 0
+
+      #expect(throws: DecodingError.self) {
+        try store.update(jsonForKey: "settings", as: Settings.self) { _ in runs += 1 }
+      }
+
+      #expect(runs == 0)
+      #expect(store.value(forKey: "settings", as: String.self) == "not json")
+    }
+
+    @Test func `A JSON Update Of A Closed Store Throws Without Running The Body`() throws {
+      let store = try makeStore(id: "json-update-closed")
+      store.close()
+      var runs = 0
+
+      expectError(.storeIsClosed) {
+        try store.update(jsonForKey: "settings", as: Settings.self) { _ in runs += 1 }
+      }
+
+      #expect(runs == 0)
+    }
+
     @Test func `Reads A JSON String Written As A Plain String`() throws {
       let store = try makeStore()
 

@@ -431,6 +431,7 @@ store.update(forKey: "launchCount", as: Int.self) { $0 = ($0 ?? 0) + 1 }
 store.update(for: .launchCount) { $0 += 1 }            // DefaultedKey<Int>
 try store.update(for: .settings) { $0.theme = .dark }  // DefaultedCodedKey<Settings>
 try store.update(keysUnder: "settings", as: Settings.self) { $0.theme = "dark" }
+try store.update(jsonForKey: "settings", as: Settings.self) { $0?.theme = .dark }  // Foundation
 ```
 
 The closure gets `nil` for a key without a value, or the default of a defaulted key, and setting
@@ -878,6 +879,7 @@ The library itself does not use Foundation. The `Foundation` trait, on by defaul
   `MMKVValueWriter`, for a type of your own that stores one of them.
 - `JSONEncoder`, `JSONDecoder`, and the property list coders as coders for `encode` and
   `decode`, with JSON as the default when no coder is passed.
+- `update(jsonForKey:as:)`, which updates a value stored as JSON in place.
 
 Turn it off with `traits: []` on the package dependency.
 

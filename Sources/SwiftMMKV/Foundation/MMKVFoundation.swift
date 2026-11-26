@@ -146,6 +146,49 @@
       try self.decode(type, forKey: key, with: JSONDecoder())
     }
 
+    /// Reads the JSON string stored under `key`, lets `body` change the `T` it decodes to, and
+    /// writes the result back as JSON, with no other thread or process able to write to the
+    /// store in between.
+    ///
+    /// ```swift
+    /// try store.update(jsonForKey: "settings", as: Settings.self) { $0?.theme = .dark }
+    /// ```
+    ///
+    /// `body` is given `nil` when the store has no value for `key`, and setting the value to
+    /// `nil` removes the key. This behaves like
+    /// ``update(forKey:as:encoder:decoder:expiry:_:)`` with a `JSONEncoder` and a
+    /// `JSONDecoder`.
+    ///
+    /// The label says JSON because many types, such as `Int` and `String`, are also stored
+    /// natively by ``update(forKey:as:expiry:_:)``, and the two forms cannot read each other's.
+    ///
+    /// - Parameters:
+    ///   - key: The key to update.
+    ///   - type: The type to decode and encode.
+    ///   - expiry: How long to keep the value. See ``set(_:forKey:expiry:)``.
+    ///   - body: Changes the value in place. If it throws, nothing is written.
+    /// - Returns: Whether the store accepted the write or removal.
+    /// - Throws: A `DecodingError` if the stored value does not decode, in which case `body` is
+    ///   not run. Whatever `body` throws, or an `EncodingError`, in which case nothing is
+    ///   written. ``MMKVError/Code/storeIsSuspended`` or ``MMKVError/Code/storeIsClosed`` if the
+    ///   store is suspended or closed, without `body` being run.
+    @discardableResult
+    public func update<T: Codable>(
+      jsonForKey key: String,
+      as type: T.Type = T.self,
+      expiry: MMKVExpiry? = nil,
+      _ body: (inout T?) throws -> Void
+    ) throws -> Bool {
+      try self.update(
+        forKey: key,
+        as: type,
+        encoder: JSONEncoder(),
+        decoder: JSONDecoder(),
+        expiry: expiry,
+        body
+      )
+    }
+
     /// The store's identifier and keys as JSON. See ``toJSON()``.
     public func toJSONData() -> Data {
       Data(self.toJSON())
