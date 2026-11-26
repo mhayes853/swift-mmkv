@@ -529,6 +529,11 @@ size_t swiftmmkv_store_byte_size(swiftmmkv_store *_Nonnull store);
 size_t swiftmmkv_store_used_byte_size(swiftmmkv_store *_Nonnull store);
 /// Rewrites the store's file without the space left behind by removed and overwritten values.
 void swiftmmkv_store_trim(swiftmmkv_store *_Nonnull store);
+/// Lets go of the memory the store holds: its in-memory copy of its contents, and its mapping
+/// of its file. Nothing is lost, and the next read or write loads the file again, which costs as
+/// much as opening the store did. For a store that is large or seldom used, when the system
+/// reports that memory is short. Listeners are not told anything.
+void swiftmmkv_store_release_memory(swiftmmkv_store *_Nonnull store);
 /// Blocks until the store's contents are flushed to disk. The operating system flushes a
 /// memory-mapped file by itself, even if the process crashes, so this only matters when the
 /// device may lose power.

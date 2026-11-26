@@ -922,6 +922,11 @@ public func swiftmmkv_store_trim(_ store: OpaquePointer) {
 }
 
 @c @implementation
+public func swiftmmkv_store_release_memory(_ store: OpaquePointer) {
+  store.store.releaseMemory()
+}
+
+@c @implementation
 public func swiftmmkv_store_sync(_ store: OpaquePointer) {
   store.store.sync()
 }

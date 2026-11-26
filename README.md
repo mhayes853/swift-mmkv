@@ -416,6 +416,14 @@ if store.byteSize > 4 * 1024 * 1024 {
 }
 ```
 
+A store also keeps its contents in memory. `releaseMemory()` lets go of that, and of the store's
+mapping of its file, without losing anything: the next read or write loads the file again. Call
+it for a large or seldom used store when the system reports that memory is short.
+
+```swift
+cacheStore.releaseMemory()
+```
+
 ## Store directories
 
 An `MMKVDirectory` names the directory a store's files live in, and answers questions about the

@@ -786,6 +786,26 @@ extension MMKVStore {
     self.core.operationDidFinish()
   }
 
+  /// Lets go of the memory the store holds: its in-memory copy of its contents, and its mapping
+  /// of its file. Nothing is lost, and the next read or write loads the file again.
+  ///
+  /// ```swift
+  /// // On a memory warning.
+  /// cacheStore.releaseMemory()
+  /// ```
+  ///
+  /// This is for a store that is large or seldom used, when the system reports that memory is
+  /// short. Loading the file again costs as much as opening the store did, so calling this on a
+  /// store that is about to be read gains nothing.
+  ///
+  /// The store's contents do not change, so listeners are not told anything. Every
+  /// ``MMKVStore`` over the same files shares the memory this lets go of. A suspended or closed
+  /// store turns this away like any other operation, so it does nothing to either.
+  public func releaseMemory() {
+    self.core.clearMemoryCache()
+    self.core.operationDidFinish()
+  }
+
   /// Blocks until the store's contents are flushed to disk.
   ///
   /// The operating system flushes a memory-mapped file by itself, even if the process crashes,

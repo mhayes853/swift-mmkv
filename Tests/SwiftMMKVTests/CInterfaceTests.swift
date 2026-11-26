@@ -1227,6 +1227,7 @@ import Testing
     )
 
     swiftmmkv_store_trim(store.handle)
+    swiftmmkv_store_release_memory(store.handle)
     swiftmmkv_store_sync(store.handle)
 
     #expect(store.string(forKey: "username") == "blob")

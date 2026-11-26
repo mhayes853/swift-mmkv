@@ -26,6 +26,7 @@ import Testing
     store.removeAll { _ in true }
     store.removeValues(underKey: "")
     store.trim()
+    store.releaseMemory()
     store.sync()
     store.checkForExternalChanges()
     #expect(store.importAll(from: try makeStore()) == 0)
