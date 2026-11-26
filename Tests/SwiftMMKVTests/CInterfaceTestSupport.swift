@@ -116,6 +116,17 @@ func unpacked(_ list: [CChar]) -> [String] {
     .map { String(decoding: $0.map { UInt8(bitPattern: $0) }, as: UTF8.self) }
 }
 
+/// A store and a recorder, for a callback that reads the store and records what it read.
+final class CReadingContext: Sendable {
+  nonisolated(unsafe) let store: OpaquePointer
+  let recorder: CCallbackRecorder
+
+  init(store: OpaquePointer, recorder: CCallbackRecorder) {
+    self.store = store
+    self.recorder = recorder
+  }
+}
+
 /// Collects what the callbacks of the C interface are called with, as their context.
 final class CCallbackRecorder: Sendable {
   private let lock = NSLock()
@@ -171,6 +182,11 @@ final class CCallbackRecorder: Sendable {
     } else {
       CCallbackRecorder.from(context).record("unexpected")
     }
+  }
+
+  /// Records `changed`.
+  static let onNotify: swiftmmkv_notify_callback = { context in
+    CCallbackRecorder.from(context).record("changed")
   }
 
   /// Records `<level> <file>:<line> <function> <text>`.

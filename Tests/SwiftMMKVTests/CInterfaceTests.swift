@@ -1029,6 +1029,109 @@ import Testing
     swiftmmkv_subscription_cancel(second)
   }
 
+  @Test func `A Coalesced Prefix Subscription Hears Once Of Each Operation`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    let recorder = CCallbackRecorder()
+    let subscription = swiftmmkv_store_subscribe_under_coalesced(
+      store.handle,
+      "settings",
+      nil,
+      recorder.context,
+      CCallbackRecorder.onNotify,
+      CCallbackRecorder.release
+    )
+
+    #expect(swiftmmkv_store_set_bool(store.handle, "user", true, 0) == true)
+    #expect(swiftmmkv_store_set_bool(store.handle, "settingsTheme", true, 0) == true)
+    #expect(recorder.events.isEmpty)
+
+    #expect(swiftmmkv_store_set_bool(store.handle, "settings", true, 0) == true)
+    #expect(recorder.events.count == 1)
+
+    swiftmmkv_store_with_exclusive_lock(store.handle, nil) { _, locked in
+      _ = swiftmmkv_store_set_string(locked, "settings.theme", "dark", 0)
+      _ = swiftmmkv_store_set_double(locked, "settings.fontSize", 16, 0)
+      _ = swiftmmkv_store_set_bool(locked, "user", false, 0)
+    }
+    #expect(recorder.events.count == 2)
+
+    swiftmmkv_store_with_exclusive_lock(store.handle, nil) { _, locked in
+      _ = swiftmmkv_store_set_bool(locked, "user", true, 0)
+    }
+    #expect(recorder.events.count == 2)
+
+    swiftmmkv_store_remove_under(store.handle, "settings", nil)
+    #expect(recorder.events == ["changed", "changed", "changed"])
+
+    swiftmmkv_subscription_cancel(subscription)
+    #expect(swiftmmkv_store_set_bool(store.handle, "settings", true, 0) == true)
+    #expect(recorder.events.count == 3)
+    #expect(recorder.releases == 1)
+  }
+
+  @Test func `A Coalesced Prefix Subscription Reads A Whole Value From Its Callback`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    let recorder = CCallbackRecorder()
+    let reading = CReadingContext(store: store.handle, recorder: recorder)
+    let subscription = swiftmmkv_store_subscribe_under_coalesced(
+      store.handle,
+      "point",
+      nil,
+      Unmanaged.passUnretained(reading).toOpaque(),
+      { context in
+        let reading = Unmanaged<CReadingContext>.fromOpaque(context!).takeUnretainedValue()
+        var (x, y): (Int32, Int32) = (0, 0)
+        _ = swiftmmkv_store_get_int32(reading.store, "point.x", &x)
+        _ = swiftmmkv_store_get_int32(reading.store, "point.y", &y)
+        reading.recorder.record("\(x),\(y)")
+      },
+      nil
+    )
+
+    swiftmmkv_store_with_exclusive_lock(store.handle, nil) { _, locked in
+      _ = swiftmmkv_store_set_int32(locked, "point.x", 1, 0)
+      _ = swiftmmkv_store_set_int32(locked, "point.y", 2, 0)
+    }
+
+    #expect(recorder.events == ["1,2"])
+    swiftmmkv_subscription_cancel(subscription)
+  }
+
+  @Test func `A Coalesced Prefix Subscription Takes A Separator And Hears Outside Changes`()
+    throws
+  {
+    let (first, second) = try makeLinkedStores(mode: .multiProcess)
+    let configuration = first.configuration
+    let store = try CStore(
+      id: configuration.id.rawValue,
+      directory: configuration.directory.path,
+      mode: SWIFTMMKV_MODE_MULTI_PROCESS
+    )
+    defer { store.destroy() }
+    let recorder = CCallbackRecorder()
+    let subscription = swiftmmkv_store_subscribe_under_coalesced(
+      store.handle,
+      "settings",
+      "/",
+      recorder.context,
+      CCallbackRecorder.onNotify,
+      nil
+    )
+
+    #expect(swiftmmkv_store_set_bool(store.handle, "settings.theme", true, 0) == true)
+    #expect(recorder.events.isEmpty)
+    #expect(swiftmmkv_store_set_bool(store.handle, "settings/theme", true, 0) == true)
+    #expect(recorder.events.count == 1)
+
+    second.set("blob", forKey: "username")
+    swiftmmkv_store_check_for_external_changes(store.handle)
+
+    #expect(recorder.events.count == 2)
+    swiftmmkv_subscription_cancel(subscription)
+  }
+
   @Test func `A Subscription Works Without A Context Or A Release`() throws {
     let store = try CStore()
     defer { store.destroy() }

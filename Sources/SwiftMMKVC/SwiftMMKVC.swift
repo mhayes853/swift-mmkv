@@ -871,6 +871,25 @@ public func swiftmmkv_store_subscribe_under(
 }
 
 @c @implementation
+public func swiftmmkv_store_subscribe_under_coalesced(
+  _ store: OpaquePointer,
+  _ prefix: UnsafePointer<CChar>,
+  _ separator: UnsafePointer<CChar>?,
+  _ context: UnsafeMutableRawPointer?,
+  _ onChange: swiftmmkv_notify_callback,
+  _ release: swiftmmkv_context_release?
+) -> OpaquePointer {
+  let context = CallbackContext(context, release: release)
+  let subscription = store.store.subscribe(
+    underKey: String(cString: prefix),
+    separator: makeSeparator(separator)
+  ) {
+    onChange(context.pointer)
+  }
+  return OpaquePointer(retaining: Subscription(subscription))
+}
+
+@c @implementation
 public func swiftmmkv_store_check_for_external_changes(_ store: OpaquePointer) {
   store.store.checkForExternalChanges()
 }

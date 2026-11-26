@@ -443,6 +443,12 @@ typedef int32_t swiftmmkv_change_kind;
 typedef void (*swiftmmkv_change_callback)(
   void *_Nullable context, swiftmmkv_change_kind kind, const char *_Nullable key);
 
+/// Receives word that something changed, without being told what.
+///
+/// It runs on the thread that made or noticed the change, after the operation has returned,
+/// and may read and write the store.
+typedef void (*swiftmmkv_notify_callback)(void *_Nullable context);
+
 /// Called once with a callback's context, when the callback will not be called again.
 typedef void (*swiftmmkv_context_release)(void *_Nullable context);
 
@@ -476,6 +482,20 @@ swiftmmkv_subscription *_Nonnull swiftmmkv_store_subscribe_under(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull prefix,
   const char *_Nullable separator, void *_Nullable context,
   swiftmmkv_change_callback _Nonnull on_change, swiftmmkv_context_release _Nullable release);
+/// Calls `on_change` once for each operation that changes `prefix` or a key under it, however
+/// many of those keys the operation changes, and on every external change, until the
+/// subscription is cancelled. `swiftmmkv_store_subscribe_under` calls back once for each key
+/// instead.
+///
+/// An operation is one call, such as `swiftmmkv_store_remove_under`, or everything the body of
+/// a `swiftmmkv_store_with_exclusive_lock` does. So a value that is written into several keys
+/// inside such a body can be read back whole, once, from `on_change`.
+/// `swiftmmkv_store_keys_under` says which keys are under `prefix`, and a NULL `separator` is
+/// ".".
+swiftmmkv_subscription *_Nonnull swiftmmkv_store_subscribe_under_coalesced(
+  swiftmmkv_store *_Nonnull store, const char *_Nonnull prefix,
+  const char *_Nullable separator, void *_Nullable context,
+  swiftmmkv_notify_callback _Nonnull on_change, swiftmmkv_context_release _Nullable release);
 
 /// Checks whether another process, or another copy of MMKV, changed the store, reloading it
 /// and notifying listeners if so. Reads and writes make the same check, so this is only needed
