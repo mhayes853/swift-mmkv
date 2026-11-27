@@ -3,7 +3,7 @@
   import Sharing
 
   /// A swift-sharing key that keeps a piece of `@Shared` state under one key of an
-  /// ``MMKVStore``.
+  /// ``MMKVStore``, or spread over the keys under a prefix.
   ///
   /// Create one with the `mmkv` functions:
   ///
@@ -12,6 +12,7 @@
   /// @Shared(.mmkv("username")) var username: String?
   /// @Shared(.mmkv("settings", encoder: JSONEncoder(), decoder: JSONDecoder()))
   /// var settings = Settings()
+  /// @Shared(.mmkv(keysUnder: "profile")) var profile = Profile()
   /// ```
   ///
   /// The state uses the store in the `defaultMMKVStore` dependency unless a key names another.
@@ -25,11 +26,15 @@
   public struct MMKVStorageKey<Value: Sendable>: SharedKey {
     private let store: MMKVStore
     private let key: String
+    /// What joins `key` to the keys under it, for state that is spread over those keys, and
+    /// `nil` for state that is kept under `key` alone.
+    private let separator: String?
     private let loadValue: @Sendable (MMKVStore, String) throws -> Value?
     private let saveValue: @Sendable (Value, MMKVStore, String) throws -> Void
 
     fileprivate init(
       key: String,
+      separatorOfKeysUnder separator: String? = nil,
       store: MMKVStore?,
       load: @escaping @Sendable (MMKVStore, String) throws -> Value?,
       save: @escaping @Sendable (Value, MMKVStore, String) throws -> Void
@@ -37,12 +42,13 @@
       @Dependency(\.defaultMMKVStore) var defaultStore
       self.store = store ?? defaultStore
       self.key = key
+      self.separator = separator
       self.loadValue = load
       self.saveValue = save
     }
 
     public var id: MMKVStorageKeyID {
-      MMKVStorageKeyID(store: self.store, key: self.key)
+      MMKVStorageKeyID(store: self.store, key: self.key, separator: self.separator)
     }
 
     public func load(context: LoadContext<Value>, continuation: LoadContinuation<Value>) {
@@ -53,9 +59,15 @@
       context: LoadContext<Value>,
       subscriber: SharedSubscriber<Value>
     ) -> SharedSubscription {
-      let subscription = self.store.subscribe(forKey: self.key) {
+      let onChange: @Sendable (MMKVStore.ChangeBatch) -> Void = { _ in
         subscriber.yield(with: Result { try self.loadUnlessSuspended() })
       }
+      let subscription =
+        if let separator = self.separator {
+          self.store.subscribe(underKey: self.key, separator: separator, onChange)
+        } else {
+          self.store.subscribe(forKey: self.key, onChange)
+        }
       return SharedSubscription { subscription.cancel() }
     }
 
@@ -83,19 +95,22 @@
   public struct MMKVStorageKeyID: Hashable, Sendable {
     private let store: MMKVStore
     private let key: String
+    private let separator: String?
 
-    fileprivate init(store: MMKVStore, key: String) {
+    fileprivate init(store: MMKVStore, key: String, separator: String?) {
       self.store = store
       self.key = key
+      self.separator = separator
     }
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
-      lhs.store === rhs.store && lhs.key == rhs.key
+      lhs.store === rhs.store && lhs.key == rhs.key && lhs.separator == rhs.separator
     }
 
     public func hash(into hasher: inout Hasher) {
       hasher.combine(ObjectIdentifier(self.store))
       hasher.combine(self.key)
+      hasher.combine(self.separator)
     }
   }
 
@@ -314,6 +329,82 @@
       store: MMKVStore? = nil
     ) -> Self where Self == MMKVStorageKey<Value>.Default {
       Self[.mmkv(key.key, store: store), default: key.defaultValue]
+    }
+  }
+
+  // MARK: - Keys under a prefix
+
+  extension SharedReaderKey {
+    /// A key for a `Codable` value that is spread over the keys under `prefix`, one key for each
+    /// of its properties, as ``MMKVStore/encode(_:intoKeysUnder:removingOtherKeys:expiry:options:)``
+    /// stores it.
+    ///
+    /// ```swift
+    /// @Shared(.mmkv(keysUnder: "profile")) var profile = Profile()
+    /// ```
+    ///
+    /// When the store has neither `prefix` nor any key under it, the state holds the `@Shared`
+    /// property's default. A value that cannot be decoded from the keys that are there is
+    /// reported through `loadError`.
+    ///
+    /// Saving writes every key of the value and removes the other keys under `prefix`. The state
+    /// follows a change to any key under `prefix`, loading once for each operation that changes
+    /// them, however many keys it changes.
+    ///
+    /// - Parameters:
+    ///   - prefix: The start of the keys the value is kept in.
+    ///   - options: How the value is laid out in keys.
+    ///   - store: The store to use, or `nil` for the `defaultMMKVStore` dependency.
+    public static func mmkv<Value: Codable & Sendable>(
+      keysUnder prefix: String,
+      options: MMKVKeyCodingOptions = MMKVKeyCodingOptions(),
+      store: MMKVStore? = nil
+    ) -> Self where Self == MMKVStorageKey<Value> {
+      MMKVStorageKey(
+        key: prefix,
+        separatorOfKeysUnder: options.separator,
+        store: store
+      ) { store, prefix in
+        try store.decode(Value?.self, fromKeysUnder: prefix, options: options)
+      } save: { value, store, prefix in
+        try store.write(prefix) {
+          try store.encode(value, intoKeysUnder: prefix, options: options)
+        }
+      }
+    }
+
+    /// A key for an optional `Codable` value that is spread over the keys under `prefix`. The
+    /// state is `nil` when the store has neither `prefix` nor any key under it, and setting it
+    /// to `nil` removes all of those keys.
+    ///
+    /// ```swift
+    /// @Shared(.mmkv(keysUnder: "profile")) var profile: Profile?
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - prefix: The start of the keys the value is kept in.
+    ///   - options: How the value is laid out in keys.
+    ///   - store: The store to use, or `nil` for the `defaultMMKVStore` dependency.
+    public static func mmkv<Value: Codable & Sendable>(
+      keysUnder prefix: String,
+      options: MMKVKeyCodingOptions = MMKVKeyCodingOptions(),
+      store: MMKVStore? = nil
+    ) -> Self where Self == MMKVStorageKey<Value?> {
+      MMKVStorageKey(
+        key: prefix,
+        separatorOfKeysUnder: options.separator,
+        store: store
+      ) { store, prefix in
+        .some(try store.decode(Value?.self, fromKeysUnder: prefix, options: options))
+      } save: { value, store, prefix in
+        try store.write(prefix) {
+          guard let value else {
+            store.removeValues(underKey: prefix, separator: options.separator)
+            return MMKVErrors.unavailable(store) == nil
+          }
+          return try store.encode(value, intoKeysUnder: prefix, options: options)
+        }
+      }
     }
   }
 

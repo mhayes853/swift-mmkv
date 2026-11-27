@@ -26,6 +26,7 @@ import Testing
     store.removeAll { _ in true }
     store.removeValues(underKey: "")
     store.trim()
+    store.releaseMemory()
     store.sync()
     store.checkForExternalChanges()
     #expect(store.importAll(from: try makeStore()) == 0)
@@ -372,11 +373,11 @@ import Testing
     let store = try makeStore(id: "close-listeners-4")
     let (started, startedContinuation) = AsyncStream.makeStream(of: Void.self)
     let task = Task {
-      var changes = [MMKVStore.Change]()
+      var changes = [Change]()
       var iterator = store.changes.makeAsyncIterator()
       startedContinuation.yield()
-      while let change = await iterator.next() {
-        changes.append(change)
+      while let batch = await iterator.next() {
+        changes += batch.changes
       }
       return changes
     }
@@ -392,9 +393,9 @@ import Testing
     let store = try makeStore(id: "close-listeners-5")
     store.close()
 
-    var changes = [MMKVStore.Change]()
-    for await change in store.changes {
-      changes.append(change)
+    var changes = [Change]()
+    for await batch in store.changes {
+      changes += batch.changes
     }
 
     #expect(changes.isEmpty)

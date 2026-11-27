@@ -431,20 +431,31 @@ void swiftmmkv_store_with_exclusive_lock(
 
 // MARK: - Changes
 
-typedef int32_t swiftmmkv_change_kind;
-/// The value of a key was set or removed through this package, in this process.
-#define SWIFTMMKV_CHANGE_KEY 0
-/// Another process, or another copy of MMKV in this process, changed the store. Which keys
-/// changed is not known.
-#define SWIFTMMKV_CHANGE_EXTERNAL 1
+/// What one operation changed in a store. An operation is one call, such as
+/// `swiftmmkv_store_remove_under`, or everything the body of a
+/// `swiftmmkv_store_with_exclusive_lock` does.
+///
+/// A batch and its keys are valid only until the callback that was given it returns. The
+/// library may add fields to the end of this struct, so read it through the pointer a callback
+/// is given, and do not create or copy one.
+typedef struct swiftmmkv_change_batch {
+  /// The keys that were set or removed through this package, in this process, each once.
+  /// NULL when `key_count` is 0.
+  const char *_Nonnull const *_Nullable keys;
+  /// The number of `keys`.
+  size_t key_count;
+  /// Whether another process, or another copy of MMKV in this process, changed the store.
+  /// Which keys it changed is not known, so any key may have changed and not only `keys`.
+  bool is_external;
+} swiftmmkv_change_batch;
 
-/// Receives a change to a store. `key` is the key that changed, or NULL for an external
-/// change.
+/// Receives what one operation changed in a store.
 ///
 /// It runs on the thread that made or noticed the change, after the operation has returned,
-/// and may read and write the store.
+/// and may read and write the store. The values of the keys are read from the store, with the
+/// functions that read any value.
 typedef void (*swiftmmkv_change_callback)(
-  void *_Nullable context, swiftmmkv_change_kind kind, const char *_Nullable key);
+  void *_Nullable context, const swiftmmkv_change_batch *_Nonnull batch);
 
 /// Called once with a callback's context, when the callback will not be called again.
 typedef void (*swiftmmkv_context_release)(void *_Nullable context);
@@ -459,20 +470,26 @@ typedef struct swiftmmkv_subscription swiftmmkv_subscription;
 /// context's release function runs once no call can be.
 void swiftmmkv_subscription_cancel(swiftmmkv_subscription *_Nullable subscription);
 
-/// Calls `on_change` whenever the store's contents change, until the subscription is
-/// cancelled.
+/// Calls `on_change` once for each operation that changes the store's contents, until the
+/// subscription is cancelled.
 swiftmmkv_subscription *_Nonnull swiftmmkv_store_subscribe(
   swiftmmkv_store *_Nonnull store, void *_Nullable context,
   swiftmmkv_change_callback _Nonnull on_change, swiftmmkv_context_release _Nullable release);
-/// Calls `on_change` whenever the value of `key` may have changed, until the subscription is
-/// cancelled. That is whenever `key` is set or removed, and on every external change, since
-/// such a change does not say which keys it touched.
+/// Calls `on_change` once for each operation that may have changed the value of `key`, until
+/// the subscription is cancelled. That is each operation that sets or removes `key`, and each
+/// external change, since such a change does not say which keys it touched. The batch holds
+/// `key` alone, or no key when only an external change was noticed.
 swiftmmkv_subscription *_Nonnull swiftmmkv_store_subscribe_key(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, void *_Nullable context,
   swiftmmkv_change_callback _Nonnull on_change, swiftmmkv_context_release _Nullable release);
-/// Calls `on_change` whenever `prefix` or a key under it may have changed, until the
-/// subscription is cancelled, which makes a value spread over several keys observable as one.
-/// That is whenever such a key is set or removed, and on every external change.
+/// Calls `on_change` once for each operation that may have changed `prefix` or a key under
+/// it, until the subscription is cancelled, which makes a value spread over several keys
+/// observable as one. That is each operation that sets or removes such a key, however many of
+/// them it changes, and each external change. The batch holds only the keys at or under
+/// `prefix`.
+///
+/// So a value that is written into several keys inside the body of a
+/// `swiftmmkv_store_with_exclusive_lock` can be read back whole, once, from `on_change`.
 /// `swiftmmkv_store_keys_under` says which keys are under `prefix`, and a NULL `separator` is
 /// ".".
 swiftmmkv_subscription *_Nonnull swiftmmkv_store_subscribe_under(
@@ -532,6 +549,11 @@ size_t swiftmmkv_store_byte_size(swiftmmkv_store *_Nonnull store);
 size_t swiftmmkv_store_used_byte_size(swiftmmkv_store *_Nonnull store);
 /// Rewrites the store's file without the space left behind by removed and overwritten values.
 void swiftmmkv_store_trim(swiftmmkv_store *_Nonnull store);
+/// Lets go of the memory the store holds: its in-memory copy of its contents, and its mapping
+/// of its file. Nothing is lost, and the next read or write loads the file again, which costs as
+/// much as opening the store did. For a store that is large or seldom used, when the system
+/// reports that memory is short. Listeners are not told anything.
+void swiftmmkv_store_release_memory(swiftmmkv_store *_Nonnull store);
 /// Blocks until the store's contents are flushed to disk. The operating system flushes a
 /// memory-mapped file by itself, even if the process crashes, so this only matters when the
 /// device may lose power.

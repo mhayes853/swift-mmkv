@@ -234,6 +234,71 @@
       #expect(try store.decode(Settings.self, forKey: "settings") == settings)
     }
 
+    @Test func `Updates A JSON Value In Place`() throws {
+      let store = try makeStore()
+      try store.encode(Settings(notificationsEnabled: true, fontSize: 16), forKey: "settings")
+
+      #expect(try store.update(jsonForKey: "settings", as: Settings.self) { $0?.fontSize = 18 })
+
+      #expect(
+        try store.decode(Settings.self, forKey: "settings")
+          == Settings(notificationsEnabled: true, fontSize: 18)
+      )
+      #expect(store.value(forKey: "settings", as: String.self)?.hasPrefix("{") == true)
+    }
+
+    @Test func `A JSON Update Starts From Nil And Removes The Key When Set To Nil`() throws {
+      let store = try makeStore()
+      var seen = [Settings?]()
+      let settings = Settings(notificationsEnabled: false, fontSize: 12)
+
+      try store.update(jsonForKey: "settings", as: Settings.self) {
+        seen.append($0)
+        $0 = settings
+      }
+      #expect(seen == [nil])
+      #expect(try store.decode(Settings.self, forKey: "settings") == settings)
+
+      try store.update(jsonForKey: "settings", as: Settings.self) { $0 = nil }
+      #expect(!store.contains("settings"))
+    }
+
+    @Test func `A JSON Update Stores JSON For A Type MMKV Also Stores Natively`() throws {
+      let store = try makeStore()
+
+      try store.update(jsonForKey: "name") { (name: inout String?) in name = "blob" }
+
+      #expect(store.value(forKey: "name", as: String.self) == #""blob""#)
+      #expect(try store.decode(String.self, forKey: "name") == "blob")
+    }
+
+    @Test func `A JSON Update Of A Value That Is Not JSON Throws Without Running The Body`()
+      throws
+    {
+      let store = try makeStore()
+      store.set("not json", forKey: "settings")
+      var runs = 0
+
+      #expect(throws: DecodingError.self) {
+        try store.update(jsonForKey: "settings", as: Settings.self) { _ in runs += 1 }
+      }
+
+      #expect(runs == 0)
+      #expect(store.value(forKey: "settings", as: String.self) == "not json")
+    }
+
+    @Test func `A JSON Update Of A Closed Store Throws Without Running The Body`() throws {
+      let store = try makeStore(id: "json-update-closed")
+      store.close()
+      var runs = 0
+
+      expectError(.storeIsClosed) {
+        try store.update(jsonForKey: "settings", as: Settings.self) { _ in runs += 1 }
+      }
+
+      #expect(runs == 0)
+    }
+
     @Test func `Reads A JSON String Written As A Plain String`() throws {
       let store = try makeStore()
 
@@ -294,6 +359,78 @@
       try store.encode([1, 2, 3], forKey: "numbers")
 
       #expect(recorder.all == [.key("numbers")])
+      subscription.cancel()
+    }
+
+    @Test func `A JSON Subscription Delivers The Decoded Value`() throws {
+      let store = try makeStore()
+      let recorder = ValueRecorder<[Int]?>()
+      let failures = ValueRecorder<Bool>()
+      let subscription = store.subscribe(jsonForKey: "numbers", as: [Int].self) { result in
+        recorder.record(result.success ?? nil)
+        failures.record(result.failure is DecodingError)
+      }
+
+      try store.encode([1, 2, 3], forKey: "numbers")
+      store.set("not JSON", forKey: "numbers")
+      store.set(1.0, forKey: "other")
+      store.removeValue(forKey: "numbers")
+
+      #expect(recorder.all == [nil, [1, 2, 3], nil, nil])
+      #expect(failures.all == [false, false, true, false])
+      subscription.cancel()
+    }
+
+    @Test func `A JSON Subscription To Several Keys Gives Each A Result`() throws {
+      let store = try makeStore()
+      let recorder = ValueRecorder<[String: [Int]?]>()
+      let subscription = store.subscribe(jsonForKeys: ["a", "b", "c"], as: [Int].self) {
+        recorder.record($0.mapValues(\.success))
+      }
+
+      try store.withExclusiveLock { store in
+        try store.encode([1], forKey: "a")
+        store.set("not JSON", forKey: "b")
+      }
+      try store.encode([2], forKey: "other")
+
+      #expect(recorder.all == [[:], ["a": [1], "b": nil]])
+      subscription.cancel()
+    }
+
+    @Test func `A JSON Sequence Produces The Decoded Values`() async throws {
+      let store = try makeStore()
+      try store.encode([1], forKey: "numbers")
+      var values = store.values(jsonForKey: "numbers", as: [Int].self).makeAsyncIterator()
+      #expect(try await values.next() == [1])
+
+      try store.encode([1, 2], forKey: "numbers")
+      #expect(try await values.next() == [1, 2])
+
+      store.removeValue(forKey: "numbers")
+      #expect(try await values.next() == .some(nil))
+
+      store.set("not JSON", forKey: "numbers")
+      await #expect(throws: DecodingError.self) { try await values.next() }
+    }
+
+    @Test func `A Change Batch Decodes JSON`() throws {
+      let store = try makeStore()
+      let recorder = ValueRecorder<[Int]?>()
+      let subscription = store.subscribe { batch in
+        recorder.record(try? batch.decode([Int].self, forKey: "numbers"))
+      }
+
+      try store.encode([1, 2, 3], forKey: "numbers")
+      store.set("not JSON", forKey: "numbers")
+      store.removeValue(forKey: "numbers")
+
+      #expect(recorder.all == [[1, 2, 3], nil, nil])
+      #expect(throws: DecodingError.self) {
+        store.set("not JSON", forKey: "numbers")
+        return try MMKVStore.ChangeBatch(store: store, keys: [])
+          .decode([Int].self, forKey: "numbers")
+      }
       subscription.cancel()
     }
 

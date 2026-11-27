@@ -289,6 +289,10 @@ void mmkv_trim(mmkv_store *_Nonnull store)
   CSWIFTMMKV_SYMBOL(trim);
 void mmkv_sync(mmkv_store *_Nonnull store)
   CSWIFTMMKV_SYMBOL(sync);
+/// Lets go of the store's in-memory copy of its contents and of its mapping of the file. The
+/// next operation loads the file again.
+void mmkv_clear_memory_cache(mmkv_store *_Nonnull store)
+  CSWIFTMMKV_SYMBOL(clear_memory_cache);
 void mmkv_check_content_changed(mmkv_store *_Nonnull store)
   CSWIFTMMKV_SYMBOL(check_content_changed);
 /// Whether the store's file records when each key expires.

@@ -204,6 +204,10 @@ extension MMKVCore {
     self.perform { $0.trim() }
   }
 
+  func clearMemoryCache() {
+    self.perform { $0.clearMemoryCache() }
+  }
+
   func sync() {
     self.perform { $0.sync() }
   }

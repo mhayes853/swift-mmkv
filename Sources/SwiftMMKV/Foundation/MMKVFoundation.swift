@@ -144,6 +144,125 @@
       try self.decode(type, forKey: key, with: JSONDecoder())
     }
 
+    /// Reads the JSON string stored under `key`, lets `body` change the `T` it decodes to, and
+    /// writes the result back as JSON, with no other thread or process able to write to the
+    /// store in between.
+    ///
+    /// ```swift
+    /// try store.update(jsonForKey: "settings", as: Settings.self) { $0?.theme = .dark }
+    /// ```
+    ///
+    /// `body` is given `nil` when the store has no value for `key`, and setting the value to
+    /// `nil` removes the key. This behaves like
+    /// ``update(forKey:as:encoder:decoder:expiry:_:)`` with a `JSONEncoder` and a
+    /// `JSONDecoder`.
+    ///
+    /// The label says JSON because many types, such as `Int` and `String`, are also stored
+    /// natively by ``update(forKey:as:expiry:_:)``, and the two forms cannot read each other's.
+    ///
+    /// - Parameters:
+    ///   - key: The key to update.
+    ///   - type: The type to decode and encode.
+    ///   - expiry: How long to keep the value. See ``set(_:forKey:expiry:)``.
+    ///   - body: Changes the value in place. If it throws, nothing is written.
+    /// - Returns: Whether the store accepted the write or removal.
+    /// - Throws: A `DecodingError` if the stored value does not decode, in which case `body` is
+    ///   not run. Whatever `body` throws, or an `EncodingError`, in which case nothing is
+    ///   written. ``MMKVError/Code/storeIsSuspended`` or ``MMKVError/Code/storeIsClosed`` if the
+    ///   store is suspended or closed, without `body` being run.
+    @discardableResult
+    public func update<T: Codable>(
+      jsonForKey key: String,
+      as type: T.Type = T.self,
+      expiry: MMKVExpiry? = nil,
+      _ body: (inout T?) throws -> Void
+    ) throws -> Bool {
+      try self.update(
+        forKey: key,
+        as: type,
+        encoder: JSONEncoder(),
+        decoder: JSONDecoder(),
+        expiry: expiry,
+        body
+      )
+    }
+
+    /// Calls `onChange` with the value decoded from the JSON string of `key`, once before this
+    /// function returns and then whenever the value may have changed, until the returned
+    /// subscription is cancelled or released.
+    ///
+    /// ```swift
+    /// let subscription = store.subscribe(jsonForKey: "settings", as: Settings.self) { result in
+    ///   apply((try? result.get()) ?? Settings())
+    /// }
+    /// ```
+    ///
+    /// This behaves like ``subscribe(forKey:as:with:_:)`` with a `JSONDecoder`. The label says
+    /// JSON because many types, such as `Int` and `String`, are also stored natively, and
+    /// ``subscribe(forKey:as:_:)`` reads those.
+    ///
+    /// - Parameters:
+    ///   - key: The key to observe.
+    ///   - type: The type to decode.
+    ///   - onChange: Runs with the current value, and again after each change.
+    public func subscribe<T: Decodable & SendableMetatype>(
+      jsonForKey key: String,
+      as type: T.Type = T.self,
+      _ onChange: @escaping @Sendable (Result<T?, any Error>) -> Void
+    ) -> MMKVSubscription {
+      let subscription = self.subscribe(forKey: key) { batch in
+        onChange(Result { try batch.decode(T.self, forKey: key) })
+      }
+      onChange(Result { try self.decode(T.self, forKey: key) })
+      return subscription
+    }
+
+    /// Calls `onChange` with the values decoded from the JSON strings of `keys`, once before
+    /// this function returns and then once for each operation that may have changed any of
+    /// them, until the returned subscription is cancelled or released.
+    ///
+    /// ```swift
+    /// let subscription = store.subscribe(jsonForKeys: ["home", "work"], as: Address.self) {
+    ///   home = try? $0["home"]?.get()
+    /// }
+    /// ```
+    ///
+    /// This behaves like ``subscribe(forKeys:as:with:_:)`` with a `JSONDecoder`: each key has a
+    /// result of its own, and a key is left out when the store has no value for it.
+    ///
+    /// - Parameters:
+    ///   - keys: The keys to observe.
+    ///   - type: The type to decode each value as.
+    ///   - onChange: Runs with the current values, and again after each such operation.
+    public func subscribe<T: Decodable & SendableMetatype>(
+      jsonForKeys keys: [String],
+      as type: T.Type = T.self,
+      _ onChange: @escaping @Sendable ([String: Result<T, any Error>]) -> Void
+    ) -> MMKVSubscription {
+      self.subscribe(forKeys: keys, as: type, with: SendableJSONDecoder(), onChange)
+    }
+
+    /// The values decoded from the JSON string of `key` over time, starting with the value the
+    /// store holds when iteration begins.
+    ///
+    /// ```swift
+    /// for try await settings in store.values(jsonForKey: "settings", as: Settings.self) {
+    ///   apply(settings ?? Settings())
+    /// }
+    /// ```
+    ///
+    /// This behaves like ``values(forKey:as:with:)`` with a `JSONDecoder`.
+    ///
+    /// - Parameters:
+    ///   - key: The key to observe.
+    ///   - type: The type to decode.
+    public func values<T: Decodable & Sendable>(
+      jsonForKey key: String,
+      as type: T.Type = T.self
+    ) -> MMKVThrowingValues<T?> {
+      self.values(forKey: key, as: type, with: SendableJSONDecoder())
+    }
+
     /// The store's identifier and keys as JSON. See ``toJSON()``.
     public func toJSONData() -> Data {
       Data(self.toJSON())
@@ -238,6 +357,30 @@
   extension MMKVError: LocalizedError {
     public var errorDescription: String? {
       self.message
+    }
+  }
+
+  // MARK: - ChangeBatch
+
+  extension MMKVStore.ChangeBatch {
+    /// Decodes the JSON string the store now holds for `key`, as
+    /// ``MMKVStore/decode(_:forKey:)`` does.
+    ///
+    /// - Returns: The value, or `nil` if the key has no value.
+    /// - Throws: A `DecodingError` if the stored value does not decode, and an ``MMKVError``
+    ///   when the store is suspended or closed.
+    public func decode<T: Decodable>(_ type: T.Type = T.self, forKey key: String) throws -> T? {
+      try self.decode(type, forKey: key, with: JSONDecoder())
+    }
+  }
+
+  // MARK: - Helpers
+
+  /// Decodes JSON with a decoder of its own for each value, so that it can be shared between
+  /// threads whatever the platform's `JSONDecoder` allows.
+  private struct SendableJSONDecoder: MMKVTopLevelDecoder, Sendable {
+    func decode<T: Decodable>(_ type: T.Type, from input: Data) throws -> T {
+      try JSONDecoder().decode(type, from: input)
     }
   }
 #endif

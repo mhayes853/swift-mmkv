@@ -262,13 +262,31 @@ observable as one:
 ```swift
 store.keys(underKey: "settings")  // ["settings.theme", "settings.sync.isEnabled"]
 
-let subscription = store.subscribe(underKey: "settings") {
-  settings = try? store.decode(Settings.self, fromKeysUnder: "settings")
+let subscription = store.subscribe(underKey: "settings") { batch in
+  print("changed:", batch.keys)  // only the keys at or under "settings"
+  settings = try? batch.decode(Settings.self, fromKeysUnder: "settings")
 }
 ```
 
-The subscription runs once for each key that changes, after the whole value is written, so
-the closure above never reads a value that is half written.
+The subscription runs once for each operation that changes such keys, after everything the
+operation writes is written, so the closure above never reads a value that is half written.
+
+`subscribe(fromKeysUnder:as:)` does the decoding too, and `values(fromKeysUnder:as:)` gives the
+same values as an `AsyncSequence`:
+
+```swift
+let subscription = store.subscribe(fromKeysUnder: "settings", as: Settings.self) { result in
+  settings = (try? result.get()) ?? Settings()
+}
+
+for try await settings in store.values(fromKeysUnder: "settings", as: Settings?.self) {
+  apply(settings ?? Settings())
+}
+```
+
+Both read the value the way `decode(_:fromKeysUnder:)` does. A type that needs keys the store
+does not have is a failure, which ends the sequence, so observe an optional if the keys may be
+missing.
 
 ## Typed keys
 
@@ -346,6 +364,18 @@ let subscription = store.subscribe(for: .settings) { result in
 }
 ```
 
+`subscribe(for:)` also takes two or more keys of one kind, and delivers their values together,
+once for each operation that changes any of them. Coded keys deliver a `Result` each, so one value
+that does not decode does not hide the others:
+
+```swift
+let subscription = store.subscribe(for: .username, .avatarURL) { username, avatarURL in
+  header.show(username: username, avatarURL: avatarURL)
+}
+```
+
+To follow keys of different kinds together, read them from the batch `subscribe(_:)` gives.
+
 See [Change listeners](#change-listeners) for when these run.
 
 Two things to know about coded keys that are given their coders:
@@ -406,6 +436,22 @@ and listeners are told about the keys it changed once it returns.
 
 A batch is not atomic if the process is killed during it: the values written by then are kept.
 
+`update` reads a value, lets a closure change it, and writes the result under the same lock, so
+that a counter or a toggle loses nothing to another thread or process:
+
+```swift
+store.update(forKey: "launchCount", as: Int.self) { $0 = ($0 ?? 0) + 1 }
+store.update(for: .launchCount) { $0 += 1 }            // DefaultedKey<Int>
+try store.update(for: .settings) { $0.theme = .dark }  // DefaultedCodedKey<Settings>
+try store.update(keysUnder: "settings", as: Settings.self) { $0.theme = "dark" }
+try store.update(jsonForKey: "settings", as: Settings.self) { $0?.theme = .dark }  // Foundation
+```
+
+The closure gets `nil` for a key without a value, or the default of a defaulted key, and setting
+an optional value to `nil` removes the key. Nothing is written if the closure throws. The write
+gives the key a new expiry, since the one it had cannot be read back. A suspended or closed store
+does not run the closure: the versions that cannot throw return `false`, and the others throw.
+
 A store's file grows as values are written and does not shrink by itself. `byteSize` is the size
 of the file, `usedByteSize` is how much of it holds data, and `trim()` rewrites the file without
 the space that removed and overwritten values left behind:
@@ -414,6 +460,14 @@ the space that removed and overwritten values left behind:
 if store.byteSize > 4 * 1024 * 1024 {
   store.trim()
 }
+```
+
+A store also keeps its contents in memory. `releaseMemory()` lets go of that, and of the store's
+mapping of its file, without losing anything: the next read or write loads the file again. Call
+it for a large or seldom used store when the system reports that memory is short.
+
+```swift
+cacheStore.releaseMemory()
 ```
 
 ## Store directories
@@ -485,9 +539,9 @@ files as they then are, and may open them with another mode or encryption key.
 
 Closing waits for the operations other threads have under way, so a value that is being
 encoded into several keys is written whole. Every `MMKVStore` over the same files is closed
-together, since they share the open files. Their listeners are told once more, with
-`.external`, because every value now reads as `nil`, and are told nothing after that; `changes`
-and the sequences of a key's values end.
+together, since they share the open files. Their listeners are told once more, of an external
+change, because every value now reads as `nil`, and are told nothing after that; `changes` and
+the sequences of a key's values end.
 
 `isClosed` says whether a store has been closed. The Observation framework tracks it, as it
 tracks `isSuspended`, so a SwiftUI view that reads it is drawn again when the store closes.
@@ -556,18 +610,36 @@ try directory.restoreAllStores(from: backups)
 ## Change listeners
 
 ```swift
-let subscription = store.subscribe { change in
-  switch change {
-  case .key(let key): print("changed:", key)
-  case .external: print("changed by another process or copy of MMKV")
+let subscription = store.subscribe { batch in
+  for key in batch.keys {
+    print("changed:", key, batch.value(forKey: key, as: String.self) ?? "removed")
   }
+  if batch.isExternal { print("changed by another process or copy of MMKV") }
 }
 subscription.cancel()
 ```
 
-`.key` is reported for writes and removals made through this package in this process. `.external`
-carries no key, and a store only notices an external change when it is next used or when
-`checkForExternalChanges()` is called.
+A listener is given one batch for each operation that changes the store. An operation is one
+call, or everything the body of a `withExclusiveLock` does, so a body that writes three keys is
+one batch of three, delivered after all three are written. `keys` holds the keys that were
+written or removed through this package in this process, each once.
+
+`isExternal` says another process, or another copy of MMKV, changed the store. Such a change
+carries no keys, so any key may have changed. A store only notices one when it is next used or
+when `checkForExternalChanges()` is called.
+
+A batch reads the store it came from, with `value(forKey:as:)`, `value(for:)` for any kind of
+[typed key](#typed-keys), and `decode` for `Codable` values. Each read gives what the store
+holds when it is made, which is what the operation wrote unless something has written since.
+
+`subscribe(forKey:)` and `subscribe(underKey:)` give the batches that may have changed one key,
+or the keys under a prefix, with `keys` narrowed to those:
+
+```swift
+let subscription = store.subscribe(forKey: "token") { batch in
+  if batch.value(forKey: "token", as: String.self) == nil { signOut() }
+}
+```
 
 To follow one key, subscribe to it. The listener is given the current value straight away, and
 again after each change:
@@ -591,16 +663,13 @@ for try await settings in store.values(forKey: "settings", as: Settings.self, wi
 }
 ```
 
-`changes` gives every change to the store as an `AsyncSequence`, the counterpart of
-`subscribe(_:)`. A consumer that falls behind misses no key, but receives a key that changed
-several times in the meantime once.
+`changes` gives the same batches as an `AsyncSequence`, the counterpart of `subscribe(_:)`. A
+consumer that falls behind misses no key, but receives the batches that are waiting as one, with
+each key once.
 
 ```swift
-for await change in store.changes {
-  switch change {
-  case .key(let key): print("changed:", key)
-  case .external: print("changed elsewhere")
-  }
+for await batch in store.changes {
+  print("changed:", batch.keys)
 }
 ```
 
@@ -615,6 +684,17 @@ let subscription = store.subscribe(forKey: "settings", as: Settings.self, with: 
   }
 }
 ```
+
+To follow several keys by name, pass them together. The listener is given the values by key,
+read together, once for each operation that changes any of them. A key with no value is left out:
+
+```swift
+let subscription = store.subscribe(forKeys: ["width", "height"], as: Double.self) { size in
+  resize(width: size["width"] ?? 0, height: size["height"] ?? 0)
+}
+```
+
+The decoding form, `subscribe(forKeys:as:with:)`, gives each key a `Result` of its own.
 
 Both can deliver the value they last delivered. They run whenever the key is written, even with
 the same value, and on every external change, which does not say which keys it touched. To see
@@ -844,6 +924,9 @@ The library itself does not use Foundation. The `Foundation` trait, on by defaul
   `MMKVValueWriter`, for a type of your own that stores one of them.
 - `JSONEncoder`, `JSONDecoder`, and the property list coders as coders for `encode` and
   `decode`, with JSON as the default when no coder is passed.
+- `update(jsonForKey:as:)`, which updates a value stored as JSON in place.
+- `subscribe(jsonForKey:as:)`, `subscribe(jsonForKeys:as:)` and `values(jsonForKey:as:)`, which
+  follow values stored as JSON.
 
 Turn it off with `traits: []` on the package dependency.
 
@@ -925,6 +1008,14 @@ coders, and a coder's error or a rejected write shows up in `loadError` or `save
 @Shared(.mmkv(.username)) var username: String?  // MMKVStore.Key<String>
 @Shared(.mmkv(.volume)) var volume               // MMKVStore.DefaultedKey<Double>
 @Shared(.mmkv(.settings)) var settings           // MMKVStore.DefaultedCodedKey<Settings>
+```
+
+A `Codable` value can also be spread over the keys under a prefix, one key for each of its
+properties, as [`encode(_:intoKeysUnder:)`](#spreading-a-value-over-keys) stores it. The state follows a
+change to any of those keys:
+
+```swift
+@Shared(.mmkv(keysUnder: "profile")) var profile = Profile()  // profile.name, profile.age
 ```
 
 The keys use the store in the `defaultMMKVStore` dependency unless one is passed as `store:`.
@@ -1100,6 +1191,9 @@ are left to each language to build in its own idiom.
 - A handle is released with the function that matches the one that made it.
 - A callback takes a context pointer, and an optional function that releases the context once
   the callback can no longer be called.
+- A change listener is given a `swiftmmkv_change_batch` for each operation that changes the
+  store: the keys the operation wrote or removed, and whether the change came from outside. The
+  batch is lent for the length of the call, and the values are read from the store.
 
 The interface is written with `@c` and `@implementation`, so the compiler checks every function
 against the header. `Scripts/check-c-interface.sh` checks the other direction, that everything

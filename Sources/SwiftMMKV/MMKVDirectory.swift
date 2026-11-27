@@ -239,8 +239,8 @@ extension MMKVDirectory {
   /// `backup`, creating the store if it does not exist.
   ///
   /// A store that is open is reloaded, so every ``MMKVStore`` over it reads the restored values
-  /// and its listeners receive ``MMKVStore/Change/external``. Other processes that have the
-  /// store open notice the change as they notice any other.
+  /// and its listeners are told of an external change. Other processes that have the store
+  /// open notice the change as they notice any other.
   ///
   /// The store's file is overwritten in place, because other processes may have it open. If
   /// the process stops partway, the file is left partly written, and the store's

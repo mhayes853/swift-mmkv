@@ -258,6 +258,10 @@ extension CxxEngine {
     mmkv_sync(self.handle)
   }
 
+  func clearMemoryCache() {
+    mmkv_clear_memory_cache(self.handle)
+  }
+
   var isExpiryEnabled: Bool {
     mmkv_is_expiry_enabled(self.handle)
   }

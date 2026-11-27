@@ -294,9 +294,7 @@ extension MMKVStore {
         self.core.set(values[key]!, forKey: key, expiresInSeconds: expiresInSeconds)
       }
     }
-    for key in stored {
-      self.core.state.notify(.key(key))
-    }
+    self.core.state.notify(keys: stored)
     return stored.count == values.count
   }
 }
@@ -337,7 +335,7 @@ extension MMKVStore {
       return (self.core.remove(key), didExist)
     }
     if didRemove && didExist {
-      self.core.state.notify(.key(key))
+      self.core.state.notify(key: key)
     }
     return didRemove
   }
@@ -398,9 +396,7 @@ extension MMKVStore {
   }
 
   private func didRemove(_ keys: [String]) {
-    for key in keys {
-      self.core.state.notify(.key(key))
-    }
+    self.core.state.notify(keys: keys)
   }
 }
 
@@ -430,9 +426,7 @@ extension MMKVStore {
     let count = self.core.importAll(from: other.core)
     if hasListeners && count > 0 {
       keys.formUnion(other.core.keys)
-      for key in keys {
-        self.core.state.notify(.key(key))
-      }
+      self.core.state.notify(keys: Array(keys))
     }
     self.core.operationDidFinish()
     other.core.operationDidFinish()
@@ -486,58 +480,93 @@ extension MMKVStore {
 // MARK: - Changes
 
 extension MMKVStore {
-  /// A change to a store's contents.
-  public enum Change: Sendable, Hashable {
-    /// The value of a key was set or removed through this package, in this process.
-    case key(String)
-
-    /// Another process, or another copy of MMKV in this process, changed the store. Which keys
-    /// changed is not known.
-    ///
-    /// A store only notices such a change when it is next read or written, or when
-    /// ``MMKVStore/checkForExternalChanges()`` is called. Several changes may be reported as
-    /// one.
-    case external
-  }
-
-  /// Calls `onChange` whenever the store's contents change, until the returned subscription is
-  /// cancelled or released.
+  /// Calls `onChange` once for each operation that changes the store's contents, until the
+  /// returned subscription is cancelled or released.
+  ///
+  /// ```swift
+  /// let subscription = store.subscribe { batch in
+  ///   if batch.isExternal { print("changed elsewhere") }
+  ///   for key in batch.keys { print("changed:", key) }
+  /// }
+  /// ```
+  ///
+  /// An operation is one call, such as ``set(_:forKey:expiry:)`` or ``removeValues(forKeys:)``,
+  /// or everything the body of a ``withExclusiveLock(_:)`` does. So a body that writes three
+  /// keys runs `onChange` once, after all three are written, with a batch of the three.
   ///
   /// The listener is shared with every ``MMKVStore`` opened over the same files in this process.
   /// It runs on the thread that made or noticed the change, after the operation has returned,
   /// and may read and write the store.
   ///
-  /// ```swift
-  /// let subscription = store.subscribe { change in
-  ///   switch change {
-  ///   case .key(let key): print("changed:", key)
-  ///   case .external: print("changed elsewhere")
-  ///   }
-  /// }
-  /// ```
+  /// - Parameter onChange: Runs after each operation that changes the store, with what it
+  ///   changed.
   public func subscribe(
-    _ onChange: @escaping @Sendable (Change) -> Void
+    _ onChange: @escaping @Sendable (ChangeBatch) -> Void
   ) -> MMKVSubscription {
-    self.core.state.subscribe(onChange)
+    self.core.state.subscribe { changes in
+      onChange(ChangeBatch(store: self, keys: changes.keys, isExternal: changes.isExternal))
+    }
   }
 
-  /// Calls `onChange` whenever the value of `key` may have changed, until the returned
-  /// subscription is cancelled or released.
+  /// Calls `onChange` once for each operation that may have changed the value of `key`, until
+  /// the returned subscription is cancelled or released.
   ///
-  /// That is whenever `key` is set or removed through this package, and whenever a
-  /// ``Change/external`` change is noticed, since such a change does not say which keys it
-  /// touched. In other respects this behaves like ``subscribe(_:)``.
+  /// That is each operation that sets or removes `key` through this package, and each external
+  /// change that is noticed, since such a change does not say which keys it touched. The
+  /// batch's ``ChangeBatch/keys`` holds `key` alone, or nothing when only an external change
+  /// was noticed. In other respects this behaves like ``subscribe(_:)``.
   ///
   /// - Parameters:
   ///   - key: The key to observe.
-  ///   - onChange: Runs after each change.
+  ///   - onChange: Runs after each such operation.
   public func subscribe(
     forKey key: String,
-    _ onChange: @escaping @Sendable () -> Void
+    _ onChange: @escaping @Sendable (ChangeBatch) -> Void
   ) -> MMKVSubscription {
-    self.subscribe { change in
-      if case .key(let changed) = change, changed != key { return }
-      onChange()
+    self.core.state.subscribe { changes in
+      let keys = changes.keys.contains(key) ? [key] : []
+      guard !keys.isEmpty || changes.isExternal else { return }
+      onChange(ChangeBatch(store: self, keys: keys, isExternal: changes.isExternal))
+    }
+  }
+
+  /// Calls `onChange` once for each operation that may have changed `prefix` or a key under
+  /// it, until the returned subscription is cancelled or released.
+  ///
+  /// ```swift
+  /// let subscription = store.subscribe(underKey: "settings") { batch in
+  ///   settings = try? batch.decode(Settings.self, fromKeysUnder: "settings")
+  /// }
+  /// ```
+  ///
+  /// That is each operation that sets or removes such a key through this package, and each
+  /// external change that is noticed, since such a change does not say which keys it touched.
+  /// The batch's ``ChangeBatch/keys`` holds only the keys at or under `prefix`. An
+  /// ``encode(_:intoKeysUnder:removingOtherKeys:expiry:options:)`` that writes three keys runs
+  /// `onChange` once, after all three are written, and so does a ``withExclusiveLock(_:)``
+  /// whose body writes them one at a time. In other respects this behaves like
+  /// ``subscribe(_:)``.
+  ///
+  /// A key is under `prefix` when it starts with `prefix` and `separator`. An empty `prefix`
+  /// has every key under it.
+  ///
+  /// To be given the value those keys hold, use
+  /// ``subscribe(fromKeysUnder:as:options:_:)``.
+  ///
+  /// - Parameters:
+  ///   - prefix: The start of the keys to observe.
+  ///   - separator: What joins a prefix and the rest of a key.
+  ///   - onChange: Runs after each such operation.
+  public func subscribe(
+    underKey prefix: String,
+    separator: String = ".",
+    _ onChange: @escaping @Sendable (ChangeBatch) -> Void
+  ) -> MMKVSubscription {
+    let names = KeyNames(separator: separator)
+    return self.core.state.subscribe { changes in
+      let keys = changes.keys.filter { names.isAtOrUnder($0, prefix) }
+      guard !keys.isEmpty || changes.isExternal else { return }
+      onChange(ChangeBatch(store: self, keys: keys, isExternal: changes.isExternal))
     }
   }
 
@@ -553,8 +582,8 @@ extension MMKVStore {
   ///
   /// The value is `nil` when the store has no value for `key`, or when its value is not a
   /// valid `V`. `onChange` may be given the value it was last given: it runs whenever `key` is
-  /// written, and whenever a ``Change/external`` change is noticed, since such a change does
-  /// not say which keys it touched. In other respects this behaves like ``subscribe(_:)``.
+  /// written, and whenever an external change is noticed, since such a change does not say
+  /// which keys it touched. In other respects this behaves like ``subscribe(_:)``.
   ///
   /// - Parameters:
   ///   - key: The key to observe.
@@ -565,7 +594,7 @@ extension MMKVStore {
     as type: V.Type = V.self,
     _ onChange: @escaping @Sendable (V?) -> Void
   ) -> MMKVSubscription {
-    let subscription = self.subscribe(forKey: key) {
+    let subscription = self.subscribe(forKey: key) { _ in
       onChange(self.value(forKey: key, as: V.self))
     }
     onChange(self.value(forKey: key, as: V.self))
@@ -604,7 +633,7 @@ extension MMKVStore {
     with decoder: Decoder,
     _ onChange: @escaping @Sendable (Result<T?, any Error>) -> Void
   ) -> MMKVSubscription where Decoder.Input: MMKVValue {
-    let subscription = self.subscribe(forKey: key) {
+    let subscription = self.subscribe(forKey: key) { _ in
       onChange(Result { try self.decode(T.self, forKey: key, with: decoder) })
     }
     onChange(Result { try self.decode(T.self, forKey: key, with: decoder) })
@@ -612,7 +641,7 @@ extension MMKVStore {
   }
 
   /// Checks whether another process, or another copy of MMKV, changed the store, reloading it
-  /// and notifying listeners with ``Change/external`` if so.
+  /// and telling listeners of an external change if so.
   ///
   /// Reads and writes make the same check, so this is only needed to notice a change while the
   /// store is otherwise idle. It does nothing for a single-process store.
@@ -674,14 +703,14 @@ extension MMKVStore {
 
   /// Lets the store take its file lock again.
   ///
-  /// Listeners are told with ``Change/external`` if the store was suspended, because reads
-  /// were turned away in the meantime and another process may have changed the store.
+  /// Listeners are told of an external change if the store was suspended, because reads were
+  /// turned away in the meantime and another process may have changed the store.
   public func resume() {
     guard self.core.isSuspended else { return }
     let didResume = self.core.state.observationRegistrar
       .withMutation(of: self, keyPath: \.isSuspended) { self.core.resume() }
     if didResume {
-      self.core.state.notify(.external)
+      self.core.state.notifyExternalChange()
     }
   }
 
@@ -736,7 +765,7 @@ extension MMKVStore {
   /// Every ``MMKVStore`` over the same files is closed together, including one that is made
   /// while this is waiting. Closing twice has no further effect.
   ///
-  /// Listeners are told once more, with ``Change/external``, because every value now reads as
+  /// Listeners are told once more, of an external change, because every value now reads as
   /// `nil`. They are told nothing after that, and ``changes`` and the sequences of a key's
   /// values end.
   ///
@@ -797,6 +826,26 @@ extension MMKVStore {
   /// Rewrites the store's file without the space left behind by removed and overwritten values.
   public func trim() {
     self.core.trim()
+    self.core.operationDidFinish()
+  }
+
+  /// Lets go of the memory the store holds: its in-memory copy of its contents, and its mapping
+  /// of its file. Nothing is lost, and the next read or write loads the file again.
+  ///
+  /// ```swift
+  /// // On a memory warning.
+  /// cacheStore.releaseMemory()
+  /// ```
+  ///
+  /// This is for a store that is large or seldom used, when the system reports that memory is
+  /// short. Loading the file again costs as much as opening the store did, so calling this on a
+  /// store that is about to be read gains nothing.
+  ///
+  /// The store's contents do not change, so listeners are not told anything. Every
+  /// ``MMKVStore`` over the same files shares the memory this lets go of. A suspended or closed
+  /// store turns this away like any other operation, so it does nothing to either.
+  public func releaseMemory() {
+    self.core.clearMemoryCache()
     self.core.operationDidFinish()
   }
 
@@ -876,7 +925,7 @@ extension MMKVStore {
   /// Replaces the store's contents with those of its copy in `backup`.
   ///
   /// Every ``MMKVStore`` over the same files reads the restored values afterwards, and the
-  /// store's listeners receive ``Change/external``. See
+  /// store's listeners are told of an external change. See
   /// ``MMKVDirectory/restoreStore(id:from:)``.
   ///
   /// - Returns: Whether `backup` held a copy of the store.

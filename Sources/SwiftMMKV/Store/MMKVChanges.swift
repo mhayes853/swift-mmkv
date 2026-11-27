@@ -1,14 +1,12 @@
 // MARK: - Sequence
 
 extension MMKVStore {
-  /// The changes to the store's contents over time, as ``subscribe(_:)`` reports them.
+  /// What each operation changes in the store over time, as ``subscribe(_:)`` reports it.
   ///
   /// ```swift
-  /// for await change in store.changes {
-  ///   switch change {
-  ///   case .key(let key): print("changed:", key)
-  ///   case .external: print("changed elsewhere")
-  ///   }
+  /// for await batch in store.changes {
+  ///   if batch.isExternal { print("changed elsewhere") }
+  ///   for key in batch.keys { print("changed:", key) }
   /// }
   /// ```
   ///
@@ -21,9 +19,9 @@ extension MMKVStore {
   ///
   /// ## Falling behind
   ///
-  /// A consumer that falls behind misses no key, but receives each waiting change once: a key
-  /// written several times in the meantime is produced once, and so are several
-  /// ``Change/external`` changes. Changes are produced in the order they first arrived.
+  /// A consumer that falls behind misses no key, but receives the batches that are waiting as
+  /// one: its ``ChangeBatch/keys`` holds every key they changed, each once and in the order it
+  /// first changed, and it is external if any of them was.
   public var changes: MMKVChanges {
     MMKVChanges(store: self)
   }
@@ -31,7 +29,7 @@ extension MMKVStore {
 
 // MARK: - MMKVChanges
 
-/// The changes to an ``MMKVStore`` over time, from ``MMKVStore/changes``.
+/// What each operation changes in an ``MMKVStore`` over time, from ``MMKVStore/changes``.
 public struct MMKVChanges: AsyncSequence, Sendable {
   private let store: MMKVStore
 
@@ -50,12 +48,14 @@ public struct MMKVChanges: AsyncSequence, Sendable {
       self.pending = PendingChanges(store: store)
     }
 
-    public mutating func next() async -> MMKVStore.Change? {
+    public mutating func next() async -> MMKVStore.ChangeBatch? {
       await self.pending.next()
     }
 
     @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
-    public mutating func next(isolation actor: isolated (any Actor)?) async -> MMKVStore.Change? {
+    public mutating func next(
+      isolation actor: isolated (any Actor)?
+    ) async -> MMKVStore.ChangeBatch? {
       await self.pending.next(isolation: actor)
     }
   }

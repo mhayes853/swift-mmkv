@@ -233,6 +233,10 @@ extension SwiftEngine {
     self.store.sync()
   }
 
+  func clearMemoryCache() {
+    self.store.clearMemoryCache()
+  }
+
   var isExpiryEnabled: Bool {
     self.store.isExpiryEnabled
   }

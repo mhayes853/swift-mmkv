@@ -172,10 +172,40 @@ func makeUnopenedStoreFiles(at path: String) throws {
   }
 }
 
-/// Collects the changes a store reports.
-typealias ChangeRecorder = ValueRecorder<MMKVStore.Change>
+/// One part of a ``MMKVStore/ChangeBatch``, in a form that can be compared.
+enum Change: Hashable, Sendable {
+  case key(String)
+  case external
+}
 
-/// Collects the values a subscription delivers.
+extension MMKVStore.ChangeBatch {
+  /// The keys of the batch in order, followed by whether it is external.
+  var changes: [Change] {
+    self.keys.map(Change.key) + (self.isExternal ? [.external] : [])
+  }
+}
+
+/// Collects the changes a store reports.
+final class ChangeRecorder: Sendable {
+  private let changes = NSLock()
+  nonisolated(unsafe) private var recorded = [[Change]]()
+
+  /// The changes of every batch, one after another.
+  var all: [Change] {
+    self.changes.withLock { self.recorded.flatMap { $0 } }
+  }
+
+  /// The changes of each batch.
+  var batches: [[Change]] {
+    self.changes.withLock { self.recorded }
+  }
+
+  func record(_ batch: MMKVStore.ChangeBatch) {
+    self.changes.withLock { self.recorded.append(batch.changes) }
+  }
+}
+
+/// Collects the values a per-key subscription delivers.
 final class ValueRecorder<Value: Sendable>: Sendable {
   private let values = NSLock()
   nonisolated(unsafe) private var recorded = [Value]()
@@ -205,6 +235,11 @@ extension Result {
   /// The success, or `nil` for a failure, to compare what a subscription delivered.
   var success: Success? {
     try? self.get()
+  }
+
+  /// The failure, or `nil` for a success.
+  var failure: Failure? {
+    if case .failure(let error) = self { error } else { nil }
   }
 }
 

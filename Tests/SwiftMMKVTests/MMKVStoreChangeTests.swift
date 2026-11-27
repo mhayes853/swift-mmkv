@@ -89,9 +89,9 @@ import Testing
   @Test func `A Listener May Use The Store It Observes`() throws {
     let store = try makeStore()
     let recorder = ChangeRecorder()
-    let subscription = store.subscribe { change in
-      recorder.record(change)
-      if change == .key("source") {
+    let subscription = store.subscribe { batch in
+      recorder.record(batch)
+      if batch.keys == ["source"] {
         store.set(store.value(forKey: "source", as: Double.self)! * 2, forKey: "derived")
       }
     }
@@ -197,17 +197,17 @@ import Testing
     let (first, second) = try makeLinkedStores(mode: .multiProcess)
     first.set("initial", forKey: "a")
     _ = second.value(forKey: "a", as: String.self)
-    let recorder = ChangeRecorder()
-    let subscription = second.subscribe { change in
-      if change == .external {
-        recorder.record(.key(second.value(forKey: "a", as: String.self) ?? "missing"))
+    let recorder = ValueRecorder<String?>()
+    let subscription = second.subscribe { batch in
+      if batch.isExternal {
+        recorder.record(second.value(forKey: "a", as: String.self))
       }
     }
 
     first.set("changed", forKey: "a")
     second.checkForExternalChanges()
 
-    #expect(recorder.all == [.key("changed")])
+    #expect(recorder.all == ["changed"])
     subscription.cancel()
   }
 

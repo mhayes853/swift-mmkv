@@ -96,6 +96,10 @@ protocol MMKVEngine: Sendable {
   func trim()
   func sync()
 
+  /// Lets go of the in-memory copy of the store's contents and of its mapping of the file. The
+  /// next operation loads the file again.
+  func clearMemoryCache()
+
   /// Whether the store's file records when each key expires.
   var isExpiryEnabled: Bool { get }
 

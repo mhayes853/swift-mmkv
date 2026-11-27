@@ -624,7 +624,7 @@ private let settings = Settings(
   @Test func `Runs For A Key And The Keys Under It`() throws {
     let store = try makeStore()
     let recorder = ValueRecorder<Int>()
-    let subscription = store.subscribe(underKey: "settings") { recorder.record(0) }
+    let subscription = store.subscribe(underKey: "settings") { _ in recorder.record(0) }
 
     store.set("value", forKey: "settings")
     store.set("value", forKey: "settings.theme")
@@ -642,7 +642,7 @@ private let settings = Settings(
   @Test func `An Empty Prefix Runs For Every Key`() throws {
     let store = try makeStore()
     let recorder = ValueRecorder<Int>()
-    let subscription = store.subscribe(underKey: "") { recorder.record(0) }
+    let subscription = store.subscribe(underKey: "") { _ in recorder.record(0) }
 
     store.set("value", forKey: "a.x")
     store.set("value", forKey: "b")
@@ -654,7 +654,7 @@ private let settings = Settings(
   @Test func `Uses The Separator`() throws {
     let store = try makeStore()
     let recorder = ValueRecorder<Int>()
-    let subscription = store.subscribe(underKey: "a", separator: "/") { recorder.record(0) }
+    let subscription = store.subscribe(underKey: "a", separator: "/") { _ in recorder.record(0) }
 
     store.set("value", forKey: "a.x")
     store.set("value", forKey: "a/x")
@@ -663,24 +663,56 @@ private let settings = Settings(
     subscription.cancel()
   }
 
-  @Test func `Runs Once For Each Key Of An Encoded Value, After All Are Written`() throws {
+  @Test func `Runs Once For An Encoded Value, After All Of Its Keys Are Written`() throws {
     let store = try makeStore()
     let recorder = ValueRecorder<Settings?>()
-    let subscription = store.subscribe(underKey: "settings") {
-      recorder.record(try? store.decode(Settings.self, fromKeysUnder: "settings"))
+    let subscription = store.subscribe(underKey: "settings") { batch in
+      recorder.record(try? batch.decode(Settings.self, fromKeysUnder: "settings"))
     }
 
     try store.encode(settings, intoKeysUnder: "settings")
     try store.encode(settings, intoKeysUnder: "profile")
 
-    #expect(recorder.all == [settings, settings, settings, settings])
+    #expect(recorder.all == [settings])
+    subscription.cancel()
+  }
+
+  @Test func `Runs Once For A Locked Body That Changes Several Keys`() throws {
+    let store = try makeStore()
+    let recorder = ValueRecorder<Int>()
+    let subscription = store.subscribe(underKey: "settings") { _ in recorder.record(0) }
+
+    store.withExclusiveLock { store in
+      store.set("dark", forKey: "settings.theme")
+      store.set(16.0, forKey: "settings.fontSize")
+      store.set("value", forKey: "other")
+      store.removeValue(forKey: "settings.theme")
+    }
+    #expect(recorder.all.count == 1)
+
+    store.withExclusiveLock { store in
+      store.set("value", forKey: "other")
+    }
+    #expect(recorder.all.count == 1)
+    subscription.cancel()
+  }
+
+  @Test func `Runs Once For Several Keys Removed Together`() throws {
+    let store = try makeStore()
+    try store.encode(settings, intoKeysUnder: "settings")
+    let recorder = ValueRecorder<Int>()
+    let subscription = store.subscribe(underKey: "settings") { _ in recorder.record(0) }
+
+    store.removeValues(underKey: "settings")
+
+    #expect(recorder.all.count == 1)
     subscription.cancel()
   }
 
   @Test func `Runs For An External Change`() throws {
     let store = try makeStore(mode: .multiProcess)
     let recorder = ValueRecorder<Int>()
-    let subscription = store.subscribe(underKey: "settings") { recorder.record(0) }
+    let subscription = store.subscribe(underKey: "settings") { _ in recorder.record(0) }
 
     store.suspend()
     store.resume()
@@ -692,12 +724,317 @@ private let settings = Settings(
   @Test func `Stops When Cancelled`() throws {
     let store = try makeStore()
     let recorder = ValueRecorder<Int>()
-    let subscription = store.subscribe(underKey: "a") { recorder.record(0) }
+    let subscription = store.subscribe(underKey: "a") { _ in recorder.record(0) }
 
     subscription.cancel()
     store.set("value", forKey: "a.x")
 
     #expect(recorder.all.isEmpty)
+  }
+}
+
+@Suite struct MMKVStoreSubscribeFromKeysUnderTests {
+  @Test func `Delivers The Current Value Immediately And Then Each Change`() throws {
+    let store = try makeStore()
+    try store.encode(settings, intoKeysUnder: "settings")
+    let recorder = ValueRecorder<Settings?>()
+    let subscription = store.subscribe(fromKeysUnder: "settings", as: Settings.self) {
+      recorder.record($0.success)
+    }
+    #expect(recorder.all == [settings])
+
+    var changed = settings
+    changed.theme = "light"
+    changed.sync.interval = 60
+    try store.encode(changed, intoKeysUnder: "settings")
+    #expect(recorder.all == [settings, changed])
+
+    store.set(20.0, forKey: "settings.fontSize")
+    var resized = changed
+    resized.fontSize = 20
+    #expect(recorder.all == [settings, changed, resized])
+    subscription.cancel()
+  }
+
+  @Test func `Never Delivers A Value That Is Partly Written`() throws {
+    let store = try makeStore()
+    let recorder = ValueRecorder<Result<Settings, any Error>>()
+    let subscription = store.subscribe(fromKeysUnder: "settings", as: Settings.self) {
+      recorder.record($0)
+    }
+
+    try store.encode(settings, intoKeysUnder: "settings")
+
+    #expect(recorder.all.count == 2)
+    #expect(recorder.all.first?.success == nil)
+    #expect(recorder.all.last?.success == settings)
+    subscription.cancel()
+  }
+
+  @Test func `A Value That Needs Missing Keys Is A Failure`() throws {
+    let store = try makeStore()
+    let recorder = ValueRecorder<Result<Settings, any Error>>()
+    let subscription = store.subscribe(fromKeysUnder: "settings", as: Settings.self) {
+      recorder.record($0)
+    }
+
+    #expect(recorder.all.count == 1)
+    #expect(throws: DecodingError.self) { try recorder.all[0].get() }
+    subscription.cancel()
+  }
+
+  @Test func `An Optional Is Nil While No Key Is Under The Prefix`() throws {
+    let store = try makeStore()
+    let recorder = ValueRecorder<Settings??>()
+    let subscription = store.subscribe(fromKeysUnder: "settings", as: Settings?.self) {
+      recorder.record($0.success)
+    }
+    #expect(recorder.all == [.some(nil)])
+
+    try store.encode(settings, intoKeysUnder: "settings")
+    store.removeValues(underKey: "settings")
+
+    #expect(recorder.all == [.some(nil), .some(settings), .some(nil)])
+    subscription.cancel()
+  }
+
+  @Test func `Ignores Keys That Are Not Under The Prefix`() throws {
+    let store = try makeStore()
+    try store.encode(settings, intoKeysUnder: "settings")
+    let recorder = ValueRecorder<Settings?>()
+    let subscription = store.subscribe(fromKeysUnder: "settings", as: Settings.self) {
+      recorder.record($0.success)
+    }
+
+    store.set("value", forKey: "settingsBackup")
+    store.set("value", forKey: "other.theme")
+    try store.encode(settings, intoKeysUnder: "profile")
+
+    #expect(recorder.all == [settings])
+    subscription.cancel()
+  }
+
+  @Test func `Uses The Options The Value Was Encoded With`() throws {
+    let store = try makeStore()
+    let options = MMKVKeyCodingOptions(separator: "/")
+    let recorder = ValueRecorder<Settings?>()
+    let subscription = store.subscribe(
+      fromKeysUnder: "settings",
+      as: Settings.self,
+      options: options
+    ) {
+      recorder.record($0.success)
+    }
+
+    try store.encode(settings, intoKeysUnder: "settings")
+    #expect(recorder.all == [nil])
+
+    try store.encode(settings, intoKeysUnder: "settings", options: options)
+    #expect(recorder.all == [nil, settings])
+    subscription.cancel()
+  }
+
+  @Test func `Delivers The Value Again After A Change Made Outside The Store`() throws {
+    let (other, store) = try makeLinkedStores(mode: .multiProcess)
+    let recorder = ValueRecorder<Settings?>()
+    let subscription = store.subscribe(fromKeysUnder: "settings", as: Settings.self) {
+      recorder.record($0.success)
+    }
+
+    try other.encode(settings, intoKeysUnder: "settings")
+    store.checkForExternalChanges()
+
+    #expect(recorder.all == [nil, settings])
+    subscription.cancel()
+  }
+
+  @Test func `Stops Delivering Once Cancelled`() throws {
+    let store = try makeStore()
+    let recorder = ValueRecorder<Settings?>()
+    let subscription = store.subscribe(fromKeysUnder: "settings", as: Settings.self) {
+      recorder.record($0.success)
+    }
+
+    subscription.cancel()
+    try store.encode(settings, intoKeysUnder: "settings")
+
+    #expect(recorder.all == [nil])
+  }
+
+  @Test func `A Suspended Store Is A Failure Until It Resumes`() throws {
+    let store = try makeStore(id: "subscribe-from-keys-suspended", mode: .multiProcess)
+    try store.encode(settings, intoKeysUnder: "settings")
+    store.suspend()
+    let recorder = ValueRecorder<Result<Settings, any Error>>()
+    let subscription = store.subscribe(fromKeysUnder: "settings", as: Settings.self) {
+      recorder.record($0)
+    }
+    #expect((recorder.all.first?.failure as? MMKVError)?.code == .storeIsSuspended)
+
+    store.resume()
+
+    #expect(recorder.all.last?.success == settings)
+    subscription.cancel()
+  }
+
+  @Test func `Closing The Store Delivers The Closure And Then Nothing`() throws {
+    let store = try makeStore(id: "subscribe-from-keys-closed")
+    try store.encode(settings, intoKeysUnder: "settings")
+    let recorder = ValueRecorder<Result<Settings, any Error>>()
+    let subscription = store.subscribe(fromKeysUnder: "settings", as: Settings.self) {
+      recorder.record($0)
+    }
+
+    store.close()
+
+    #expect(recorder.all.count == 2)
+    #expect(recorder.all.first?.success == settings)
+    #expect((recorder.all.last?.failure as? MMKVError)?.code == .storeIsClosed)
+    subscription.cancel()
+  }
+}
+
+@Suite struct MMKVValuesFromKeysUnderTests {
+  @Test func `Starts With The Current Value And Follows Each Change`() async throws {
+    let store = try makeStore()
+    try store.encode(settings, intoKeysUnder: "settings")
+    var values = store.values(fromKeysUnder: "settings", as: Settings.self).makeAsyncIterator()
+    #expect(try await values.next() == settings)
+
+    var changed = settings
+    changed.theme = nil
+    changed.sync.isEnabled = false
+    try store.encode(changed, intoKeysUnder: "settings")
+    #expect(try await values.next() == changed)
+
+    store.set(20.0, forKey: "settings.fontSize")
+    changed.fontSize = 20
+    #expect(try await values.next() == changed)
+  }
+
+  @Test func `An Optional Starts With Nil And Is Nil Again Once Its Keys Are Removed`()
+    async throws
+  {
+    let store = try makeStore()
+    var values = store.values(fromKeysUnder: "settings", as: Settings?.self).makeAsyncIterator()
+    #expect(try await values.next() == .some(nil))
+
+    try store.encode(settings, intoKeysUnder: "settings")
+    #expect(try await values.next() == .some(settings))
+
+    store.removeValues(underKey: "settings")
+    #expect(try await values.next() == .some(nil))
+  }
+
+  @Test func `Ignores Keys That Are Not Under The Prefix`() async throws {
+    let store = try makeStore()
+    var values = store.values(fromKeysUnder: "settings", as: Settings?.self).makeAsyncIterator()
+    #expect(try await values.next() == .some(nil))
+
+    store.set("value", forKey: "settingsBackup")
+    try store.encode(settings, intoKeysUnder: "profile")
+    store.set("value", forKey: "settings")
+    try store.encode(settings, intoKeysUnder: "settings")
+
+    #expect(try await values.next() == .some(settings))
+  }
+
+  @Test func `Uses The Options The Value Was Encoded With`() async throws {
+    let store = try makeStore()
+    let options = MMKVKeyCodingOptions(separator: "/")
+    try store.encode(settings, intoKeysUnder: "settings", options: options)
+
+    var values = store.values(fromKeysUnder: "settings", as: Settings.self, options: options)
+      .makeAsyncIterator()
+
+    #expect(try await values.next() == settings)
+  }
+
+  @Test func `A Value That Cannot Be Decoded Is Thrown And Ends The Sequence`() async throws {
+    let store = try makeStore()
+    var values = store.values(fromKeysUnder: "settings", as: Settings.self).makeAsyncIterator()
+
+    await #expect(throws: DecodingError.self) { try await values.next() }
+
+    try store.encode(settings, intoKeysUnder: "settings")
+    #expect(try await values.next() == nil)
+  }
+
+  @Test func `Each Iteration Observes Separately`() async throws {
+    let store = try makeStore()
+    let sequence = store.values(fromKeysUnder: "settings", as: Settings?.self)
+    var first = sequence.makeAsyncIterator()
+    var second = sequence.makeAsyncIterator()
+
+    try store.encode(settings, intoKeysUnder: "settings")
+
+    #expect(try await first.next() == .some(settings))
+    #expect(try await second.next() == .some(settings))
+  }
+
+  @Test func `Follows A Change Made Outside The Store Once It Is Noticed`() async throws {
+    let (other, store) = try makeLinkedStores(mode: .multiProcess)
+    var values = store.values(fromKeysUnder: "settings", as: Settings?.self).makeAsyncIterator()
+    #expect(try await values.next() == .some(nil))
+
+    try other.encode(settings, intoKeysUnder: "settings")
+    store.checkForExternalChanges()
+
+    #expect(try await values.next() == .some(settings))
+  }
+
+  @Test func `Ends When Its Task Is Cancelled`() async throws {
+    let store = try makeStore()
+    let (started, startedContinuation) = AsyncStream.makeStream(of: Void.self)
+    let task = Task {
+      var count = 0
+      for try await _ in store.values(fromKeysUnder: "settings", as: Settings?.self) {
+        count += 1
+        startedContinuation.yield()
+      }
+      return count
+    }
+    _ = await started.first { _ in true }
+
+    task.cancel()
+
+    #expect(try await task.value == 1)
+  }
+
+  @Test func `Closing The Store Ends The Sequence With The Closure`() async throws {
+    let store = try makeStore(id: "values-from-keys-closed")
+    try store.encode(settings, intoKeysUnder: "settings")
+    let (started, startedContinuation) = AsyncStream.makeStream(of: Void.self)
+    let task = Task {
+      var values = [Settings]()
+      do {
+        for try await value in store.values(fromKeysUnder: "settings", as: Settings.self) {
+          values.append(value)
+          startedContinuation.yield()
+        }
+        return (values, MMKVError.Code?.none)
+      } catch {
+        return (values, (error as? MMKVError)?.code)
+      }
+    }
+    for await _ in started { break }
+
+    store.close()
+
+    let (values, code) = await task.value
+    #expect(values == [settings])
+    #expect(code == .storeIsClosed)
+  }
+
+  @Test func `Produces Nothing While The Store Is Suspended`() async throws {
+    let store = try makeStore(id: "values-from-keys-suspended", mode: .multiProcess)
+    try store.encode(settings, intoKeysUnder: "settings")
+    store.suspend()
+    var values = store.values(fromKeysUnder: "settings", as: Settings.self).makeAsyncIterator()
+
+    store.resume()
+
+    #expect(try await values.next() == settings)
   }
 }
 

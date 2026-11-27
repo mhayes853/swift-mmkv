@@ -931,13 +931,12 @@ import Testing
       recorder.record("body done")
     }
 
-    #expect(recorder.events.first == "body done")
-    #expect(recorder.events.dropFirst().sorted() == ["key:a", "key:b"])
+    #expect(recorder.events == ["body done", "key:a,key:b"])
   }
 
   // MARK: - Changes
 
-  @Test func `A Subscription Hears Of Every Key Until It Is Cancelled`() throws {
+  @Test func `A Subscription Hears Of Every Operation Until It Is Cancelled`() throws {
     let store = try CStore()
     defer { store.destroy() }
     let recorder = CCallbackRecorder()
@@ -1039,10 +1038,108 @@ import Testing
     swiftmmkv_subscription_cancel(second)
   }
 
+  @Test func `A Prefix Subscription Hears Once Of Each Operation, With Its Keys`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    let recorder = CCallbackRecorder()
+    let subscription = swiftmmkv_store_subscribe_under(
+      store.handle,
+      "settings",
+      nil,
+      recorder.context,
+      CCallbackRecorder.onChange,
+      CCallbackRecorder.release
+    )
+
+    swiftmmkv_store_with_exclusive_lock(store.handle, nil) { _, locked in
+      _ = swiftmmkv_store_set_string(locked, "settings.theme", "dark", 0)
+      _ = swiftmmkv_store_set_double(locked, "settings.fontSize", 16, 0)
+      _ = swiftmmkv_store_set_bool(locked, "user", false, 0)
+    }
+    #expect(recorder.events == ["key:settings.theme,key:settings.fontSize"])
+
+    swiftmmkv_store_with_exclusive_lock(store.handle, nil) { _, locked in
+      _ = swiftmmkv_store_set_bool(locked, "user", true, 0)
+    }
+    #expect(recorder.events.count == 1)
+
+    swiftmmkv_store_remove_under(store.handle, "settings", nil)
+    #expect(recorder.events.count == 2)
+    #expect(
+      Set(recorder.events[1].split(separator: ","))
+        == ["key:settings.theme", "key:settings.fontSize"]
+    )
+
+    swiftmmkv_subscription_cancel(subscription)
+    #expect(swiftmmkv_store_set_bool(store.handle, "settings", true, 0) == true)
+    #expect(recorder.events.count == 2)
+    #expect(recorder.releases == 1)
+  }
+
+  @Test func `A Prefix Subscription Reads A Whole Value From Its Callback`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    let recorder = CCallbackRecorder()
+    let reading = CReadingContext(store: store.handle, recorder: recorder)
+    let subscription = swiftmmkv_store_subscribe_under(
+      store.handle,
+      "point",
+      nil,
+      Unmanaged.passUnretained(reading).toOpaque(),
+      { context, batch in
+        let reading = Unmanaged<CReadingContext>.fromOpaque(context!).takeUnretainedValue()
+        var (x, y): (Int32, Int32) = (0, 0)
+        _ = swiftmmkv_store_get_int32(reading.store, "point.x", &x)
+        _ = swiftmmkv_store_get_int32(reading.store, "point.y", &y)
+        reading.recorder.record("\(batch.pointee.key_count) keys: \(x),\(y)")
+      },
+      nil
+    )
+
+    swiftmmkv_store_with_exclusive_lock(store.handle, nil) { _, locked in
+      _ = swiftmmkv_store_set_int32(locked, "point.x", 1, 0)
+      _ = swiftmmkv_store_set_int32(locked, "point.y", 2, 0)
+    }
+
+    #expect(recorder.events == ["2 keys: 1,2"])
+    swiftmmkv_subscription_cancel(subscription)
+  }
+
+  @Test func `A Batch Has No Keys For A Change From Outside`() throws {
+    let (first, second) = try makeLinkedStores(mode: .multiProcess)
+    let configuration = first.configuration
+    let store = try CStore(
+      id: configuration.id.rawValue,
+      directory: configuration.directory.path,
+      mode: SWIFTMMKV_MODE_MULTI_PROCESS
+    )
+    defer { store.destroy() }
+    let recorder = CCallbackRecorder()
+    let subscription = swiftmmkv_store_subscribe_under(
+      store.handle,
+      "settings",
+      "/",
+      recorder.context,
+      CCallbackRecorder.onChange,
+      nil
+    )
+
+    #expect(swiftmmkv_store_set_bool(store.handle, "settings.theme", true, 0) == true)
+    #expect(recorder.events.isEmpty)
+    #expect(swiftmmkv_store_set_bool(store.handle, "settings/theme", true, 0) == true)
+    #expect(recorder.events == ["key:settings/theme"])
+
+    second.set("blob", forKey: "username")
+    swiftmmkv_store_check_for_external_changes(store.handle)
+
+    #expect(recorder.events == ["key:settings/theme", "external"])
+    swiftmmkv_subscription_cancel(subscription)
+  }
+
   @Test func `A Subscription Works Without A Context Or A Release`() throws {
     let store = try CStore()
     defer { store.destroy() }
-    let subscription = swiftmmkv_store_subscribe(store.handle, nil, { _, _, _ in }, nil)
+    let subscription = swiftmmkv_store_subscribe(store.handle, nil, { _, _ in }, nil)
 
     #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == true)
 
@@ -1237,6 +1334,7 @@ import Testing
     )
 
     swiftmmkv_store_trim(store.handle)
+    swiftmmkv_store_release_memory(store.handle)
     swiftmmkv_store_sync(store.handle)
 
     #expect(store.string(forKey: "username") == "blob")

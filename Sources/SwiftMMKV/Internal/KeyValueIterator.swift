@@ -1,4 +1,5 @@
-/// Produces the values of one key of a store over time, for the async sequences over a key.
+/// Produces the values of one key of a store, or of the keys under a prefix, over time, for the
+/// async sequences over them.
 ///
 /// The first wait returns at once, so that a sequence starts with the value the store holds.
 /// Changes that arrive between waits are folded into one, so a slow consumer only ever sees the
@@ -9,19 +10,31 @@ struct KeyValueIterator {
   private let subscription: MMKVSubscription
   private var isFinished = false
 
-  init(store: MMKVStore, key: String) {
+  /// The keys whose changes are waited for.
+  enum Keys: Sendable {
+    case one(String)
+    case under(String, separator: String)
+  }
+
+  init(store: MMKVStore, keys: Keys) {
     let (stream, continuation) = AsyncStream.makeStream(
       of: Void.self,
       bufferingPolicy: .bufferingNewest(1)
     )
     self.store = store
     // A closed store tells its listeners so once, and nothing after that.
-    self.subscription = store.subscribe(forKey: key) {
+    let onChange: @Sendable (MMKVStore.ChangeBatch) -> Void = { _ in
       continuation.yield()
       if store.isClosed {
         continuation.finish()
       }
     }
+    self.subscription =
+      switch keys {
+      case .one(let key): store.subscribe(forKey: key, onChange)
+      case .under(let prefix, let separator):
+        store.subscribe(underKey: prefix, separator: separator, onChange)
+      }
     continuation.yield()
     if store.isClosed {
       continuation.finish()

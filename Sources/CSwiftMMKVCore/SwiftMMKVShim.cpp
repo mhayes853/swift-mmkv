@@ -460,6 +460,8 @@ void mmkv_unlock(mmkv_store *store) {
 
 void mmkv_trim(mmkv_store *store) { core(store)->trim(); }
 
+void mmkv_clear_memory_cache(mmkv_store *store) { core(store)->clearMemoryCache(); }
+
 void mmkv_sync(mmkv_store *store) { core(store)->sync(); }
 
 void mmkv_check_content_changed(mmkv_store *store) {

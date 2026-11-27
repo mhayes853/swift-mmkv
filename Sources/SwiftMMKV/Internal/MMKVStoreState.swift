@@ -3,7 +3,9 @@
 /// An engine hands back the same instance for every open of a directory and identifier, so this
 /// is shared by every ``MMKVStore`` over that instance.
 final class MMKVStoreState: Sendable {
-  typealias Listener = @Sendable (MMKVStore.Change) -> Void
+  /// Called with what one operation changed. Changes that are held back while the store is
+  /// locked arrive together, once it is unlocked.
+  typealias Listener = @Sendable (StoreChanges) -> Void
 
   private struct Registrations: Sendable {
     var nextIdentifier: UInt64 = 0
@@ -43,24 +45,40 @@ final class MMKVStoreState: Sendable {
     }
   }
 
-  /// Tells listeners about a change made through this package, or holds it back while changes
-  /// are being deferred. A key that is changed more than once in that time is reported once.
-  func notify(_ change: MMKVStore.Change) {
+  /// Tells listeners that an operation changed `key`, or holds that back while changes are
+  /// being deferred. A key that is changed more than once in that time is reported once.
+  func notify(key: String) {
+    self.notify(StoreChanges(keys: [key], isExternal: false))
+  }
+
+  /// Tells listeners that one operation changed `keys`, together, or holds that back while
+  /// changes are being deferred.
+  func notify(keys: [String]) {
+    var seen = Set<String>()
+    self.notify(StoreChanges(keys: keys.filter { seen.insert($0).inserted }, isExternal: false))
+  }
+
+  /// Tells listeners that the store was changed from outside this package, or holds that back
+  /// while changes are being deferred.
+  func notifyExternalChange() {
+    self.notify(StoreChanges(keys: [], isExternal: true))
+  }
+
+  private func notify(_ changes: StoreChanges) {
+    guard !changes.isEmpty else { return }
     let listeners: [Listener]? = self.registrations.withLock { registrations in
       guard registrations.deferralDepth > 0 else { return Array(registrations.listeners.values) }
-      switch change {
-      case .key(let key):
-        if !registrations.pendingKeys.contains(key) {
-          registrations.pendingKeys.append(key)
-        }
-      case .external:
+      for key in changes.keys where !registrations.pendingKeys.contains(key) {
+        registrations.pendingKeys.append(key)
+      }
+      if changes.isExternal {
         registrations.hasPendingExternalChange = true
       }
       return nil
     }
     guard let listeners else { return }
     for listener in listeners {
-      listener(change)
+      listener(changes)
     }
   }
 
@@ -76,7 +94,7 @@ final class MMKVStoreState: Sendable {
       return Array(registrations.listeners.values)
     }
     for listener in listeners {
-      listener(.external)
+      listener(StoreChanges(keys: [], isExternal: true))
     }
   }
 
@@ -100,7 +118,7 @@ final class MMKVStoreState: Sendable {
   /// While changes are being deferred, the write is held back with the rest.
   ///
   /// When nothing was held back, which is what nearly every write finds, the registrations are
-  /// locked only once and nothing is allocated.
+  /// locked only once, and nothing is allocated unless there are listeners to tell.
   func deliverChanges(afterWritingTo key: String? = nil) {
     let delivery: Delivery = self.registrations.withLock { registrations in
       guard registrations.deferralDepth == 0 else {
@@ -113,10 +131,10 @@ final class MMKVStoreState: Sendable {
         guard let key, !registrations.listeners.isEmpty else { return .nothing }
         return .write(key, Array(registrations.listeners.values))
       }
-      var changes = registrations.pendingKeys.map(MMKVStore.Change.key)
-      if registrations.hasPendingExternalChange {
-        changes.append(.external)
-      }
+      let changes = StoreChanges(
+        keys: registrations.pendingKeys,
+        isExternal: registrations.hasPendingExternalChange
+      )
       registrations.pendingKeys = []
       registrations.hasPendingExternalChange = false
       return .heldBack(changes, Array(registrations.listeners.values))
@@ -125,18 +143,18 @@ final class MMKVStoreState: Sendable {
     case .nothing:
       return
     case .write(let key, let listeners):
+      let changes = StoreChanges(keys: [key], isExternal: false)
       for listener in listeners {
-        listener(.key(key))
+        listener(changes)
       }
     case .heldBack(let changes, let listeners):
-      for change in changes {
-        for listener in listeners {
-          listener(change)
-        }
+      for listener in listeners {
+        listener(changes)
       }
-      // The listeners may have changed while they were told about what was held back.
+      // The write is an operation of its own, and the listeners may have changed while they
+      // were told about what was held back.
       if let key {
-        self.notify(.key(key))
+        self.notify(key: key)
       }
     }
   }
@@ -147,7 +165,7 @@ final class MMKVStoreState: Sendable {
     /// Only the write to a key, as nothing was held back.
     case write(String, [Listener])
     /// The changes that were held back, which are told before the write.
-    case heldBack([MMKVStore.Change], [Listener])
+    case heldBack(StoreChanges, [Listener])
   }
 }
 
@@ -191,7 +209,7 @@ extension MMKVStoreState {
 
   /// Records an external change to every instance of a store with the identifier `id`. The C++
   /// core reports a change by identifier alone, so stores with the same identifier in different
-  /// directories are over-notified, which only costs a spurious `.external`.
+  /// directories are over-notified, which only costs a spurious external change.
   static func markExternalChange(id: String) {
     let states = Self.all.withLock { states in
       states.values.filter { $0.id.rawValue == id }
@@ -199,5 +217,18 @@ extension MMKVStoreState {
     for state in states {
       state.markExternalChange()
     }
+  }
+}
+
+/// What one operation changed in a store, before it is tied to the store a listener subscribed
+/// through.
+struct StoreChanges: Sendable {
+  /// The keys set or removed, each once, in order.
+  var keys: [String]
+  /// Whether the store was changed from outside this package.
+  var isExternal: Bool
+
+  var isEmpty: Bool {
+    self.keys.isEmpty && !self.isExternal
   }
 }

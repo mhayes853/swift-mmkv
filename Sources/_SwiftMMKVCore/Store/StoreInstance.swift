@@ -707,6 +707,12 @@ extension StoreInstance {
     self.withState { $0.trim() }
   }
 
+  /// Lets go of the in-memory copy of the contents and of the mapping of the data file, so that
+  /// the next operation loads the file again (`clearMemoryCache`).
+  package func clearMemoryCache() {
+    self.withState { $0.clearMemoryCache() }
+  }
+
   /// Removes every key, shrinking the file back to the expected capacity unless `keepSpace`
   /// (`clearAll`).
   package func clearAll(keepSpace: Bool = false) {

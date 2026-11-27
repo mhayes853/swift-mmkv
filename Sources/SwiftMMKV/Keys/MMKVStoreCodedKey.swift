@@ -164,7 +164,7 @@ extension MMKVStore {
     for key: CodedKey<V>,
     _ onChange: @escaping @Sendable (Result<V?, any Error>) -> Void
   ) -> MMKVSubscription {
-    let subscription = self.subscribe(forKey: key.name) {
+    let subscription = self.subscribe(forKey: key.name) { _ in
       onChange(Result { try key.read(self) })
     }
     onChange(Result { try key.read(self) })

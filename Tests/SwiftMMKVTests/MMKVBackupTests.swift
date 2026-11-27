@@ -110,8 +110,8 @@ import Testing
     let backup = MMKVDirectory(path: temporaryRootDirectory())
     store.set("dark", forKey: "theme")
     try store.backUp(to: backup)
-    let changes = ValueRecorder<MMKVStore.Change>()
-    let subscription = other.subscribe { changes.record($0) }
+    let changes = ChangeRecorder()
+    let subscription = other.subscribe(changes.record)
     defer { subscription.cancel() }
 
     try MMKVDirectory(path: rootDirectory).restoreStore(id: id, from: backup)

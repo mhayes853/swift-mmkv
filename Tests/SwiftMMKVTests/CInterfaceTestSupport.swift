@@ -116,6 +116,17 @@ func unpacked(_ list: [CChar]) -> [String] {
     .map { String(decoding: $0.map { UInt8(bitPattern: $0) }, as: UTF8.self) }
 }
 
+/// A store and a recorder, for a callback that reads the store and records what it read.
+final class CReadingContext: Sendable {
+  nonisolated(unsafe) let store: OpaquePointer
+  let recorder: CCallbackRecorder
+
+  init(store: OpaquePointer, recorder: CCallbackRecorder) {
+    self.store = store
+    self.recorder = recorder
+  }
+}
+
 /// Collects what the callbacks of the C interface are called with, as their context.
 final class CCallbackRecorder: Sendable {
   private let lock = NSLock()
@@ -162,15 +173,20 @@ final class CCallbackRecorder: Sendable {
     recorder.lock.withLock { recorder.recordedReleases += 1 }
   }
 
-  /// Records `key:<name>` or `external`.
-  static let onChange: swiftmmkv_change_callback = { context, kind, key in
-    if kind == SWIFTMMKV_CHANGE_KEY, let key {
-      CCallbackRecorder.from(context).record("key:\(String(cString: key))")
-    } else if kind == SWIFTMMKV_CHANGE_EXTERNAL, key == nil {
-      CCallbackRecorder.from(context).record("external")
-    } else {
-      CCallbackRecorder.from(context).record("unexpected")
+  /// Records one event for each batch: `key:<name>` for each of its keys and `external` if it
+  /// is external, joined with commas.
+  static let onChange: swiftmmkv_change_callback = { context, batch in
+    let batch = batch.pointee
+    var parts = [String]()
+    if batch.key_count > 0, let keys = batch.keys {
+      parts = (0..<batch.key_count).map { "key:\(String(cString: keys[$0]))" }
+    } else if batch.key_count > 0 || batch.keys != nil {
+      parts = ["unexpected"]
     }
+    if batch.is_external {
+      parts.append("external")
+    }
+    CCallbackRecorder.from(context).record(parts.joined(separator: ","))
   }
 
   /// Records `<level> <file>:<line> <function> <text>`.
