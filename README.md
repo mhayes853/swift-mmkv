@@ -364,6 +364,18 @@ let subscription = store.subscribe(for: .settings) { result in
 }
 ```
 
+`subscribe(for:)` also takes two or more keys of one kind, and delivers their values together,
+once for each operation that changes any of them. Coded keys deliver a `Result` each, so one value
+that does not decode does not hide the others:
+
+```swift
+let subscription = store.subscribe(for: .username, .avatarURL) { username, avatarURL in
+  header.show(username: username, avatarURL: avatarURL)
+}
+```
+
+To follow keys of different kinds together, read them from the batch `subscribe(_:)` gives.
+
 See [Change listeners](#change-listeners) for when these run.
 
 Two things to know about coded keys that are given their coders:
@@ -673,6 +685,17 @@ let subscription = store.subscribe(forKey: "settings", as: Settings.self, with: 
 }
 ```
 
+To follow several keys by name, pass them together. The listener is given the values by key,
+read together, once for each operation that changes any of them. A key with no value is left out:
+
+```swift
+let subscription = store.subscribe(forKeys: ["width", "height"], as: Double.self) { size in
+  resize(width: size["width"] ?? 0, height: size["height"] ?? 0)
+}
+```
+
+The decoding form, `subscribe(forKeys:as:with:)`, gives each key a `Result` of its own.
+
 Both can deliver the value they last delivered. They run whenever the key is written, even with
 the same value, and on every external change, which does not say which keys it touched. To see
 only actual changes, drop the repeats, for instance with `removeDuplicates()` from
@@ -896,6 +919,8 @@ The library itself does not use Foundation. The `Foundation` trait, on by defaul
 - `JSONEncoder`, `JSONDecoder`, and the property list coders as coders for `encode` and
   `decode`, with JSON as the default when no coder is passed.
 - `update(jsonForKey:as:)`, which updates a value stored as JSON in place.
+- `subscribe(jsonForKey:as:)`, `subscribe(jsonForKeys:as:)` and `values(jsonForKey:as:)`, which
+  follow values stored as JSON.
 
 Turn it off with `traits: []` on the package dependency.
 

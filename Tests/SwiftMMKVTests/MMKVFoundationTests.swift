@@ -361,6 +361,58 @@
       subscription.cancel()
     }
 
+    @Test func `A JSON Subscription Delivers The Decoded Value`() throws {
+      let store = try makeStore()
+      let recorder = ValueRecorder<[Int]?>()
+      let failures = ValueRecorder<Bool>()
+      let subscription = store.subscribe(jsonForKey: "numbers", as: [Int].self) { result in
+        recorder.record(result.success ?? nil)
+        failures.record(result.failure is DecodingError)
+      }
+
+      try store.encode([1, 2, 3], forKey: "numbers")
+      store.set("not JSON", forKey: "numbers")
+      store.set(1.0, forKey: "other")
+      store.removeValue(forKey: "numbers")
+
+      #expect(recorder.all == [nil, [1, 2, 3], nil, nil])
+      #expect(failures.all == [false, false, true, false])
+      subscription.cancel()
+    }
+
+    @Test func `A JSON Subscription To Several Keys Gives Each A Result`() throws {
+      let store = try makeStore()
+      let recorder = ValueRecorder<[String: [Int]?]>()
+      let subscription = store.subscribe(jsonForKeys: ["a", "b", "c"], as: [Int].self) {
+        recorder.record($0.mapValues(\.success))
+      }
+
+      try store.withExclusiveLock { store in
+        try store.encode([1], forKey: "a")
+        store.set("not JSON", forKey: "b")
+      }
+      try store.encode([2], forKey: "other")
+
+      #expect(recorder.all == [[:], ["a": [1], "b": nil]])
+      subscription.cancel()
+    }
+
+    @Test func `A JSON Sequence Produces The Decoded Values`() async throws {
+      let store = try makeStore()
+      try store.encode([1], forKey: "numbers")
+      var values = store.values(jsonForKey: "numbers", as: [Int].self).makeAsyncIterator()
+      #expect(try await values.next() == [1])
+
+      try store.encode([1, 2], forKey: "numbers")
+      #expect(try await values.next() == [1, 2])
+
+      store.removeValue(forKey: "numbers")
+      #expect(try await values.next() == .some(nil))
+
+      store.set("not JSON", forKey: "numbers")
+      await #expect(throws: DecodingError.self) { try await values.next() }
+    }
+
     @Test func `A Change Batch Decodes JSON`() throws {
       let store = try makeStore()
       let recorder = ValueRecorder<[Int]?>()
