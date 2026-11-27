@@ -46,20 +46,14 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
   )
 }
 
-/// Compares the values a subscription to several keys delivers.
-private struct Row<each Value: Equatable & Sendable>: Equatable, Sendable {
-  let values: (repeat each Value)
-
-  init(_ values: repeat each Value) {
-    self.values = (repeat each values)
+/// Describes the values a subscription to several keys delivers, to compare them: each value
+/// as text, and `nil` for a missing one.
+private func row<each Value>(_ values: repeat (each Value)?) -> [String] {
+  var row = [String]()
+  for value in repeat each values {
+    row.append(value.map { "\($0)" } ?? "nil")
   }
-
-  static func == (lhs: Self, rhs: Self) -> Bool {
-    for (left, right) in repeat (each lhs.values, each rhs.values) {
-      if left != right { return false }
-    }
-    return true
-  }
+  return row
 }
 
 @Suite struct MMKVStoreSubscribeToKeysTests {
@@ -164,11 +158,11 @@ private struct Row<each Value: Equatable & Sendable>: Equatable, Sendable {
   @Test func `Delivers The Values Of Two Keys, Once For Each Operation`() throws {
     let store = try makeStore()
     store.set("blob", for: .username)
-    let recorder = ValueRecorder<Row<String?, Double?>>()
+    let recorder = ValueRecorder<[String]>()
     let subscription = store.subscribe(for: .username, .fontSize) { username, fontSize in
-      recorder.record(Row(username, fontSize))
+      recorder.record(row(username, fontSize))
     }
-    #expect(recorder.all == [Row("blob", nil)])
+    #expect(recorder.all == [["blob", "nil"]])
 
     store.withExclusiveLock { store in
       store.set("blob jr", for: .username)
@@ -177,22 +171,22 @@ private struct Row<each Value: Equatable & Sendable>: Equatable, Sendable {
     store.set("unrelated", forKey: "other")
     store.removeValue(for: .username)
 
-    #expect(recorder.all == [Row("blob", nil), Row("blob jr", 16), Row(nil, 16)])
+    #expect(recorder.all == [["blob", "nil"], ["blob jr", "16.0"], ["nil", "16.0"]])
     subscription.cancel()
   }
 
   @Test func `Delivers The Values Of Three Keys Written Together`() throws {
     let store = try makeStore()
-    let recorder = ValueRecorder<Row<String?, String?, Double?>>()
+    let recorder = ValueRecorder<[String]>()
     let subscription = store.subscribe(for: .username, .theme, .fontSize) {
-      recorder.record(Row($0, $1, $2))
+      recorder.record(row($0, $1, $2))
     }
 
     store.set((.username, "blob"), (.theme, "dark"))
     store.set(16, for: .fontSize)
 
     #expect(
-      recorder.all == [Row(nil, nil, nil), Row("blob", "dark", nil), Row("blob", "dark", 16)]
+      recorder.all == [["nil", "nil", "nil"], ["blob", "dark", "nil"], ["blob", "dark", "16.0"]]
     )
     subscription.cancel()
   }
@@ -210,9 +204,10 @@ private struct Row<each Value: Equatable & Sendable>: Equatable, Sendable {
 
   @Test func `Delivers The Defaults Of Defaulted Keys`() throws {
     let store = try makeStore()
-    let recorder = ValueRecorder<Row<Double, Bool, String>>()
+    let recorder = ValueRecorder<[String]>()
     let subscription = store.subscribe(for: .volume, .isMuted, .language) {
-      recorder.record(Row($0, $1, $2))
+      (volume: Double, isMuted: Bool, language: String) in
+      recorder.record(row(volume, isMuted, language))
     }
 
     store.withExclusiveLock { store in
@@ -222,17 +217,17 @@ private struct Row<each Value: Equatable & Sendable>: Equatable, Sendable {
     store.removeValue(for: .volume)
 
     #expect(
-      recorder.all == [Row(0.5, false, "en"), Row(0.8, true, "en"), Row(0.5, true, "en")]
+      recorder.all == [["0.5", "false", "en"], ["0.8", "true", "en"], ["0.5", "true", "en"]]
     )
     subscription.cancel()
   }
 
   @Test func `Delivers A Result For Each Coded Key`() throws {
     let store = try makeStore()
-    let recorder = ValueRecorder<Row<Int?, Int?, Double?, Bool>>()
+    let recorder = ValueRecorder<[String]>()
     let subscription = store.subscribe(for: .count, .total, .ratio) { count, total, ratio in
       recorder.record(
-        Row(count.success ?? nil, total.success ?? nil, ratio.success ?? nil, total.failure != nil)
+        row(count.success ?? nil, total.success ?? nil, ratio.success ?? nil, total.failure != nil)
       )
     }
 
@@ -242,21 +237,21 @@ private struct Row<each Value: Equatable & Sendable>: Equatable, Sendable {
       store.set("not a number", forKey: "total")
     }
 
-    #expect(recorder.all == [Row(nil, nil, nil, false), Row(1, nil, 0.5, true)])
+    #expect(recorder.all == [["nil", "nil", "nil", "false"], ["1", "nil", "0.5", "true"]])
     subscription.cancel()
   }
 
   @Test func `Delivers A Result For Each Defaulted Coded Key`() throws {
     let store = try makeStore()
-    let recorder = ValueRecorder<Row<Int?, Int?>>()
+    let recorder = ValueRecorder<[String]>()
     let subscription = store.subscribe(for: .lives, .level) { lives, level in
-      recorder.record(Row(lives.success, level.success))
+      recorder.record(row(lives.success, level.success))
     }
 
     try store.set(1, for: .lives)
     store.set("not a number", forKey: "level")
 
-    #expect(recorder.all == [Row(3, 1), Row(1, 1), Row(1, nil)])
+    #expect(recorder.all == [["3", "1"], ["1", "1"], ["1", "nil"]])
     subscription.cancel()
   }
 
@@ -264,27 +259,27 @@ private struct Row<each Value: Equatable & Sendable>: Equatable, Sendable {
     let (first, second) = try makeLinkedStores(mode: .multiProcess)
     first.set("blob", for: .username)
     _ = second.value(for: .username)
-    let recorder = ValueRecorder<Row<String?, String?>>()
+    let recorder = ValueRecorder<[String]>()
     let subscription = second.subscribe(for: .username, .theme) {
-      recorder.record(Row($0, $1))
+      recorder.record(row($0, $1))
     }
 
     first.set("dark", for: .theme)
     second.checkForExternalChanges()
 
-    #expect(recorder.all == [Row("blob", nil), Row("blob", "dark")])
+    #expect(recorder.all == [["blob", "nil"], ["blob", "dark"]])
     subscription.cancel()
   }
 
   @Test func `Typed Keys Take Their Closure By Label`() throws {
     let store = try makeStore()
-    let recorder = ValueRecorder<Row<String?, String?>>()
-    let onChange: @Sendable (String?, String?) -> Void = { recorder.record(Row($0, $1)) }
+    let recorder = ValueRecorder<[String]>()
+    let onChange: @Sendable (String?, String?) -> Void = { recorder.record(row($0, $1)) }
     let subscription = store.subscribe(for: .username, .theme, onChange: onChange)
 
     subscription.cancel()
     store.set("blob", for: .username)
 
-    #expect(recorder.all == [Row(nil, nil)])
+    #expect(recorder.all == [["nil", "nil"]])
   }
 }
