@@ -624,7 +624,7 @@ private let settings = Settings(
   @Test func `Runs For A Key And The Keys Under It`() throws {
     let store = try makeStore()
     let recorder = ValueRecorder<Int>()
-    let subscription = store.subscribe(underKey: "settings") { recorder.record(0) }
+    let subscription = store.subscribe(underKey: "settings") { _ in recorder.record(0) }
 
     store.set("value", forKey: "settings")
     store.set("value", forKey: "settings.theme")
@@ -642,7 +642,7 @@ private let settings = Settings(
   @Test func `An Empty Prefix Runs For Every Key`() throws {
     let store = try makeStore()
     let recorder = ValueRecorder<Int>()
-    let subscription = store.subscribe(underKey: "") { recorder.record(0) }
+    let subscription = store.subscribe(underKey: "") { _ in recorder.record(0) }
 
     store.set("value", forKey: "a.x")
     store.set("value", forKey: "b")
@@ -654,7 +654,7 @@ private let settings = Settings(
   @Test func `Uses The Separator`() throws {
     let store = try makeStore()
     let recorder = ValueRecorder<Int>()
-    let subscription = store.subscribe(underKey: "a", separator: "/") { recorder.record(0) }
+    let subscription = store.subscribe(underKey: "a", separator: "/") { _ in recorder.record(0) }
 
     store.set("value", forKey: "a.x")
     store.set("value", forKey: "a/x")
@@ -666,8 +666,8 @@ private let settings = Settings(
   @Test func `Runs Once For An Encoded Value, After All Of Its Keys Are Written`() throws {
     let store = try makeStore()
     let recorder = ValueRecorder<Settings?>()
-    let subscription = store.subscribe(underKey: "settings") {
-      recorder.record(try? store.decode(Settings.self, fromKeysUnder: "settings"))
+    let subscription = store.subscribe(underKey: "settings") { batch in
+      recorder.record(try? batch.decode(Settings.self, fromKeysUnder: "settings"))
     }
 
     try store.encode(settings, intoKeysUnder: "settings")
@@ -680,7 +680,7 @@ private let settings = Settings(
   @Test func `Runs Once For A Locked Body That Changes Several Keys`() throws {
     let store = try makeStore()
     let recorder = ValueRecorder<Int>()
-    let subscription = store.subscribe(underKey: "settings") { recorder.record(0) }
+    let subscription = store.subscribe(underKey: "settings") { _ in recorder.record(0) }
 
     store.withExclusiveLock { store in
       store.set("dark", forKey: "settings.theme")
@@ -701,7 +701,7 @@ private let settings = Settings(
     let store = try makeStore()
     try store.encode(settings, intoKeysUnder: "settings")
     let recorder = ValueRecorder<Int>()
-    let subscription = store.subscribe(underKey: "settings") { recorder.record(0) }
+    let subscription = store.subscribe(underKey: "settings") { _ in recorder.record(0) }
 
     store.removeValues(underKey: "settings")
 
@@ -712,7 +712,7 @@ private let settings = Settings(
   @Test func `Runs For An External Change`() throws {
     let store = try makeStore(mode: .multiProcess)
     let recorder = ValueRecorder<Int>()
-    let subscription = store.subscribe(underKey: "settings") { recorder.record(0) }
+    let subscription = store.subscribe(underKey: "settings") { _ in recorder.record(0) }
 
     store.suspend()
     store.resume()
@@ -724,7 +724,7 @@ private let settings = Settings(
   @Test func `Stops When Cancelled`() throws {
     let store = try makeStore()
     let recorder = ValueRecorder<Int>()
-    let subscription = store.subscribe(underKey: "a") { recorder.record(0) }
+    let subscription = store.subscribe(underKey: "a") { _ in recorder.record(0) }
 
     subscription.cancel()
     store.set("value", forKey: "a.x")

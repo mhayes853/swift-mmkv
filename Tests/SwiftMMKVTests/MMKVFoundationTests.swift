@@ -361,6 +361,26 @@
       subscription.cancel()
     }
 
+    @Test func `A Change Batch Decodes JSON`() throws {
+      let store = try makeStore()
+      let recorder = ValueRecorder<[Int]?>()
+      let subscription = store.subscribe { batch in
+        recorder.record(try? batch.decode([Int].self, forKey: "numbers"))
+      }
+
+      try store.encode([1, 2, 3], forKey: "numbers")
+      store.set("not JSON", forKey: "numbers")
+      store.removeValue(forKey: "numbers")
+
+      #expect(recorder.all == [[1, 2, 3], nil, nil])
+      #expect(throws: DecodingError.self) {
+        store.set("not JSON", forKey: "numbers")
+        return try MMKVStore.ChangeBatch(store: store, keys: [])
+          .decode([Int].self, forKey: "numbers")
+      }
+      subscription.cancel()
+    }
+
     @Test func `JSON Data Matches The Byte Form`() throws {
       let store = try makeStore(id: "json")
       store.set(1.0, forKey: "a")

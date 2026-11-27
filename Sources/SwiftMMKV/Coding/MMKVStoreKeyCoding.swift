@@ -275,8 +275,8 @@ extension MMKVStore {
   /// `onChange` runs once for each operation that changes such keys, with the value all of the
   /// operation's writes left behind, and never with a value that is only partly written. It
   /// may be given the value it was last given: it runs whenever such a key is written, and
-  /// whenever a ``Change/external`` change is noticed, since such a change does not say which
-  /// keys it touched. In other respects this behaves like ``subscribe(_:)``.
+  /// whenever an external change is noticed, since such a change does not say which keys it
+  /// touched. In other respects this behaves like ``subscribe(_:)``.
   ///
   /// - Parameters:
   ///   - prefix: The start of the keys to observe and decode from.
@@ -289,7 +289,7 @@ extension MMKVStore {
     options: MMKVKeyCodingOptions = MMKVKeyCodingOptions(),
     _ onChange: @escaping @Sendable (Result<T, any Error>) -> Void
   ) -> MMKVSubscription {
-    let subscription = self.subscribe(underKey: prefix, separator: options.separator) {
+    let subscription = self.subscribe(underKey: prefix, separator: options.separator) { _ in
       onChange(Result { try self.decode(T.self, fromKeysUnder: prefix, options: options) })
     }
     onChange(Result { try self.decode(T.self, fromKeysUnder: prefix, options: options) })

@@ -117,8 +117,8 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
     let store = try makeStore()
     store.set(1, forKey: "count")
     let recorder = ValueRecorder<Int?>()
-    let subscription = store.subscribe { change in
-      #expect(change == .key("count"))
+    let subscription = store.subscribe { batch in
+      #expect(batch.changes == [.key("count")])
       recorder.record(store.value(forKey: "count", as: Int.self))
     }
 

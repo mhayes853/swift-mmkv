@@ -5,7 +5,7 @@ import Testing
   @Test func `Reports Changes To Its Key Only`() throws {
     let store = try makeStore()
     let recorder = ValueRecorder<Bool>()
-    let subscription = store.subscribe(forKey: "a") { recorder.record(true) }
+    let subscription = store.subscribe(forKey: "a") { _ in recorder.record(true) }
     #expect(recorder.all.isEmpty)
 
     store.set(1.0, forKey: "a")

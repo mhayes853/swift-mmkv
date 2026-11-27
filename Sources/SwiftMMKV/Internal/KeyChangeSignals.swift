@@ -20,7 +20,7 @@ struct KeyChangeSignals {
       bufferingPolicy: .bufferingNewest(1)
     )
     // A closed store tells its listeners so once, and nothing after that.
-    let onChange: @Sendable () -> Void = {
+    let onChange: @Sendable (MMKVStore.ChangeBatch) -> Void = { _ in
       continuation.yield()
       if store.isClosed {
         continuation.finish()

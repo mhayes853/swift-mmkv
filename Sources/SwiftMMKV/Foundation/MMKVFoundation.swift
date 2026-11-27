@@ -285,4 +285,18 @@
       self.message
     }
   }
+
+  // MARK: - ChangeBatch
+
+  extension MMKVStore.ChangeBatch {
+    /// Decodes the JSON string the store now holds for `key`, as
+    /// ``MMKVStore/decode(_:forKey:)`` does.
+    ///
+    /// - Returns: The value, or `nil` if the key has no value.
+    /// - Throws: A `DecodingError` if the stored value does not decode, and an ``MMKVError``
+    ///   when the store is suspended or closed.
+    public func decode<T: Decodable>(_ type: T.Type = T.self, forKey key: String) throws -> T? {
+      try self.decode(type, forKey: key, with: JSONDecoder())
+    }
+  }
 #endif

@@ -59,7 +59,7 @@
       context: LoadContext<Value>,
       subscriber: SharedSubscriber<Value>
     ) -> SharedSubscription {
-      let onChange: @Sendable () -> Void = {
+      let onChange: @Sendable (MMKVStore.ChangeBatch) -> Void = { _ in
         subscriber.yield(with: Result { try self.loadUnlessSuspended() })
       }
       let subscription =

@@ -805,26 +805,28 @@ public func swiftmmkv_subscription_cancel(_ subscription: OpaquePointer?) {
 
 // MARK: - Changes
 
-/// Subscribes a C callback to the changes of a store, or to those of the keys that `isHeard`
-/// accepts. The callback is lent each key for the length of its call.
-private func subscribe(
-  _ store: OpaquePointer,
-  where isHeard: @escaping @Sendable (String) -> Bool = { _ in true },
-  _ context: UnsafeMutableRawPointer?,
-  _ onChange: swiftmmkv_change_callback,
-  _ release: swiftmmkv_context_release?
-) -> OpaquePointer {
-  let context = CallbackContext(context, release: release)
-  let subscription = store.store.subscribe { change in
-    switch change {
-    case .key(let changed):
-      guard isHeard(changed) else { return }
-      changed.withCString { onChange(context.pointer, SWIFTMMKV_CHANGE_KEY, $0) }
-    case .external:
-      onChange(context.pointer, SWIFTMMKV_CHANGE_EXTERNAL, nil)
+/// Lends `body` a batch as C sees it, for the length of the call.
+private func withCBatch(
+  _ batch: MMKVStore.ChangeBatch,
+  _ body: (UnsafePointer<swiftmmkv_change_batch>) -> Void
+) {
+  // Every key in one allocation, each ending in a NUL, and where each starts.
+  var characters = [CChar]()
+  var starts = [Int]()
+  for key in batch.keys {
+    starts.append(characters.count)
+    characters.append(contentsOf: key.utf8CString)
+  }
+  characters.withUnsafeBufferPointer { characters in
+    let keys = starts.map { characters.baseAddress! + $0 }
+    keys.withUnsafeBufferPointer { keys in
+      var value = swiftmmkv_change_batch()
+      value.keys = keys.isEmpty ? nil : keys.baseAddress
+      value.key_count = keys.count
+      value.is_external = batch.isExternal
+      withUnsafePointer(to: value, body)
     }
   }
-  return OpaquePointer(retaining: Subscription(subscription))
 }
 
 @c @implementation
@@ -834,7 +836,11 @@ public func swiftmmkv_store_subscribe(
   _ onChange: swiftmmkv_change_callback,
   _ release: swiftmmkv_context_release?
 ) -> OpaquePointer {
-  subscribe(store, context, onChange, release)
+  let context = CallbackContext(context, release: release)
+  let subscription = store.store.subscribe { batch in
+    withCBatch(batch) { onChange(context.pointer, $0) }
+  }
+  return OpaquePointer(retaining: Subscription(subscription))
 }
 
 @c @implementation
@@ -845,8 +851,11 @@ public func swiftmmkv_store_subscribe_key(
   _ onChange: swiftmmkv_change_callback,
   _ release: swiftmmkv_context_release?
 ) -> OpaquePointer {
-  let key = String(cString: key)
-  return subscribe(store, where: { $0 == key }, context, onChange, release)
+  let context = CallbackContext(context, release: release)
+  let subscription = store.store.subscribe(forKey: String(cString: key)) { batch in
+    withCBatch(batch) { onChange(context.pointer, $0) }
+  }
+  return OpaquePointer(retaining: Subscription(subscription))
 }
 
 @c @implementation
@@ -858,33 +867,12 @@ public func swiftmmkv_store_subscribe_under(
   _ onChange: swiftmmkv_change_callback,
   _ release: swiftmmkv_context_release?
 ) -> OpaquePointer {
-  // What `MMKVStore.keys(underKey:separator:)` goes by, which compares the bytes of the keys.
-  let prefix = String(cString: prefix)
-  let start = Array((prefix + makeSeparator(separator)).utf8)
-  return subscribe(
-    store,
-    where: { prefix.isEmpty || $0 == prefix || $0.utf8.starts(with: start) },
-    context,
-    onChange,
-    release
-  )
-}
-
-@c @implementation
-public func swiftmmkv_store_subscribe_under_coalesced(
-  _ store: OpaquePointer,
-  _ prefix: UnsafePointer<CChar>,
-  _ separator: UnsafePointer<CChar>?,
-  _ context: UnsafeMutableRawPointer?,
-  _ onChange: swiftmmkv_notify_callback,
-  _ release: swiftmmkv_context_release?
-) -> OpaquePointer {
   let context = CallbackContext(context, release: release)
   let subscription = store.store.subscribe(
     underKey: String(cString: prefix),
     separator: makeSeparator(separator)
-  ) {
-    onChange(context.pointer)
+  ) { batch in
+    withCBatch(batch) { onChange(context.pointer, $0) }
   }
   return OpaquePointer(retaining: Subscription(subscription))
 }

@@ -262,8 +262,9 @@ observable as one:
 ```swift
 store.keys(underKey: "settings")  // ["settings.theme", "settings.sync.isEnabled"]
 
-let subscription = store.subscribe(underKey: "settings") {
-  settings = try? store.decode(Settings.self, fromKeysUnder: "settings")
+let subscription = store.subscribe(underKey: "settings") { batch in
+  print("changed:", batch.keys)  // only the keys at or under "settings"
+  settings = try? batch.decode(Settings.self, fromKeysUnder: "settings")
 }
 ```
 
@@ -526,9 +527,9 @@ files as they then are, and may open them with another mode or encryption key.
 
 Closing waits for the operations other threads have under way, so a value that is being
 encoded into several keys is written whole. Every `MMKVStore` over the same files is closed
-together, since they share the open files. Their listeners are told once more, with
-`.external`, because every value now reads as `nil`, and are told nothing after that; `changes`
-and the sequences of a key's values end.
+together, since they share the open files. Their listeners are told once more, of an external
+change, because every value now reads as `nil`, and are told nothing after that; `changes` and
+the sequences of a key's values end.
 
 `isClosed` says whether a store has been closed. The Observation framework tracks it, as it
 tracks `isSuspended`, so a SwiftUI view that reads it is drawn again when the store closes.
@@ -597,18 +598,36 @@ try directory.restoreAllStores(from: backups)
 ## Change listeners
 
 ```swift
-let subscription = store.subscribe { change in
-  switch change {
-  case .key(let key): print("changed:", key)
-  case .external: print("changed by another process or copy of MMKV")
+let subscription = store.subscribe { batch in
+  for key in batch.keys {
+    print("changed:", key, batch.value(forKey: key, as: String.self) ?? "removed")
   }
+  if batch.isExternal { print("changed by another process or copy of MMKV") }
 }
 subscription.cancel()
 ```
 
-`.key` is reported for writes and removals made through this package in this process. `.external`
-carries no key, and a store only notices an external change when it is next used or when
-`checkForExternalChanges()` is called.
+A listener is given one batch for each operation that changes the store. An operation is one
+call, or everything the body of a `withExclusiveLock` does, so a body that writes three keys is
+one batch of three, delivered after all three are written. `keys` holds the keys that were
+written or removed through this package in this process, each once.
+
+`isExternal` says another process, or another copy of MMKV, changed the store. Such a change
+carries no keys, so any key may have changed. A store only notices one when it is next used or
+when `checkForExternalChanges()` is called.
+
+A batch reads the store it came from, with `value(forKey:as:)`, `value(for:)` for any kind of
+[typed key](#typed-keys), and `decode` for `Codable` values. Each read gives what the store
+holds when it is made, which is what the operation wrote unless something has written since.
+
+`subscribe(forKey:)` and `subscribe(underKey:)` give the batches that may have changed one key,
+or the keys under a prefix, with `keys` narrowed to those:
+
+```swift
+let subscription = store.subscribe(forKey: "token") { batch in
+  if batch.value(forKey: "token", as: String.self) == nil { signOut() }
+}
+```
 
 To follow one key, subscribe to it. The listener is given the current value straight away, and
 again after each change:
@@ -632,16 +651,13 @@ for try await settings in store.values(forKey: "settings", as: Settings.self, wi
 }
 ```
 
-`changes` gives every change to the store as an `AsyncSequence`, the counterpart of
-`subscribe(_:)`. A consumer that falls behind misses no key, but receives a key that changed
-several times in the meantime once.
+`changes` gives the same batches as an `AsyncSequence`, the counterpart of `subscribe(_:)`. A
+consumer that falls behind misses no key, but receives the batches that are waiting as one, with
+each key once.
 
 ```swift
-for await change in store.changes {
-  switch change {
-  case .key(let key): print("changed:", key)
-  case .external: print("changed elsewhere")
-  }
+for await batch in store.changes {
+  print("changed:", batch.keys)
 }
 ```
 
@@ -1144,6 +1160,9 @@ are left to each language to build in its own idiom.
 - A handle is released with the function that matches the one that made it.
 - A callback takes a context pointer, and an optional function that releases the context once
   the callback can no longer be called.
+- A change listener is given a `swiftmmkv_change_batch` for each operation that changes the
+  store: the keys the operation wrote or removed, and whether the change came from outside. The
+  batch is lent for the length of the call, and the values are read from the store.
 
 The interface is written with `@c` and `@implementation`, so the compiler checks every function
 against the header. `Scripts/check-c-interface.sh` checks the other direction, that everything

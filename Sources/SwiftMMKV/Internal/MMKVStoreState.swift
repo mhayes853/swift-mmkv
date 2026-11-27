@@ -5,9 +5,9 @@ import CSwiftMMKVCore
 /// The core hands back the same instance for every open of a root directory and identifier, so
 /// this is shared by every ``MMKVStore`` over that instance.
 final class MMKVStoreState: Sendable {
-  /// Called with the changes one operation made, in order. Changes that are held back while the
-  /// store is locked arrive together, once it is unlocked.
-  typealias Listener = @Sendable ([MMKVStore.Change]) -> Void
+  /// Called with what one operation changed. Changes that are held back while the store is
+  /// locked arrive together, once it is unlocked.
+  typealias Listener = @Sendable (StoreChanges) -> Void
 
   private struct Registrations: Sendable {
     var nextIdentifier: UInt64 = 0
@@ -47,27 +47,34 @@ final class MMKVStoreState: Sendable {
     }
   }
 
-  /// Tells listeners about a change made through this package, or holds it back while changes
-  /// are being deferred. A key that is changed more than once in that time is reported once.
-  func notify(_ change: MMKVStore.Change) {
-    self.notify([change])
+  /// Tells listeners that an operation changed `key`, or holds that back while changes are
+  /// being deferred. A key that is changed more than once in that time is reported once.
+  func notify(key: String) {
+    self.notify(StoreChanges(keys: [key], isExternal: false))
   }
 
-  /// Tells listeners about the changes one operation made, together, or holds them back
+  /// Tells listeners that one operation changed `keys`, together, or holds that back while
+  /// changes are being deferred.
+  func notify(keys: [String]) {
+    var seen = Set<String>()
+    self.notify(StoreChanges(keys: keys.filter { seen.insert($0).inserted }, isExternal: false))
+  }
+
+  /// Tells listeners that the store was changed from outside this package, or holds that back
   /// while changes are being deferred.
-  func notify(_ changes: [MMKVStore.Change]) {
+  func notifyExternalChange() {
+    self.notify(StoreChanges(keys: [], isExternal: true))
+  }
+
+  private func notify(_ changes: StoreChanges) {
     guard !changes.isEmpty else { return }
     let listeners: [Listener]? = self.registrations.withLock { registrations in
       guard registrations.deferralDepth > 0 else { return Array(registrations.listeners.values) }
-      for change in changes {
-        switch change {
-        case .key(let key):
-          if !registrations.pendingKeys.contains(key) {
-            registrations.pendingKeys.append(key)
-          }
-        case .external:
-          registrations.hasPendingExternalChange = true
-        }
+      for key in changes.keys where !registrations.pendingKeys.contains(key) {
+        registrations.pendingKeys.append(key)
+      }
+      if changes.isExternal {
+        registrations.hasPendingExternalChange = true
       }
       return nil
     }
@@ -89,7 +96,7 @@ final class MMKVStoreState: Sendable {
       return Array(registrations.listeners.values)
     }
     for listener in listeners {
-      listener([.external])
+      listener(StoreChanges(keys: [], isExternal: true))
     }
   }
 
@@ -111,13 +118,13 @@ final class MMKVStoreState: Sendable {
   /// Tells listeners about the changes that were held back, and about an external change the
   /// core noticed during an earlier operation, unless changes are being deferred.
   func deliverPendingChanges() {
-    let pending: (changes: [MMKVStore.Change], listeners: [Listener])? =
+    let pending: (changes: StoreChanges, listeners: [Listener])? =
       self.registrations.withLock { registrations in
         guard registrations.deferralDepth == 0 else { return nil }
-        var changes = registrations.pendingKeys.map(MMKVStore.Change.key)
-        if registrations.hasPendingExternalChange {
-          changes.append(.external)
-        }
+        let changes = StoreChanges(
+          keys: registrations.pendingKeys,
+          isExternal: registrations.hasPendingExternalChange
+        )
         guard !changes.isEmpty else { return nil }
         registrations.pendingKeys = []
         registrations.hasPendingExternalChange = false
@@ -166,7 +173,7 @@ extension MMKVStoreState {
 
   // The core reports a change by store identifier alone, so every state with that identifier is
   // marked. Stores with the same identifier in different directories are over-notified, which
-  // only costs a spurious `.external`.
+  // only costs a spurious external change.
   private static let installContentChangedCallback: Void = {
     mmkv_set_content_changed_callback { id in
       let id = String(
@@ -181,4 +188,17 @@ extension MMKVStoreState {
       }
     }
   }()
+}
+
+/// What one operation changed in a store, before it is tied to the store a listener subscribed
+/// through.
+struct StoreChanges: Sendable {
+  /// The keys set or removed, each once, in order.
+  var keys: [String]
+  /// Whether the store was changed from outside this package.
+  var isExternal: Bool
+
+  var isEmpty: Bool {
+    self.keys.isEmpty && !self.isExternal
+  }
 }

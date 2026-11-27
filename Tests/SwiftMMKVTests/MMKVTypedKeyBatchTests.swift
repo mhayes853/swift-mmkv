@@ -170,19 +170,19 @@ extension MMKVStore.DefaultedCodedKey where Value == Bool {
     #expect(store.value(forKey: "volume", as: Double.self) == 0.8)
   }
 
-  @Test func `Listeners Are Told About Each Key After Every Value Is Written`() throws {
+  @Test func `Listeners Are Told About Every Key Once, After Every Value Is Written`() throws {
     let store = try makeStore()
     let changes = ChangeRecorder()
     let states = ValueRecorder<Set<String>>()
-    let subscription = store.subscribe { change in
-      changes.record(change)
+    let subscription = store.subscribe { batch in
+      changes.record(batch)
       states.record(store.keys)
     }
 
     store.set((.username, "blob"), (.volume, 0.8))
 
-    #expect(changes.all == [.key("username"), .key("volume")])
-    #expect(states.all == Array(repeating: ["username", "volume"], count: 2))
+    #expect(changes.batches == [[.key("username"), .key("volume")]])
+    #expect(states.all == [["username", "volume"]])
     subscription.cancel()
   }
 

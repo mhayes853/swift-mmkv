@@ -78,17 +78,19 @@ import Testing
     #expect(!store.set(["a": 1.0]))
   }
 
-  @Test func `Listeners Are Told About Each Key After Every Value Is Written`() throws {
+  @Test func `Listeners Are Told About Every Key Once, After Every Value Is Written`() throws {
     let store = try makeStore()
+    let keys = ValueRecorder<Set<String>>()
     let recorder = ValueRecorder<[String: Double]>()
-    let subscription = store.subscribe { change in
-      guard case .key = change else { return }
+    let subscription = store.subscribe { batch in
+      keys.record(Set(batch.keys))
       recorder.record(store.values(forKeys: ["a", "b", "c"], as: Double.self))
     }
 
     store.set(["a": 1.0, "b": 2.0, "c": 3.0])
 
-    #expect(recorder.all == Array(repeating: ["a": 1, "b": 2, "c": 3], count: 3))
+    #expect(keys.all == [["a", "b", "c"]])
+    #expect(recorder.all == [["a": 1, "b": 2, "c": 3]])
     subscription.cancel()
   }
 
@@ -134,8 +136,8 @@ import Testing
     store.set("old", forKey: "legacy")
     let changes = ChangeRecorder()
     let states = ValueRecorder<Set<String>>()
-    let subscription = store.subscribe { change in
-      changes.record(change)
+    let subscription = store.subscribe { batch in
+      changes.record(batch)
       states.record(store.keys)
     }
 
@@ -146,8 +148,8 @@ import Testing
       #expect(changes.all.isEmpty)
     }
 
-    #expect(changes.all == [.key("username"), .key("volume"), .key("legacy")])
-    #expect(states.all == Array(repeating: ["username", "volume"], count: 3))
+    #expect(changes.batches == [[.key("username"), .key("volume"), .key("legacy")]])
+    #expect(states.all == [["username", "volume"]])
     subscription.cancel()
   }
 

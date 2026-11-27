@@ -82,17 +82,36 @@ func makeUnopenedStoreFiles(at path: String) throws {
   }
 }
 
+/// One part of a ``MMKVStore/ChangeBatch``, in a form that can be compared.
+enum Change: Hashable, Sendable {
+  case key(String)
+  case external
+}
+
+extension MMKVStore.ChangeBatch {
+  /// The keys of the batch in order, followed by whether it is external.
+  var changes: [Change] {
+    self.keys.map(Change.key) + (self.isExternal ? [.external] : [])
+  }
+}
+
 /// Collects the changes a store reports.
 final class ChangeRecorder: Sendable {
   private let changes = NSLock()
-  nonisolated(unsafe) private var recorded = [MMKVStore.Change]()
+  nonisolated(unsafe) private var recorded = [[Change]]()
 
-  var all: [MMKVStore.Change] {
+  /// The changes of every batch, one after another.
+  var all: [Change] {
+    self.changes.withLock { self.recorded.flatMap { $0 } }
+  }
+
+  /// The changes of each batch.
+  var batches: [[Change]] {
     self.changes.withLock { self.recorded }
   }
 
-  func record(_ change: MMKVStore.Change) {
-    self.changes.withLock { self.recorded.append(change) }
+  func record(_ batch: MMKVStore.ChangeBatch) {
+    self.changes.withLock { self.recorded.append(batch.changes) }
   }
 }
 
