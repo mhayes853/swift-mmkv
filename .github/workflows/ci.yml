@@ -24,6 +24,11 @@ jobs:
           - name: lean
             traits: "--disable-default-traits"
             forbidden-modules: "Foundation|FoundationEssentials|FoundationInternationalization"
+          # The suite against the Swift core that is replacing the C++ one. See
+          # Docs/swift-core-migration.md.
+          - name: Swift core
+            traits: ""
+            engine: swift
     steps:
       - uses: actions/checkout@v4
 
@@ -35,6 +40,8 @@ jobs:
 
       - name: Test
         run: swift test ${{ matrix.traits }}
+        env:
+          SWIFTMMKV_TEST_ENGINE: ${{ matrix.engine || 'cxx' }}
 
       # A symbol the core defines under its upstream name would collide with the copy of MMKV
       # that react-native-mmkv links into the same app.
@@ -93,8 +100,21 @@ jobs:
       - name: Test with swift-tagged and without Foundation
         run: swift test --traits Tagged
 
+      # The same suite against the Swift core that is replacing the C++ one. Tests for features
+      # it does not have yet are skipped. See Docs/swift-core-migration.md.
+      - name: Test the Swift core
+        run: swift test --traits Sharing,Foundation,Logging,UUIDV7,Tagged
+        env:
+          SWIFTMMKV_TEST_ENGINE: swift
+
       - name: Check core symbols are renamed
         run: Scripts/check-symbols.sh
+
+      # Keeps the benchmarks compiling. They are run by hand; see Benchmarks/README.md.
+      - name: Build benchmarks
+        run: swift build --package-path Benchmarks -c release
+        env:
+          BENCHMARK_DISABLE_JEMALLOC: "1"
 
       - name: Check the C interface is implemented
         run: Scripts/check-c-interface.sh

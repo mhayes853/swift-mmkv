@@ -23,7 +23,7 @@ import Testing
 
   @Test func `Codes Are Distinct`() {
     let codes: [MMKVError.Code] = [
-      .openFailed, .invalidEncryptionKey, .rekeyFailed, .disableExpiryFailed,
+      .openFailed, .invalidEncryptionKey, .wrongEncryptionKey, .rekeyFailed, .disableExpiryFailed,
       .appGroupContainerUnavailable, .writeFailed, .storeIsOpen, .storesAreOpen,
       .directoryUnreadable, .backupFailed, .restoreFailed, .storesNotBackedUp,
       .storesNotRestored, .backupInvalid, .backupIsStoreDirectory, .storeIsSuspended,

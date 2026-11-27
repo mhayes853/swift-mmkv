@@ -1,0 +1,1326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>SwiftMMKV · How the index halves a store's memory</title>
+<style>
+:root{
+  --bg:#0a0d13; --bg2:#0e131c; --panel:#121925; --panel2:#182133; --line:#232f45; --line2:#31415f;
+  --text:#e8edf5; --muted:#9aa5ba; --dim:#606c84;
+  --c-obs:#dfe7f2; --c-rsub:#ffc3a0; --c-db:#8ea2ff; --c-tr:#b98cff; --c-hd:#d9bcff; --c-wire:#56c8ff;
+  --c-ep:#ffb454; --c-eq:#ff6b7d; --c-sk:#34d6c3; --c-watch:#e9d66b; --c-reg:#7ee08a;
+  --c-dir:#b5f0b0; --c-peer:#9aa5b8; --c-cl:#ff9ecb; --ok:#5ee39b; --bad:#ff6b6b;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "JetBrains Mono", "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{margin:0;color:var(--text);font:15px/1.55 var(--sans);
+  background:radial-gradient(1100px 520px at 75% -8%, #172342 0%, rgba(23,35,66,0) 62%), var(--bg);}
+code{font-family:var(--mono);font-size:.9em}
+p code,li code,.caption code,.info code,.lede code,.hero code{color:#e3e9f5;background:#19233a;border:1px solid #26334d;padding:0 .28em;border-radius:4px;white-space:nowrap}
+a{color:var(--c-wire)}
+.hero{max-width:1140px;margin:0 auto;padding:44px 18px 18px}
+.eyebrow{font:600 12px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--c-ep)}
+h1{font-size:clamp(27px,4.4vw,42px);line-height:1.08;margin:.45em 0 .35em;letter-spacing:-.02em}
+h1 .t{font-family:var(--mono);font-weight:650;letter-spacing:-.03em;color:#fff}
+.hero p{color:var(--muted);max-width:790px;font-size:16px;margin:.2em 0 .6em}
+.facts{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.fact{font:12px/1.35 var(--mono);padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:rgba(18,25,37,.8);color:var(--muted)}
+.fact b{color:var(--text);font-weight:600}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:18px;font:12px var(--mono);color:var(--muted)}
+.legend span{white-space:nowrap}
+.legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--c);margin-right:6px;vertical-align:-1px}
+nav.top{position:sticky;top:0;z-index:30;background:rgba(10,13,19,.84);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+nav.top .in{max-width:1140px;margin:0 auto;display:flex;gap:2px;overflow-x:auto;padding:8px 12px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+nav.top .in::-webkit-scrollbar{display:none}
+nav.top a{flex:none;color:var(--muted);text-decoration:none;font-size:13px;padding:7px 8px;border-radius:8px;white-space:nowrap}
+nav.top a:hover{color:var(--text);background:var(--panel)}
+nav.top a.on{color:var(--text);background:var(--panel2);box-shadow:inset 0 0 0 1px var(--line2)}
+nav.top a .n{font-family:var(--mono);color:var(--dim);margin-right:6px;font-size:12px}
+main{max-width:1140px;margin:0 auto;padding:0 12px 70px}
+section.scene{margin-top:46px;scroll-margin-top:58px}
+.sh{display:flex;align-items:baseline;gap:12px;padding:0 4px}
+.sh .num{font:600 13px var(--mono);color:var(--dim)}
+h2{font-size:clamp(20px,2.7vw,27px);margin:0;letter-spacing:-.01em;line-height:1.2}
+.lede{color:var(--muted);max-width:860px;margin:.45em 4px 14px}
+.policy{border:1px solid rgba(255,180,84,.45);border-radius:16px;background:linear-gradient(180deg,rgba(255,180,84,.07),rgba(18,25,37,.55));padding:14px 18px 12px;margin:0 0 14px}
+.policy .ph{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin-bottom:10px}
+.policy .pk{font:600 11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--c-ep)}
+.policy .pn{font-weight:700;font-size:16.5px;line-height:1.3}
+.policy .pc{font-size:12.5px;color:var(--muted)}
+.policy dl{margin:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:9px 22px}
+.policy dl div{min-width:0}
+.policy dt{font:650 12.5px var(--mono);color:var(--c-ep);margin-bottom:1px}
+.policy dd{margin:0;font-size:13.5px;line-height:1.5;color:#cfd7e5}
+.policy code{color:#e3e9f5;background:#19233a;border:1px solid #26334d;padding:0 .28em;border-radius:4px;white-space:normal;overflow-wrap:anywhere}
+@media (max-width:760px){.policy dl{grid-template-columns:1fr}.policy{padding:12px 14px 10px}}
+.policy.alt{border-color:rgba(255,107,107,.45);background:linear-gradient(180deg,rgba(255,107,107,.07),rgba(18,25,37,.55))}
+.policy.alt .pk,.policy.alt dt{color:#ff8f8f}
+.card{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 20px 50px -30px rgba(0,0,0,.8)}
+.stage{padding:10px 10px 4px;position:relative}
+.stage svg{display:block;width:100%;height:auto;overflow:visible}
+.caption{padding:4px 18px 16px;min-height:112px}
+.caption .meta{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:3px}
+.caption .stepno{font:600 12px var(--mono);color:var(--c-ep);white-space:nowrap}
+.caption .title{font-weight:650;font-size:15.5px}
+.caption .text{color:#cfd7e5;font-size:14.5px;max-width:980px}
+.controls{display:flex;align-items:center;gap:6px;padding:10px 14px 8px;flex-wrap:wrap;border-top:1px solid var(--line)}
+.btn{appearance:none;-webkit-appearance:none;border:1px solid var(--line2);background:var(--panel2);color:var(--text);height:36px;min-width:40px;padding:0 12px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;gap:7px;font:500 13px var(--sans);cursor:pointer;touch-action:manipulation}
+.btn:hover{border-color:#4a5f86;background:#1c2740}
+.btn:focus-visible,.seg button:focus-visible,.dot:focus-visible,.fieldrow:focus-visible,.pick button:focus-visible{outline:2px solid var(--c-wire);outline-offset:2px}
+.btn svg{width:14px;height:14px;fill:currentColor}
+.btn.primary{background:#24324f;border-color:#3a5078}
+.btn[disabled]{opacity:.4;cursor:default}
+.dots{display:flex;gap:3px;margin-left:auto;flex-wrap:wrap;align-items:center}
+.dot{appearance:none;border:0;background:transparent;padding:8px 2px;cursor:pointer;touch-action:manipulation}
+.dot::after{content:"";display:block;width:18px;height:6px;border-radius:3px;background:#28344b}
+.dot.done::after{background:#4b5e84}.dot.on::after{background:var(--c-ep)}
+.toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 14px 0}
+.toolbar .lbl{font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line2);border-radius:10px;overflow:hidden}
+.seg button,.pick button{appearance:none;border:0;background:transparent;color:var(--muted);padding:8px 12px;font:500 13px var(--sans);cursor:pointer;touch-action:manipulation}
+.seg button+button{border-left:1px solid var(--line2)}
+.seg button.on{background:#24324f;color:var(--text)}
+.seg button code{background:none;border:0;padding:0;color:inherit}
+/* svg */
+svg text{font-family:var(--sans)}
+svg .mono{font-family:var(--mono)}
+footer{max-width:1140px;margin:0 auto;padding:10px 18px 60px;color:var(--dim);font-size:13px}
+footer code{color:var(--muted)}
+.rmnote{display:none;font:12px var(--mono);color:var(--c-watch);margin-top:10px}
+@media (prefers-reduced-motion: reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+  .rmnote{display:block}
+}
+@media (max-width:560px){
+  .hero{padding-top:30px}
+  .caption{padding:4px 14px 14px;min-height:132px}
+  .caption .text{font-size:14px}
+  .controls{padding:10px 10px 8px}
+  .btn .lab{display:none}
+  .btn{min-width:44px;height:40px}
+  .stage{padding:6px 4px 2px}
+  p code,li code,.caption code,.info code,.lede code,.hero code,footer code{white-space:normal;overflow-wrap:anywhere}
+}
+.node{transition:opacity .3s}
+.node .nbox{transition:stroke-width .25s,fill-opacity .25s}
+.node.hot .nbox{stroke-width:2.6;fill-opacity:.2;stroke-opacity:1}
+.trail{fill:none;stroke-width:1.6;stroke-dasharray:3 5;opacity:.6}
+.pkt text{font:700 10.5px var(--mono);fill:#0a0d13}
+/* wide diagrams scroll sideways on narrow screens rather than shrink their text */
+.stage.wide{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.stage.wide svg{min-width:760px}
+/* results */
+.results{width:100%;border-collapse:collapse;font-size:14px}
+.results th,.results td{padding:9px 14px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+.results th:first-child,.results td:first-child{text-align:left;white-space:normal}
+.results thead th{font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+.results tbody tr:last-child td{border-bottom:0}
+.results td.now{color:#c9d3ff;font-weight:650}
+.results td.na{color:var(--dim)}
+.results .grp td{font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--c-ep);background:rgba(255,180,84,.05)}
+.tablewrap{overflow-x:auto}
+.policy.tg{border-color:rgba(126,224,138,.4);background:linear-gradient(180deg,rgba(126,224,138,.06),rgba(18,25,37,.55))}
+.policy.tg .pk,.policy.tg dt{color:var(--c-reg)}
+</style>
+<body>
+<header class="hero">
+  <div class="eyebrow">SwiftMMKV · Memory</div>
+  <h1>How the Swift core keeps a store's index in <span class="t">half</span> the memory</h1>
+  <p>An MMKV store keeps every key's latest record in a memory-mapped file, plus an index in memory that says where each key's record is. In the C++ core, that index holds its own copy of every key, and each entry costs a heap allocation or two. The Swift core uses a hash table of fixed-size slots in one allocation. A plain store's slots hold no keys at all and compare against the keys already in the file. An encrypted store's slots point into a single arena of keys and small values. A plain store of 100,000 keys now takes 4.1 MB instead of the C++ core's 8.0 MB, and writes make no heap allocations.</p>
+  <div class="facts">
+    <span class="fact">plain slot <b>16 B</b> · hash + location</span>
+    <span class="fact">encrypted slot <b>20 B</b> · hash + arena offset + sizes</span>
+    <span class="fact">table <b>power of two ≥ 16</b> · at most <b>¾</b> full</span>
+    <span class="fact">value kept in memory <b>≤ 256 B</b> · encrypted only</span>
+    <span class="fact">decrypt window <b>≤ 128 KiB</b></span>
+    <span class="fact">arena compacts at <b>&gt; 4 KiB</b> and <b>&gt; ½</b> garbage</span>
+    <span class="fact">heap allocations per write <b>0</b></span>
+  </div>
+  <div class="legend" aria-label="Colours">
+    <span style="--c:#ff9ecb">C++ core</span>
+    <span style="--c:#8ea2ff">RecordIndex · slots</span>
+    <span style="--c:#7ee08a">CryptIndex arena</span>
+    <span style="--c:#34d6c3">mapped file</span>
+    <span style="--c:#56c8ff">key bytes</span>
+    <span style="--c:#dfe7f2">value bytes</span>
+    <span style="--c:#e9d66b">hash</span>
+    <span style="--c:#b98cff">cipher state</span>
+    <span style="--c:#ff6b6b">garbage</span>
+  </div>
+  <div class="rmnote">Reduced motion is on: scenes don't autoplay and nothing moves. Use Step to go through each scene.</div>
+</header>
+<nav class="top" aria-label="Scenes"><div class="in">
+  <a href="#cost"><span class="n">01</span>Cost per key</a>
+  <a href="#cpp"><span class="n">02</span>The C++ index</a>
+  <a href="#index"><span class="n">03</span>RecordIndex</a>
+  <a href="#lookup"><span class="n">04</span>Lookup</a>
+  <a href="#write"><span class="n">05</span>Writes</a>
+  <a href="#remove"><span class="n">06</span>Removal</a>
+  <a href="#crypt"><span class="n">07</span>CryptIndex</a>
+  <a href="#load"><span class="n">08</span>Loading</a>
+  <a href="#results"><span class="n">09</span>Results</a>
+</div></nav>
+<main>
+<section class="scene" id="cost">
+  <div class="sh"><span class="num">01</span><h2>What one key costs</h2></div>
+  <p class="lede">Heap bytes per key in each core's index, for the memory report's store: keys like <code>key-12345</code> (9 bytes) holding strings of 50 characters (51 bytes stored). The parts are the allocations each index makes, and their totals match what <code>MemoryReport</code> measures at 100,000 keys. Switch to an encrypted store to compare the second pair of indexes.</p>
+  <div class="card"><div class="stage wide"></div></div>
+</section>
+<section class="scene" id="cpp">
+  <div class="sh"><span class="num">02</span><h2>Where the C++ core's bytes go: a copy of every key</h2></div>
+  <p class="lede">The C++ core keeps a copy of every key in a heap node of its own, next to a 12-byte record location. But a plain store's record starts with its key, and the file is mapped into memory already, so each key is held twice. The offsets in these pictures are examples.</p>
+  <div class="card"><div class="stage wide"></div></div>
+</section>
+<section class="scene" id="index">
+  <div class="sh"><span class="num">03</span><h2><code>RecordIndex</code>: 16 bytes a key, and no keys</h2></div>
+  <p class="lede">A plain store's index is a <code>SlotTable</code>: one block of slots, using open addressing with linear probing. A slot holds the key's hash and the same 12-byte location the C++ core keeps. The key names shown in grey are for reading the picture; the table doesn't store them.</p>
+  <div class="card"><div class="stage wide"></div></div>
+</section>
+<section class="scene" id="lookup">
+  <div class="sh"><span class="num">04</span><h2>Finding a key the table doesn't keep</h2></div>
+  <p class="lede">A lookup compares 32-bit hashes first, and reads a key from the mapped file only when the hashes match. Pick a key that is in the store or one that isn't. The hashes are examples. The table seeds its hash randomly each time it is created.</p>
+  <div class="card"><div class="stage wide"></div></div>
+</section>
+<section class="scene" id="write">
+  <div class="sh"><span class="num">05</span><h2>A write without a heap allocation</h2></div>
+  <p class="lede">A write uses the key's bytes where the <code>String</code> keeps them, encodes the value on the stack, and looks the key up once. Then it appends the record to the file and points the slot at it. Like the C++ core, it makes no heap allocation. Pick an overwrite or a new key.</p>
+  <div class="card"><div class="stage wide"></div></div>
+</section>
+<section class="scene" id="remove">
+  <div class="sh"><span class="num">06</span><h2>Removing without tombstones</h2></div>
+  <p class="lede">With linear probing, a removed slot can't just be emptied: keys placed past it would no longer be found. Rather than mark it removed, which leaves scans longer forever after, the table moves the later keys of the run back. This is backward-shift deletion.</p>
+  <div class="card"><div class="stage wide"></div></div>
+</section>
+<section class="scene" id="crypt">
+  <div class="sh"><span class="num">07</span><h2><code>CryptIndex</code>: one arena for keys and small values</h2></div>
+  <p class="lede">An encrypted store's records are ciphertext, so its index has to keep the keys, and the values it serves from memory. The C++ core gives each key a <code>std::string</code> and each value from 28 to 256 bytes a buffer of its own. <code>CryptIndex</code> packs all of them into one growing block, the arena, with a 20-byte slot per key in the same kind of table. The offsets are examples.</p>
+  <div class="card"><div class="stage wide"></div></div>
+</section>
+<section class="scene" id="load">
+  <div class="sh"><span class="num">08</span><h2>Loading an encrypted store a window at a time</h2></div>
+  <p class="lede">The data is one AES-CFB-128 stream. The Swift core decrypts it at most 128 KiB at a time, as the C++ core does, and doesn't decrypt a large value while loading. Records are not drawn to scale.</p>
+  <div class="card"><div class="stage wide"></div></div>
+</section>
+<section class="scene" id="results">
+  <div class="sh"><span class="num">09</span><h2>Results, and what checks them</h2></div>
+  <p class="lede">Measured by <code>Benchmarks/Tools/MemoryReport</code>. Each case runs in a fresh process, which copies a store of string values, opens it, loads every key, then trims it. Footprint is <code>phys_footprint</code> on macOS (M1 Pro) and private dirty memory on an Android emulator (API 36). Heap per key is the heap the store retains, divided by its keys.</p>
+  <div class="card"><div class="tablewrap"><table class="results">
+    <thead><tr><th>100,000 keys</th><th>C++ core</th><th>Swift core</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="3">Plain store</td></tr>
+      <tr><td>Heap per key (macOS)</td><td>72 B</td><td class="now">41 B</td></tr>
+      <tr><td>Footprint after opening (macOS)</td><td>8.0 MB</td><td class="now">4.1 MB</td></tr>
+      <tr><td>Private dirty after opening (Android)</td><td>8.8 MB</td><td class="now">4.1 MB</td></tr>
+      <tr><td>Heap per key (Android)</td><td>88 B</td><td class="now">42 B</td></tr>
+      <tr class="grp"><td colspan="3">Encrypted store</td></tr>
+      <tr><td>Heap per key (macOS)</td><td>152 B</td><td class="now">112 B</td></tr>
+      <tr><td>Footprint after opening (macOS)</td><td>15.9 MB</td><td class="now">16.4 MB</td></tr>
+      <tr><td>Peak footprint through opening and a trim (macOS)</td><td>36.9 MB</td><td class="now">23.7 MB</td></tr>
+      <tr><td>Private dirty after opening (Android)</td><td>18.1 MB</td><td class="now">11.1 MB</td></tr>
+      <tr><td>Heap per key (Android)</td><td>184 B</td><td class="now">112 B</td></tr>
+    </tbody>
+  </table></div></div>
+  <p class="lede" style="margin-top:14px">Neither core allocates on a write, and the Swift core's writes are now close to the C++ core's or faster: <code>write.string</code> takes 173 ns against 177 ns, and <code>write.int32</code> 150 ns against 147 ns. Over many writes, including the full write-backs, the Swift core is faster. Reads are close or faster: <code>read.int32</code> takes 84 ns against 81 ns, and <code>read.string</code> 164 ns against 354 ns.</p>
+  <div class="policy tg" role="note" aria-label="What checks it">
+    <div class="ph"><span class="pk">What checks it</span><span class="pn">The file format didn't change: both cores still write the same bytes.</span></div>
+    <dl>
+      <div><dt>RecordIndexTests</dt><dd>Finds every key it holds and none it doesn't, over 3,000 keys of mixed lengths. It removes keys one at a time and by a condition, checks every key after each step, and checks that a moved record keeps its slot and version. Breaking backward shift fails it with 1,014 issues.</dd></div>
+      <div><dt>CryptIndexTests</dt><dd>20,000 random operations against a dictionary model, with four seeds. They cover replacements that fit in place, values over 256 bytes, values read from the arena and written back under another key, and compaction.</dd></div>
+      <div><dt>DifferentialTests</dt><dd>Each core reads the other's files, including an encrypted store more than four windows long, with values of 1 to 2,000 bytes and removals. That test crashes if large values aren't skipped, and it passes with the window forced down to 4 KiB.</dd></div>
+      <div><dt>MemoryReport</dt><dd>Measures both cores in fresh processes on macOS, and on Android with an Android-only shim for a libc++ symbol the NDK lacks. It fsyncs each copied store first, so that page cache isn't counted as the store's memory.</dd></div>
+    </dl>
+  </div>
+</section>
+</main>
+<footer>
+  <p>Built from the sources on branch <code>t3/assess-swift-mmkv-rewrite</code>: <code>Sources/_SwiftMMKVCore/Coding/SlotTable.swift</code>, <code>Coding/RecordIndex.swift</code>, <code>Store/CryptIndex.swift</code>, <code>Store/StoreInstance+Writing.swift</code>, <code>Store/StoreInstance+Encryption.swift</code> and <code>Crypto/AESCryptor.swift</code>. The C++ figures come from <code>KeyValueHolder.h</code>, built with libc++ on arm64. Its hash node is 56 bytes for a plain store and 72 bytes for an encrypted one.</p>
+  <p>Keyboard: focus a scene's controls and use ← / → to step.</p>
+</footer>
+<noscript><p style="text-align:center;color:#ff6b7d">The visualizations need JavaScript.</p></noscript>
+<script>
+'use strict';
+/* ====================================================================================
+   Engine: every scene is rebuilt from scratch and replayed up to the current step, so a
+   step can be jumped to, re-laid-out on resize, and restarted deterministically.
+   ==================================================================================== */
+const NS = 'http://www.w3.org/2000/svg';
+const RM = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+const C = {
+  file: '#34d6c3', idx: '#8ea2ff', cpp: '#ff9ecb', old: '#ffb454', arena: '#7ee08a', cs: '#b98cff',
+  key: '#56c8ff', hash: '#e9d66b', val: '#dfe7f2', ok: '#5ee39b', bad: '#ff6b6b', sk: '#34d6c3',
+  muted: '#9aa5ba', dim: '#606c84', text: '#e8edf5', line: '#2a3750', panel: '#131b28'
+};
+
+
+function S(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  if (attrs) for (const k in attrs) { const v = attrs[k]; if (v !== undefined && v !== null && v !== false) e.setAttribute(k, v); }
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function H(tag, attrs, parent, html) {
+  const e = document.createElement(tag);
+  if (attrs) for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (html != null) e.innerHTML = html;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function tw(s, size, mono) { return String(s).length * size * (mono ? 0.61 : 0.53); }
+function wrap(str, n) {
+  const out = []; let line = '';
+  for (const w of String(str).split(' ')) {
+    if (line && (line + ' ' + w).length > n) { out.push(line); line = w; } else line = line ? line + ' ' + w : w;
+  }
+  if (line) out.push(line);
+  return out;
+}
+function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function stripTags(s) { return String(s).replace(/<[^>]+>/g, ''); }
+
+class Ctx {
+  constructor(scene, narrow) {
+    this.scene = scene; this.narrow = narrow; this.token = scene.token;
+    this.cur = false; this.motion = false; this.n = {}; this.edges = {}; this.d = {}; this.uid = scene.id;
+  }
+  alive() { return this.scene.token === this.token; }
+  svg(w, h, label) {
+    const s = S('svg', { viewBox: `0 0 ${w} ${h}`, role: 'img', 'aria-label': label || this.scene.id, preserveAspectRatio: 'xMidYMin meet' });
+    const defs = S('defs', null, s);
+    const f = S('filter', { id: 'glow-' + this.uid, x: '-40%', y: '-40%', width: '180%', height: '180%' }, defs);
+    S('feGaussianBlur', { stdDeviation: 5, result: 'b' }, f);
+    const m = S('feMerge', null, f); S('feMergeNode', { in: 'b' }, m); S('feMergeNode', { in: 'SourceGraphic' }, m);
+    this.defs = defs; this.markers = {}; this.root = s;
+    this.base = S('g', null, s);
+    this.edgeLayer = S('g', null, this.base);
+    this.nodeLayer = S('g', null, this.base);
+    this.dyn = S('g', null, s);
+    this.fx = S('g', null, s);
+    this.W = w; this.H = h;
+    this.scene.stage.appendChild(s);
+    return s;
+  }
+  at(ms, fn) {
+    if (this.cur && this.motion && ms > 0) setTimeout(() => { if (this.alive()) fn(); }, ms);
+    else fn();
+  }
+  marker(color) {
+    if (this.markers[color]) return this.markers[color];
+    const id = `m-${this.uid}-${Object.keys(this.markers).length}`;
+    const m = S('marker', { id, viewBox: '0 0 10 10', refX: 8.5, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse', markerUnits: 'userSpaceOnUse' }, this.defs);
+    m.setAttribute('markerWidth', 9); m.setAttribute('markerHeight', 9);
+    S('path', { d: 'M0,0 L10,5 L0,10 z', fill: color }, m);
+    return (this.markers[color] = `url(#${id})`);
+  }
+  text(x, y, str, o = {}) {
+    const t = S('text', {
+      x, y, 'text-anchor': o.anchor || 'start', class: (o.mono ? 'mono ' : '') + (o.cls || ''),
+      fill: o.fill || C.text, 'font-size': o.size || 12, 'font-weight': o.weight || null, opacity: o.op != null ? o.op : null,
+      'font-style': o.italic ? 'italic' : null, 'text-decoration': o.strike ? 'line-through' : null
+    }, o.parent || this.nodeLayer);
+    const lines = Array.isArray(str) ? str : String(str).split('\n');
+    if (lines.length === 1) t.textContent = lines[0];
+    else lines.forEach((l, i) => { const ts = S('tspan', { x, dy: i ? (o.lh || (o.size || 12) * 1.32) : 0 }, t); ts.textContent = l; });
+    return t;
+  }
+  rect(x, y, w, h, o = {}) {
+    return S('rect', {
+      x, y, width: Math.max(0, w), height: Math.max(0, h), rx: o.rx != null ? o.rx : 8,
+      fill: o.fill || 'none', 'fill-opacity': o.fo != null ? o.fo : null,
+      stroke: o.stroke || null, 'stroke-opacity': o.so != null ? o.so : null, 'stroke-width': o.sw || (o.stroke ? 1.2 : null),
+      'stroke-dasharray': o.dash || null, opacity: o.op != null ? o.op : null, filter: o.glow ? `url(#glow-${this.uid})` : null
+    }, o.parent || this.nodeLayer);
+  }
+  line(x1, y1, x2, y2, o = {}) {
+    return S('line', { x1, y1, x2, y2, stroke: o.stroke || C.line, 'stroke-width': o.sw || 1.2, 'stroke-dasharray': o.dash || null, opacity: o.op != null ? o.op : null, 'marker-end': o.arrow ? this.marker(o.stroke || C.line) : null }, o.parent || this.nodeLayer);
+  }
+  path(d, o = {}) {
+    return S('path', { d, fill: 'none', stroke: o.stroke || C.line, 'stroke-width': o.sw || 1.2, 'stroke-dasharray': o.dash || null, opacity: o.op != null ? o.op : null, 'marker-end': o.arrow ? this.marker(o.stroke || C.line) : null }, o.parent || this.nodeLayer);
+  }
+  panel(x, y, w, h, title, color, o = {}) {
+    const p = o.parent || this.nodeLayer;
+    this.rect(x, y, w, h, { fill: color, fo: o.fo != null ? o.fo : 0.045, stroke: color, so: o.so != null ? o.so : 0.35, rx: 12, parent: p, dash: o.dash });
+    if (title) this.text(x + 14, y + 22, title, { mono: true, size: o.ts || 12.5, weight: 650, fill: color, parent: p });
+    if (o.sub) this.text(x + w - 12, y + 22, o.sub, { size: 11, fill: C.muted, anchor: 'end', parent: p });
+  }
+  box(id, x, y, w, h, color, title, sub, o = {}) {
+    const g = S('g', { class: 'node' + (o.cls ? ' ' + o.cls : ''), 'data-id': id }, o.parent || this.nodeLayer);
+    const r = S('rect', { x, y, width: w, height: h, rx: o.rx != null ? o.rx : 10, class: 'nbox', fill: color, 'fill-opacity': o.fo != null ? o.fo : 0.08, stroke: color, 'stroke-opacity': o.so != null ? o.so : 0.7, 'stroke-width': 1.2, 'stroke-dasharray': o.dash || null }, g);
+    const titles = Array.isArray(title) ? title : [title];
+    const subs = sub == null ? [] : (Array.isArray(sub) ? sub : [sub]);
+    const ts = o.ts || 12.5, ss = o.ss || 11, lh1 = ts * 1.25, lh2 = ss * 1.38;
+    const total = titles.length * lh1 + subs.length * lh2;
+    let yy = o.top != null ? y + o.top : y + h / 2 - total / 2 + ts * 0.9;
+    const cx = o.left ? x + 12 : x + w / 2, anchor = o.left ? 'start' : 'middle';
+    titles.forEach(t => { this.text(cx, yy, t, { anchor, mono: true, fill: color, size: ts, weight: 650, parent: g }); yy += lh1; });
+    yy += 1;
+    subs.forEach(t => { this.text(cx, yy, t, { anchor, size: ss, fill: C.muted, parent: g }); yy += lh2; });
+    this.n[id] = { x, y, w, h, g, r, color };
+    return g;
+  }
+  chip(x, y, str, color, o = {}) {
+    const size = o.size || 11, w = o.w || tw(str, size, !o.sans) + 14, h = o.h || size + 9;
+    const ax = o.anchor === 'middle' ? x - w / 2 : o.anchor === 'end' ? x - w : x;
+    const g = S('g', { class: 'chip' }, o.parent || this.nodeLayer);
+    S('rect', { x: ax, y: y - h / 2, width: w, height: h, rx: o.rx != null ? o.rx : h / 2, fill: o.solid ? color : color, 'fill-opacity': o.solid ? 1 : (o.fo != null ? o.fo : 0.14), stroke: color, 'stroke-opacity': o.so != null ? o.so : 0.6, filter: o.glow ? `url(#glow-${this.uid})` : null }, g);
+    this.text(ax + w / 2, y + size * 0.36, str, { anchor: 'middle', mono: !o.sans, size, fill: o.solid ? '#0a0d13' : (o.fill || color), parent: g, weight: o.weight || (o.solid ? 700 : null) });
+    g.w = w;
+    return g;
+  }
+  pt(p, side) {
+    if (typeof p !== 'string') return p;
+    const n = this.n[p]; if (!n) throw new Error('no node ' + p);
+    const cx = n.x + n.w / 2, cy = n.y + n.h / 2;
+    switch (side) {
+      case 'l': return { x: n.x, y: cy }; case 'r': return { x: n.x + n.w, y: cy };
+      case 't': return { x: cx, y: n.y }; case 'b': return { x: cx, y: n.y + n.h };
+      default: return { x: cx, y: cy };
+    }
+  }
+  border(n, toward) {
+    const cx = n.x + n.w / 2, cy = n.y + n.h / 2, dx = toward.x - cx, dy = toward.y - cy;
+    if (!dx && !dy) return { x: cx, y: cy };
+    const tx = dx ? (n.w / 2 + 3) / Math.abs(dx) : Infinity, ty = dy ? (n.h / 2 + 3) / Math.abs(dy) : Infinity;
+    const t = Math.min(tx, ty);
+    return { x: cx + dx * t, y: cy + dy * t };
+  }
+  edge(a, b, color, o = {}) {
+    const A = this.n[a], B = this.n[b];
+    const ca = { x: A.x + A.w / 2, y: A.y + A.h / 2 }, cb = { x: B.x + B.w / 2, y: B.y + B.h / 2 };
+    const pts = o.route ? [this.border(A, o.route[0]), ...o.route, this.border(B, o.route[o.route.length - 1])] : [this.border(A, cb), this.border(B, ca)];
+    const d = 'M' + pts.map(p => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' L');
+    const el = S('path', { d, class: 'edge' + (o.dash ? ' dash' : ''), stroke: color, 'marker-end': this.marker(color), 'data-a': a, 'data-b': b }, this.edgeLayer);
+    this.edges[a + '>' + b] = el;
+    return el;
+  }
+  hot(...ids) {
+    if (!this.cur) return;
+    for (const id of ids) {
+      const n = this.n[id];
+      if (n) { n.g.classList.add('hot'); n.r.setAttribute('filter', `url(#glow-${this.uid})`); }
+      else if (this.edges[id]) this.edges[id].classList.add('hot');
+    }
+  }
+  packet(label, color, o = {}) {
+    const g = S('g', { class: 'pkt' }, this.fx);
+    const w = o.w || Math.max(16, tw(label, 10.5, true) + 14), h = o.h || 18;
+    S('rect', { x: -w / 2, y: -h / 2, width: w, height: h, rx: h / 2, fill: color, stroke: '#0a0d13', 'stroke-width': 1.5 }, g);
+    if (label) { const t = S('text', { x: 0, y: 3.8, 'text-anchor': 'middle' }, g); t.textContent = label; }
+    return g;
+  }
+  place(g, p) { g.setAttribute('transform', `translate(${p.x.toFixed(1)},${p.y.toFixed(1)})`); }
+  // Moves a packet from `from` to `to` in the current step. `after` applies lasting state, and
+  // runs at once when a step is only being replayed.
+  fly(from, to, o = {}, after) {
+    const go = () => {
+      if (!this.cur) { if (after) after(); return; }
+      const color = o.color || C.sk;
+      let pathEl = null, rev = false, pointAt, dTrail;
+      if (!o.straight && typeof from === 'string' && typeof to === 'string') {
+        pathEl = this.edges[from + '>' + to];
+        if (!pathEl) { pathEl = this.edges[to + '>' + from]; rev = !!pathEl; }
+      }
+      if (pathEl) {
+        const L = pathEl.getTotalLength();
+        pointAt = t => pathEl.getPointAtLength(rev ? L * (1 - t) : L * t);
+        pathEl.classList.add('hot');
+      } else {
+        const a = this.pt(from, o.fs), b = this.pt(to, o.ts), bend = o.bend || 0;
+        const mx = (a.x + b.x) / 2 - (b.y - a.y) * bend, my = (a.y + b.y) / 2 + (b.x - a.x) * bend;
+        pointAt = t => ({ x: (1 - t) * (1 - t) * a.x + 2 * (1 - t) * t * mx + t * t * b.x, y: (1 - t) * (1 - t) * a.y + 2 * (1 - t) * t * my + t * t * b.y });
+        dTrail = `M${a.x},${a.y} Q${mx},${my} ${b.x},${b.y}`;
+        if (!o.noTrail) S('path', { d: dTrail, class: 'trail', stroke: color }, this.fx);
+      }
+      const stop = o.stopAt != null ? o.stopAt : 1;
+      const g = this.packet(o.label || '', color, o);
+      if (!this.motion) {
+        // A still frame shows the packet on its way, so it never hides what it arrives at.
+        this.place(g, pointAt(stop * (o.staticAt != null ? o.staticAt : 0.5)));
+        if (o.vanish) g.remove();
+        if (after) after();
+        return;
+      }
+      const dur = o.dur || 850, t0 = performance.now();
+      this.place(g, pointAt(0));
+      const tick = now => {
+        if (!this.alive()) return;
+        const t = Math.min(1, (now - t0) / dur), e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        this.place(g, pointAt(e * stop));
+        if (t < 1) requestAnimationFrame(tick);
+        else {
+          if (!o.keep) { g.style.transition = 'opacity .4s'; g.style.opacity = '0'; setTimeout(() => g.remove(), 450); }
+          if (after) after();
+        }
+      };
+      requestAnimationFrame(tick);
+    };
+    if (o.delay) this.at(o.delay, go); else go();
+  }
+  // A short-lived label in the current step only.
+  flash(x, y, str, color, o = {}) {
+    if (!this.cur) return;
+    const go = () => {
+      const g = this.chip(x, y, str, color, Object.assign({ parent: this.fx, fo: 0.9, fill: '#0a0d13', so: 1, weight: 700 }, o));
+      g.querySelector('rect').setAttribute('fill-opacity', o.fo != null ? o.fo : 0.92);
+      g.querySelector('text').setAttribute('fill', o.fill || '#0a0d13');
+    };
+    if (o.delay) this.at(o.delay, go); else go();
+  }
+}
+
+const ICON = {
+  play: '<path d="M4 2.5v11l9.5-5.5z"/>',
+  pause: '<path d="M3.5 2.5h3.2v11H3.5zM9.3 2.5h3.2v11H9.3z"/>',
+  prev: '<path d="M2.5 2.5h2.2v11H2.5zM13.5 2.5v11L5.5 8z"/>',
+  next: '<path d="M11.3 2.5h2.2v11h-2.2zM2.5 2.5v11L10.5 8z"/>',
+  restart: '<path d="M8 1.6a6.4 6.4 0 1 1-6.1 4.5l1.9.6A4.4 4.4 0 1 0 8 3.6v2.6L4.2 2.7 8 -.8z"/>'
+};
+function btn(parent, icon, label, cls) {
+  const b = H('button', { type: 'button', class: 'btn' + (cls ? ' ' + cls : ''), 'aria-label': label }, parent,
+    `<svg viewBox="0 0 16 16" aria-hidden="true">${ICON[icon]}</svg><span class="lab">${label}</span>`);
+  return b;
+}
+
+const SCENES = [];
+class Scene {
+  constructor(d) {
+    Object.assign(this, d);
+    this.token = 0; this.step = 0; this.playing = false; this.userPaused = false; this.timer = null;
+    this.mode = d.modes ? d.modes[0].key : null; this.lastNarrow = null;
+    SCENES.push(this);
+  }
+  list() { return this.steps(this.mode, this); }
+  mount() {
+    this.sec = document.getElementById(this.id);
+    const card = this.sec.querySelector('.card');
+    this.stage = this.sec.querySelector('.stage');
+    const host = this.stage.parentElement === card ? this.stage : this.stage.parentElement;
+    if (this.modes || this.toolbar) {
+      const bar = H('div', { class: 'toolbar' }); card.insertBefore(bar, host);
+      if (this.modes) {
+        H('span', { class: 'lbl' }, bar, this.modesLabel || 'Scenario');
+        const seg = H('div', { class: 'seg', role: 'group', 'aria-label': this.modesLabel || 'Scenario' }, bar);
+        this.modes.forEach(m => {
+          const b = H('button', { type: 'button', 'aria-pressed': String(m.key === this.mode) }, seg, m.label);
+          if (m.key === this.mode) b.classList.add('on');
+          b.addEventListener('click', () => {
+            this.mode = m.key;
+            seg.querySelectorAll('button').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', String(x === b)); });
+            this.render(0, false);
+          });
+        });
+      }
+      if (this.toolbar) this.toolbar(bar);
+    }
+    // The controls sit above the caption, and the caption is as tall as the scene's longest one, so
+    // stepping never moves the buttons or the page.
+    const ctr = H('div', { class: 'controls' }, card);
+    this.capEl = H('div', { class: 'caption', 'aria-live': 'polite' }, card);
+    this.bRestart = btn(ctr, 'restart', 'Restart');
+    this.bPrev = btn(ctr, 'prev', 'Back');
+    this.bPlay = btn(ctr, 'play', 'Play', 'primary');
+    this.bNext = btn(ctr, 'next', 'Step');
+    this.dotsEl = H('div', { class: 'dots', role: 'group', 'aria-label': 'Steps' }, ctr);
+    this.bRestart.addEventListener('click', () => { this.render(0, true); if (this.playing) this.schedule(); });
+    this.bPrev.addEventListener('click', () => { this.userPause(); this.render(this.step - 1, true); });
+    this.bNext.addEventListener('click', () => { this.userPause(); this.render(this.step + 1, true); });
+    this.bPlay.addEventListener('click', () => { if (this.playing) this.userPause(); else this.play(true); });
+    this.sec.addEventListener('keydown', e => {
+      if (e.target.closest && e.target.closest('input,select,textarea')) return;
+      if (e.key === 'ArrowRight') { this.userPause(); this.render(this.step + 1, true); e.preventDefault(); }
+      else if (e.key === 'ArrowLeft') { this.userPause(); this.render(this.step - 1, true); e.preventDefault(); }
+    });
+    this.render(0, false);
+  }
+  durOf(s) { return s.dur || Math.min(15000, Math.max(4200, 1500 + stripTags(s.cap).length * 40)); }
+  render(k, anim) {
+    this.token++; clearTimeout(this.timer);
+    const list = this.list();
+    k = Math.max(0, Math.min(k, list.length - 1)); this.step = k;
+    this.stage.textContent = '';
+    const narrow = this.stage.clientWidth < (this.narrowAt || 660);
+    this.lastNarrow = narrow;
+    const ctx = new Ctx(this, narrow); this.ctx = ctx;
+    this.build(ctx);
+    for (let i = 0; i < k; i++) { ctx.cur = false; list[i].run(ctx); }
+    ctx.cur = true; ctx.motion = !!anim && !RM.matches;
+    list[k].run(ctx);
+    if (this.after) this.after(ctx);
+    const s = list[k];
+    const capHTML = (st, i) => `<div class="meta"><span class="stepno">Step ${i + 1} / ${list.length}</span><span class="title">${st.t}</span></div><div class="text">${st.cap}</div>`;
+    const capKey = this.mode + '|' + this.capEl.clientWidth;
+    if (capKey !== this.capKey) {
+      this.capKey = capKey;
+      this.capEl.style.minHeight = '';
+      let tallest = 0;
+      list.forEach((st, i) => { this.capEl.innerHTML = capHTML(st, i); tallest = Math.max(tallest, this.capEl.offsetHeight); });
+      this.capEl.style.minHeight = tallest + 'px';
+    }
+    this.capEl.innerHTML = capHTML(s, k);
+    this.dotsEl.textContent = '';
+    list.forEach((st, i) => {
+      const d = H('button', { type: 'button', class: 'dot' + (i === k ? ' on' : i < k ? ' done' : ''), 'aria-label': `Step ${i + 1}: ${stripTags(st.t)}` }, this.dotsEl);
+      if (i === k) d.setAttribute('aria-current', 'step');
+      d.addEventListener('click', () => { this.userPause(); this.render(i, true); });
+    });
+    this.bPrev.disabled = k === 0; this.bNext.disabled = k === list.length - 1;
+    if (this.playing) this.schedule();
+  }
+  schedule() {
+    clearTimeout(this.timer);
+    const list = this.list();
+    this.timer = setTimeout(() => {
+      if (this.step < list.length - 1) this.render(this.step + 1, true);
+      else this.pause();
+    }, this.durOf(list[this.step]));
+  }
+  setPlayIcon() {
+    this.bPlay.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${ICON[this.playing ? 'pause' : 'play']}</svg><span class="lab">${this.playing ? 'Pause' : 'Play'}</span>`;
+    this.bPlay.setAttribute('aria-label', this.playing ? 'Pause' : 'Play');
+  }
+  play(byUser) {
+    if (byUser) this.userPaused = false;
+    this.playing = true; this.setPlayIcon();
+    const list = this.list();
+    if (this.step >= list.length - 1) this.render(0, true);
+    else if (byUser) this.render(this.step + 1, true);
+    else this.schedule();
+  }
+  pause() { this.playing = false; clearTimeout(this.timer); this.setPlayIcon(); }
+  userPause() { this.userPaused = true; this.pause(); }
+}
+
+function onResize() {
+  for (const s of SCENES) {
+    if (!s.stage) continue;
+    const narrow = s.stage.clientWidth < (s.narrowAt || 660);
+    if (narrow !== s.lastNarrow || s.capEl.clientWidth + '' !== s.capKey.split('|')[1]) { const p = s.playing; s.render(s.step, false); if (p) s.schedule(); }
+  }
+}
+
+/* ====================================================================================
+   Shared drawing
+   ==================================================================================== */
+function hex8(n) { return '0x' + (n >>> 0).toString(16).padStart(8, '0'); }
+
+// Cells laid out by byte count. Each field is { id, n, v, b, c, fo, ts, dash }.
+function strip(ctx, x, y, bw, h, fields, o = {}) {
+  const out = {}; let cx = x;
+  for (const f of fields) {
+    const w = f.b * bw, grp = S('g', null, o.parent || ctx.nodeLayer);
+    const r = ctx.rect(cx + 1, y, Math.max(1, w - 2), h, { fill: f.c, fo: f.fo != null ? f.fo : 0.15, stroke: f.c, so: f.so != null ? f.so : 0.7, rx: o.rx != null ? o.rx : 5, parent: grp, dash: f.dash });
+    const size = f.ts || o.ts || 11.5;
+    if (f.n && tw(f.n, size, true) <= w + 1) ctx.text(cx + w / 2, f.v != null ? y + h / 2 - 3 : y + h / 2 + size * 0.36, f.n, { anchor: 'middle', mono: true, size, weight: 650, fill: f.tc || f.c, parent: grp });
+    if (f.v != null) ctx.text(cx + w / 2, y + h / 2 + 12, f.v, { anchor: 'middle', mono: true, size: f.vs || o.vs || 10.5, fill: C.muted, parent: grp });
+    if (o.bytes) ctx.text(cx + w / 2, y + h + 13, f.b + ' B', { anchor: 'middle', mono: true, size: 10, fill: C.dim, parent: grp });
+    out[f.id || f.n] = { x: cx + 1, y, w: Math.max(1, w - 2), h, g: grp, r, cx: cx + w / 2 };
+    cx += w;
+  }
+  out.end = cx;
+  return out;
+}
+
+function hatch(ctx) {
+  const id = 'hatch-' + ctx.uid;
+  if (!ctx.defs.querySelector('#' + id)) {
+    const p = S('pattern', { id, width: 7, height: 7, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, ctx.defs);
+    S('rect', { width: 7, height: 7, fill: C.bad, 'fill-opacity': 0.1 }, p);
+    S('line', { x1: 0, y1: 0, x2: 0, y2: 7, stroke: C.bad, 'stroke-width': 2.4, 'stroke-opacity': 0.6 }, p);
+  }
+  return `url(#${id})`;
+}
+// Marks bytes that nothing refers to any more.
+function garbage(ctx, b, label, parent) {
+  S('rect', { x: b.x, y: b.y, width: b.w, height: b.h, rx: 5, fill: hatch(ctx), stroke: C.bad, 'stroke-opacity': 0.85, 'stroke-width': 1.3 }, parent || ctx.dyn);
+  if (label) ctx.text(b.x + b.w / 2, b.y - 7, label, { anchor: 'middle', size: 11, fill: C.bad, parent: parent || ctx.dyn });
+}
+// An outline that glows in the current step only.
+function ring(ctx, b, color, pad = 4) {
+  if (!ctx.cur || !b) return;
+  ctx.rect(b.x - pad, b.y - pad, b.w + 2 * pad, b.h + 2 * pad, { stroke: color, sw: 2, rx: 8, glow: true, parent: ctx.fx });
+}
+function curve(ctx, a, b, color, o = {}) {
+  const my = o.my != null ? o.my : (a[1] + b[1]) / 2;
+  const d = o.horizontal
+    ? `M${a[0]},${a[1]} C${(a[0] + b[0]) / 2},${a[1]} ${(a[0] + b[0]) / 2},${b[1]} ${b[0]},${b[1]}`
+    : `M${a[0]},${a[1]} C${a[0]},${my} ${b[0]},${my} ${b[0]},${b[1]}`;
+  return ctx.path(d, Object.assign({ stroke: color, arrow: true, sw: 1.6, parent: ctx.dyn }, o));
+}
+function note(ctx, x, y, str, color, o = {}) {
+  return ctx.text(x, y, str, Object.assign({ size: 11.5, fill: color || C.muted, parent: ctx.dyn }, o));
+}
+function bottomOf(b) { return [b.x + b.w / 2, b.y + b.h]; }
+function topOf(b) { return [b.x + b.w / 2, b.y]; }
+
+/* ====================================================================================
+   The example store: four plain records in the mapped file
+   ==================================================================================== */
+const RECS = {
+  theme: { id: 'theme', off: 4, key: 'theme', vlen: 5, v: '"dark"', h: 0x3c0d55f2 },
+  key42: { id: 'key42', off: 16, key: 'key-42', vlen: 1, v: '7', h: 0x9b44e3a7 },
+  launches: { id: 'launches', off: 25, key: 'launches', vlen: 2, v: '318', h: 0x1f6a2c07 },
+  user: { id: 'user', off: 37, key: 'user.name', vlen: 4, v: '"Ada"', h: 0x7d21b90c },
+};
+const ALL_RECS = [RECS.theme, RECS.key42, RECS.launches, RECS.user];
+function recSize(r) { return 1 + r.key.length + 1 + r.vlen; }
+function locText(r) { return `@${r.off} · k${r.key.length} v${r.vlen}`; }
+
+// Draws records in the mapped data, and returns where each one's parts are.
+function drawFile(ctx, x0, y, bpx, recs, total, o = {}) {
+  const h = o.h || 40, out = {}, parent = o.parent || ctx.nodeLayer;
+  ctx.text(x0, y - 12, o.title || 'mapped file', { mono: true, size: 12, weight: 650, fill: C.file, parent });
+  const first = recs[0].off;
+  strip(ctx, x0, y, bpx, h, [{ n: '⋯', b: first, c: C.dim, fo: 0.05 }], { parent });
+  for (const r of recs) out[r.id] = drawRecord(ctx, x0, y, bpx, h, r, parent);
+  const end = Math.max(...recs.map(r => r.off + recSize(r)));
+  if (total > end) out.free = strip(ctx, x0 + end * bpx, y, bpx, h, [{ n: 'free', b: total - end, c: C.dim, fo: 0.02, dash: '4 4', ts: 11 }], { parent }).free;
+  out.x0 = x0; out.y = y; out.bpx = bpx; out.h = h;
+  return out;
+}
+function drawRecord(ctx, x0, y, bpx, h, r, parent, o = {}) {
+  const x = x0 + r.off * bpx, kl = r.key.length;
+  const grp = S('g', null, parent || ctx.nodeLayer);
+  const s = strip(ctx, x, y, bpx, h, [
+    { id: 'kl', n: String(kl), b: 1, c: C.muted, fo: 0.06, ts: 10 },
+    { id: 'key', n: r.key, b: kl, c: C.key, ts: bpx < 10 ? 10.5 : 11.5 },
+    { id: 'vl', n: String(r.vlen), b: 1, c: C.muted, fo: 0.06, ts: 10 },
+    { id: 'val', n: r.v, b: r.vlen, c: C.val, fo: 0.1, ts: 10.5 },
+  ], { parent: grp });
+  ctx.text(x + 1, y + h + 14, '@' + r.off, { mono: true, size: 10.5, fill: o.glow ? C.text : C.dim, parent: grp });
+  return { x, y, h, w: recSize(r) * bpx - 1, key: s.key, val: s.val, g: grp };
+}
+
+// Draws a table's slots as rows. `slots` maps a slot number to { h, k, loc }.
+function drawSlots(ctx, x, y, w, rh, cap, slots, o = {}) {
+  const color = o.color || C.idx, parent = o.parent || ctx.nodeLayer;
+  ctx.text(x, y - 10, o.title || 'slots', { mono: true, size: 12, weight: 650, fill: color, parent });
+  for (let i = 0; i < cap; i++) {
+    const yy = y + i * rh, s = slots[i];
+    const grp = S('g', { class: 'node' }, parent);
+    const r = S('rect', { x, y: yy + 1, width: w, height: rh - 2, rx: 5, class: 'nbox', fill: s ? color : C.dim, 'fill-opacity': s ? 0.1 : 0.03, stroke: s ? color : C.dim, 'stroke-opacity': s ? 0.6 : 0.3, 'stroke-width': 1 }, grp);
+    ctx.text(x - 7, yy + rh / 2 + 4, String(i), { anchor: 'end', mono: true, size: 10.5, fill: C.dim, parent: grp });
+    let tb = null;
+    if (s) {
+      ctx.text(x + 8, yy + rh / 2 + 4, hex8(s.h), { mono: true, size: 11, fill: C.hash, parent: grp });
+      tb = ctx.text(x + 90, yy + rh / 2 + 4, s.loc, { mono: true, size: 11, fill: C.text, parent: grp });
+      if (s.k) ctx.text(x + w - 8, yy + rh / 2 + 4, s.k, { anchor: 'end', size: 10.5, fill: C.dim, italic: true, parent: grp });
+    } else ctx.text(x + 8, yy + rh / 2 + 4, 'empty', { mono: true, size: 10.5, fill: C.dim, op: 0.7, parent: grp });
+    ctx.n['row' + i] = { x, y: yy + 1, w, h: rh - 2, g: grp, r, tb, color };
+  }
+}
+function plainSlots(recs) {
+  const out = {};
+  const place = (r, i) => { out[i] = { h: r.h, k: r.key, loc: locText(r) }; };
+  // Placed in the order the keys were first written, which decides who got slot 7.
+  const order = ['theme', 'launches', 'key42', 'user'];
+  for (const r of recs.slice().sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id))) {
+    let i = r.h & 15;
+    while (out[i]) i = (i + 1) & 15;
+    place(r, i);
+  }
+  return out;
+}
+
+/* ====================================================================================
+   01 · What one key costs
+   ==================================================================================== */
+const COST_X = 250, COST_S = 3.4;
+const COST = {
+  plain: [
+    { who: 'C++ core', sub: ['std::unordered_map<std::string,', '  KeyValueHolder>'], c: C.cpp, total: 72,
+      segs: [['hash node', 64], ['bucket', 8]], foot: 'heap 7.2 MB · footprint 8.0 MB · Android 8.8 MB',
+      t: 'C++ core: a node per key',
+      cap: 'The C++ core\'s index is a <code>std::unordered_map</code> from a copy of each key to a 12-byte <code>KeyValueHolder</code>. A key costs a 56-byte node, which malloc rounds up to a 64-byte block, and a pointer in the bucket array: 72 bytes, exactly what the memory report measures. A key longer than 22 bytes needs another allocation, because it no longer fits inside the <code>std::string</code>.' },
+    { who: 'Swift core', sub: ['RecordIndex'], c: C.idx, total: 42, measured: 41,
+      segs: [['16-byte slots', 42]], foot: 'heap 4.1 MB · footprint 4.1 MB · Android 4.1 MB',
+      t: 'Swift core now: one 16-byte slot per bucket',
+      cap: '<code>RecordIndex</code> keeps no keys. Each bucket is a 16-byte slot holding the key\'s hash and its record\'s location, and the whole table is one allocation. At 100,000 keys that is 262,144 slots, or 4 MiB, about 42 bytes a key. The report measures 41. Scenes 03 to 06 show how the table finds keys it doesn\'t keep.' },
+  ],
+  crypt: [
+    { who: 'C++ core', sub: ['std::unordered_map<std::string,', '  KeyValueHolderCrypt>'], c: C.cpp, total: 152,
+      segs: [['hash node', 80], ['bucket', 8], ['value buffer', 64]], foot: 'heap 15.2 MB · footprint 15.9 MB · Android 18.1 MB',
+      t: 'C++ core: a node and a value buffer per key',
+      cap: 'An encrypted store\'s file is ciphertext, so its index can\'t read keys from it. The C++ core maps a copy of each key to a 29-byte <code>KeyValueHolderCrypt</code>, in a 72-byte node that malloc puts in an 80-byte block. It keeps each value of 28 to 256 bytes decrypted, in a buffer of its own: these 51-byte values take 64-byte blocks. With the bucket pointer, that is 152 bytes, as measured.' },
+    { who: 'Swift core', sub: ['CryptIndex'], c: C.idx, total: 112,
+      segs: [['20-byte slots', 52], ['arena', 60]], c2: C.arena, foot: 'heap 11.2 MB · footprint 16.4 MB · Android 11.1 MB',
+      t: 'Swift core now: 20-byte slots and one arena',
+      cap: '<code>CryptIndex</code> packs every key and every small value into one arena, back to back, with no header and no rounding: 9 + 51 = 60 bytes here. Each bucket is a 20-byte slot that says where its key starts in the arena: 52 bytes a key at 262,144 slots. 112 bytes in all, as measured. Scene 07 shows the arena.' },
+  ],
+};
+const COST_TOTALS = {
+  plain: 'Multiplied out to 100,000 keys, with the footprint each store adds to its process after opening. The plain store\'s footprint is about half the C++ core\'s on both platforms. The file is mapped by every core alike, so this saving is all in the index.',
+  crypt: 'Multiplied out to 100,000 keys. On macOS the encrypted store\'s footprint after opening is close to the C++ core\'s, and on Android it is 39% lower. The bigger difference is the peak: through opening and a trim, the store peaks at 23.7 MB against the C++ core\'s 36.9 MB.',
+};
+function costAxis(ctx) {
+  for (let b = 0; b <= 200; b += 50) {
+    const x = COST_X + b * COST_S;
+    ctx.line(x, 34, x, 262, { stroke: C.line, op: 0.7, dash: b ? '2 4' : null });
+    ctx.text(x, 26, b + ' B', { anchor: 'middle', mono: true, size: 10.5, fill: C.dim });
+  }
+}
+function costRow(ctx, mode, i, totals) {
+  const r = COST[mode][i], y = 52 + i * 108;
+  ctx.text(24, y + 20, r.who, { size: 15, weight: 700, fill: r.c });
+  ctx.text(24, y + 40, r.sub, { mono: true, size: 10.5, fill: C.muted, lh: 14 });
+  let x = COST_X;
+  r.segs.forEach(([n, b], k) => {
+    const w = b * COST_S, c = k === 1 && r.c2 ? r.c2 : r.c;
+    ctx.rect(x, y + 4, w - 2, 40, { fill: c, fo: r.c2 ? 0.3 : 0.34 - k * 0.11, stroke: c, so: 0.85, rx: 6, glow: ctx.cur });
+    const label = `${n} · ${b} B`;
+    if (tw(label, 11.5, true) < w - 12) ctx.text(x + (w - 2) / 2, y + 28, label, { anchor: 'middle', mono: true, size: 11.5, weight: 650, fill: C.text });
+    else if (tw(n, 10.5, true) < w - 8) {
+      ctx.text(x + (w - 2) / 2, y + 21, n, { anchor: 'middle', mono: true, size: 10.5, weight: 650, fill: C.text });
+      ctx.text(x + (w - 2) / 2, y + 35, b + ' B', { anchor: 'middle', mono: true, size: 10.5, fill: C.text });
+    } else ctx.text(x + 2, y - 4, label, { mono: true, size: 10.5, fill: c });
+    x += w;
+  });
+  ctx.text(x + 10, y + 30, r.total + ' B', { size: 18, weight: 750, fill: r.c });
+  if (r.measured) ctx.text(x + 22 + tw(r.total + ' B', 18), y + 30, `(${r.measured} measured)`, { size: 11, fill: C.muted });
+  if (totals) ctx.text(COST_X, y + 66, '100,000 keys → ' + r.foot, { mono: true, size: 11.5, fill: i === 1 ? C.text : C.muted, weight: i === 1 ? 650 : null });
+}
+new Scene({
+  id: 'cost',
+  modes: [{ key: 'plain', label: 'Plain store' }, { key: 'crypt', label: 'Encrypted store' }],
+  modesLabel: 'Store',
+  build(ctx) { ctx.svg(1000, 270, 'Heap bytes per key in each core'); costAxis(ctx); },
+  steps(mode) {
+    const rows = COST[mode];
+    return [
+      ...rows.map((r, i) => ({ t: r.t, cap: r.cap, run(ctx) { costRow(ctx, mode, i, false); } })),
+      { t: 'For 100,000 keys', cap: COST_TOTALS[mode], run(ctx) { ctx.nodeLayer.textContent = ''; costAxis(ctx); rows.forEach((_, i) => costRow(ctx, mode, i, true)); } },
+    ];
+  },
+});
+
+/* ====================================================================================
+   02 · The C++ index
+   ==================================================================================== */
+const OLD_NODES = [
+  { r: RECS.theme, y: 70, bucket: 1, next: 'null' },
+  { r: RECS.launches, y: 160, bucket: 4, next: '→' },
+  { r: RECS.key42, y: 250, bucket: null, next: 'null' },
+];
+function oldFile(ctx) {
+  return drawFile(ctx, 160, 384, 12, [RECS.theme, RECS.key42, RECS.launches], 44, { title: 'mapped file' });
+}
+function cppBuild(ctx) {
+  ctx.text(30, 46, 'bucket array', { mono: true, size: 12, weight: 650, fill: C.cpp });
+  ctx.d.buckets = [];
+  for (let i = 0; i < 9; i++) {
+    const y = 58 + i * 34, used = i === 1 || i === 4;
+    ctx.rect(30, y, 74, 28, { fill: C.cpp, fo: used ? 0.14 : 0.03, stroke: C.cpp, so: used ? 0.7 : 0.25, rx: 5 });
+    ctx.text(40, y + 18, 'b' + i, { mono: true, size: 10.5, fill: C.dim });
+    ctx.text(94, y + 18, used ? '•' : 'null', { anchor: 'end', mono: true, size: used ? 14 : 10, fill: used ? C.cpp : C.dim });
+    ctx.d.buckets.push({ x: 30, y, w: 74, h: 28 });
+  }
+}
+function cppNodes(ctx) {
+  ctx.d.nodes = OLD_NODES.map(nd => {
+    const s = strip(ctx, 160, nd.y, 10, 44, [
+      { id: 'next', n: 'next', v: nd.next, b: 8, c: C.muted, fo: 0.06 },
+      { id: 'hash', n: 'hash', v: 'size_t', b: 8, c: C.hash, fo: 0.08 },
+      { id: 'str', n: 'std::string', v: `"${nd.r.key}" inline`, b: 24, c: C.key },
+      { id: 'kvh', n: 'KeyValueHolder', v: locText(nd.r), b: 12, c: C.idx },
+      { id: 'pad', b: 4, c: C.dim, fo: 0.03, so: 0.3 },
+    ], { parent: ctx.dyn });
+    ctx.rect(154, nd.y - 6, 652, 56, { stroke: C.cpp, so: 0.55, dash: '5 4', rx: 9, parent: ctx.dyn });
+    ctx.text(806, nd.y - 11, '56-byte node in a 64-byte malloc block', { anchor: 'end', size: 10.5, fill: C.cpp, parent: ctx.dyn });
+    if (nd.bucket != null) {
+      const b = ctx.d.buckets[nd.bucket];
+      ctx.path(`M${b.x + b.w},${b.y + 14} L128,${b.y + 14} L128,${nd.y + 22} L152,${nd.y + 22}`, { stroke: C.cpp, arrow: true, sw: 1.5, parent: ctx.dyn });
+    }
+    return s;
+  });
+  const n1 = ctx.d.nodes[1].next;
+  ctx.path(`M${n1.cx},${n1.y + n1.h} L${n1.cx},${OLD_NODES[2].y - 8}`, { stroke: C.muted, arrow: true, sw: 1.4, parent: ctx.dyn });
+}
+new Scene({
+  id: 'cpp',
+  build(ctx) {
+    ctx.svg(1000, 450, 'How the C++ core indexes a plain store');
+    ctx.d.file = oldFile(ctx);
+    cppBuild(ctx);
+  },
+  steps() {
+    return [
+      { t: 'A bucket array', cap: 'An <code>std::unordered_map</code> starts with an array of bucket pointers, about one per key. A key\'s hash picks its bucket, and the bucket points to a chain of nodes.',
+        run(ctx) { ctx.d.buckets.forEach(b => ring(ctx, b, C.cpp, 2)); } },
+      { t: 'A node for each key', cap: 'Each key gets a node of its own from malloc: a pointer to the next node in the bucket, the cached hash, the key, and the <code>KeyValueHolder</code>. Here <code>launches</code> and <code>key-42</code> share a bucket, so one node points to the other. That is 56 bytes, which malloc rounds up to 64.',
+        run(ctx) { cppNodes(ctx); if (ctx.cur) ctx.d.nodes.forEach(n => ring(ctx, { x: n.next.x, y: n.next.y, w: n.pad.x + n.pad.w - n.next.x, h: n.next.h }, C.cpp, 3)); } },
+      { t: 'A copy of the key', cap: 'The node\'s <code>std::string</code> holds a copy of the key: inside itself up to 22 bytes, or in another allocation if the key is longer. But the record in the mapped file starts with the same bytes. Each key is kept twice, and the copy is only there to compare keys while looking them up.',
+        run(ctx) {
+          const s = ctx.d.nodes[2].str, k = ctx.d.file.key42.key;
+          curve(ctx, bottomOf(s), [k.x + k.w / 2, k.y - 4], C.key);
+          note(ctx, k.x + k.w + 16, k.y - 12, 'the same 6 bytes', C.key);
+          ctx.d.nodes.forEach(n => ring(ctx, n.str, C.key, 3)); ring(ctx, k, C.key, 3);
+        } },
+      { t: 'And where its record is', cap: '<code>KeyValueHolder</code> is 12 bytes: the record\'s offset in the data, the key\'s and the value\'s sizes, and their combined size with the length prefixes (<code>computedKVSize</code>). A read uses only these to find the value in the file.',
+        run(ctx) {
+          const h = ctx.d.nodes[2].kvh, rec = ctx.d.file.key42;
+          curve(ctx, bottomOf(h), [rec.x + 4, rec.y - 4], C.idx);
+          ring(ctx, h, C.idx, 3); ring(ctx, rec, C.idx, 3);
+        } },
+    ];
+  },
+});
+
+/* ====================================================================================
+   03 · RecordIndex
+   ==================================================================================== */
+const IX = { x: 60, y: 56, w: 300, rh: 22 };
+function ixBase(ctx, recs, fileY, bpx, total) {
+  drawSlots(ctx, IX.x, IX.y, IX.w, IX.rh, 16, plainSlots(recs), { title: 'RecordIndex · 16 slots' });
+  ctx.d.file = drawFile(ctx, 420, fileY, bpx, ALL_RECS, total, { title: 'mapped file' });
+}
+new Scene({
+  id: 'index',
+  build(ctx) { ctx.svg(1000, 430, 'The slots of a RecordIndex and the records they point to'); ixBase(ctx, ALL_RECS, 350, 9.5, 58); },
+  steps() {
+    return [
+      { t: 'One block of slots', cap: 'The whole index is one allocation of slots, a power of two of them and at least 16. An empty slot has a hash of 0, and a key\'s hash is never 0. A key\'s home slot is its hash\'s low bits, and a key whose home is taken goes in the next free slot: <code>key-42</code>\'s home is 7, where <code>launches</code> is, so it is in 8.',
+        run(ctx) { ring(ctx, { x: IX.x, y: IX.y, w: IX.w, h: 16 * IX.rh }, C.idx, 4); } },
+      { t: 'Sixteen bytes per key', cap: 'A slot is the key\'s 32-bit hash and the 12 bytes the C++ core keeps in <code>KeyValueHolder</code>: the record\'s offset in the data, the key\'s and the value\'s sizes, and <code>computedKVSize</code>, the size of the key and both length prefixes. It holds no pointer and needs no allocation of its own.',
+        run(ctx) {
+          ctx.text(420, 66, 'slot 8 · 16 bytes', { mono: true, size: 12, weight: 650, fill: C.idx, parent: ctx.dyn });
+          ctx.d.slot = strip(ctx, 420, 80, 34, 48, [
+            { id: 'hash', n: 'hash', v: '0x9b44e3a7', b: 4, c: C.hash },
+            { id: 'kv', n: 'kvSize', v: '8', b: 2, c: C.idx },
+            { id: 'ks', n: 'keySize', v: '6', b: 2, c: C.idx },
+            { id: 'vs', n: 'valueSize', v: '1', b: 4, c: C.idx },
+            { id: 'off', n: 'offset', v: '16', b: 4, c: C.idx },
+          ], { parent: ctx.dyn, bytes: true });
+          const row = ctx.n.row8;
+          curve(ctx, [row.x + row.w, row.y + row.h / 2], [416, 104], C.idx, { horizontal: true });
+          ctx.hot('row8');
+        } },
+      { t: 'The key stays in the file', cap: 'The offset leads to the record, which starts with the key\'s length and then the key. So the key is at <code>offset + 1</code> here, or after however many bytes its length takes. Comparing a key reads it there. The file is mapped anyway, so this costs no memory the store didn\'t already use. Moving records, as compaction does, only rewrites slots\' offsets.',
+        run(ctx) {
+          const off = ctx.d.slot.off, rec = ctx.d.file.key42;
+          curve(ctx, [off.cx, off.y + off.h + 18], [rec.x + 4, rec.y - 4], C.idx);
+          ring(ctx, rec.key, C.key, 3);
+          note(ctx, rec.key.x + rec.key.w + 8, rec.y - 10, 'key = offset + 1', C.key);
+          ctx.hot('row8');
+        } },
+      { t: 'Sized once while loading', cap: 'Before loading, the store counts the records in the file and sizes the table for that many keys at three-quarters full. Afterwards it shrinks the table if overwrites meant fewer keys. 100,000 keys need 133,334 slots, so the table has 262,144, which is 4 MiB in one block. It never grows during the load, so no smaller copies are left behind.',
+        run(ctx) {
+          ctx.rect(410, 168, 560, 126, { fill: '#121925', fo: 0.97, stroke: C.line, rx: 10, parent: ctx.dyn });
+          const lines = [['capacity', 'a power of two, at least 16'], ['grows', 'when more than ¾ full, to twice the size'], ['at 100,000 keys', '262,144 slots × 16 B = 4 MiB'], ['C++ at 100,000 keys', '100,000 nodes × 64 B + buckets ≈ 7.2 MB']];
+          lines.forEach(([a, b], i) => {
+            ctx.text(426, 194 + i * 28, a, { mono: true, size: 12, weight: 650, fill: i === 3 ? C.cpp : C.idx, parent: ctx.dyn });
+            ctx.text(600, 194 + i * 28, b, { mono: true, size: 12, fill: C.text, parent: ctx.dyn });
+          });
+        } },
+    ];
+  },
+});
+
+/* ====================================================================================
+   04 · Lookup
+   ==================================================================================== */
+const PROBE_KEYS = {
+  present: { key: 'key-42', h: 0x9b44e3a7 },
+  absent: { key: 'volume', h: 0x52e8a017 },
+};
+function rowMark(ctx, i, str, color) {
+  const r = ctx.n['row' + i];
+  ctx.text(r.x + r.w + 10, r.y + r.h / 2 + 4, str, { mono: true, size: 11.5, weight: 650, fill: color, parent: ctx.dyn });
+}
+new Scene({
+  id: 'lookup',
+  modes: [{ key: 'present', label: 'key-42 (in the store)' }, { key: 'absent', label: 'volume (not in it)' }],
+  modesLabel: 'Look up',
+  build(ctx) {
+    ctx.svg(1000, 430, 'Looking a key up in a RecordIndex');
+    ixBase(ctx, ALL_RECS, 350, 9.5, 58);
+    const k = PROBE_KEYS[this.mode];
+    ctx.box('keybox', 470, 56, 170, 52, C.key, `"${k.key}"`, 'the key to find');
+  },
+  steps(mode) {
+    const k = PROBE_KEYS[mode];
+    const hashStep = { t: 'Hash the key', cap: 'The table hashes the key\'s bytes eight at a time, multiplying and folding, from a seed picked when the table was created. The result is 32 bits, with 0 turned into 1, because 0 marks an empty slot.',
+      run(ctx) {
+        ctx.box('hashbox', 690, 56, 260, 52, C.hash, hex8(k.h), `home slot = hash & 15 = ${k.h & 15}`, { parent: ctx.dyn });
+        ctx.fly('keybox', 'hashbox', { color: C.hash, fs: 'r', ts: 'l' });
+        ctx.hot('hashbox');
+      } };
+    const homeStep = { t: 'Start at its home slot', cap: 'The low bits of the hash pick the slot to start from, and the scan moves forward one slot at a time, wrapping at the end.',
+      run(ctx) { ctx.fly('hashbox', 'row7', { color: C.hash, fs: 'b', ts: 'r', bend: -0.2 }); ctx.hot('row7'); } };
+    const skip = (i, who) => ({ t: 'A different hash: skip it', cap: `Slot ${i} holds a different hash (${who}'s), so it can't hold this key. The scan moves on without reading anything from the file. Only a slot whose hash matches leads to the file.`,
+      run(ctx) { rowMark(ctx, i, '≠ hash · skip', C.muted); ctx.hot('row' + i); } });
+    if (mode === 'present') return [hashStep, homeStep, skip(7, 'launches'),
+      { t: 'The same hash: compare the key in the file', cap: 'Slot 8\'s hash matches. The table checks that the key sizes match, then compares the bytes with <code>memcmp</code> against the key in the record the slot points to. Two different keys share a 32-bit hash about once in four billion pairs, so a lookup almost never compares a key that isn\'t the one it wants.',
+        run(ctx) {
+          rowMark(ctx, 8, '= hash · memcmp', C.hash);
+          const rec = ctx.d.file.key42, r = ctx.n.row8;
+          curve(ctx, [r.x + r.w + 130, r.y + r.h / 2], [rec.key.x + rec.key.w / 2, rec.y - 4], C.key, { my: 300 });
+          ring(ctx, rec.key, C.key, 3); ctx.hot('row8');
+        } },
+      { t: 'Found', cap: 'The probe returns <code>.found(8)</code>. A read takes the value from the file at the slot\'s location without copying it. A write keeps the slot number to update afterwards (scene 05). The lookup allocated nothing and stored nothing.',
+        run(ctx) {
+          rowMark(ctx, 8, '= hash · memcmp', C.hash);
+          ctx.chip(700, 160, '.found(8)', C.ok, { parent: ctx.dyn, size: 13 });
+          const v = ctx.d.file.key42.val, r = ctx.n.row8;
+          curve(ctx, [700, 172], [v.x + v.w / 2, v.y - 4], C.ok, { my: 260 });
+          ring(ctx, v, C.ok, 3); ctx.hot('row8');
+        } },
+    ];
+    return [hashStep, homeStep, skip(7, 'launches'), skip(8, 'key-42'),
+      { t: 'An empty slot: the key isn\'t there', cap: 'Slot 9 is empty, so the scan stops. A key is always placed before the first empty slot after its home, so it can\'t be further on. The probe returns <code>.vacant(9)</code>, which is where a write of <code>volume</code> would put it. The table is never more than three-quarters full, so a scan always reaches an empty slot.',
+        run(ctx) {
+          rowMark(ctx, 8, '≠ hash · skip', C.muted);
+          rowMark(ctx, 9, 'empty · stop', C.ok);
+          ctx.chip(700, 160, '.vacant(9)', C.ok, { parent: ctx.dyn, size: 13 });
+          ctx.hot('row9');
+        } },
+    ];
+  },
+});
+
+/* ====================================================================================
+   05 · Writes
+   ==================================================================================== */
+const WRITES = {
+  overwrite: { r: { id: 'new', off: 52, key: 'key-42', vlen: 1, v: '8', h: 0x9b44e3a7 }, enc: '08', val: 'Int32(8)', slot: 8, found: true },
+  insert: { r: { id: 'new', off: 52, key: 'volume', vlen: 1, v: '11', h: 0x52e8a017 }, enc: '0b', val: 'Int32(11)', slot: 9, found: false },
+};
+new Scene({
+  id: 'write',
+  modes: [{ key: 'overwrite', label: 'key-42 = 8 (overwrite)' }, { key: 'insert', label: 'volume = 11 (new key)' }],
+  modesLabel: 'Write',
+  build(ctx) {
+    ctx.svg(1000, 440, 'Writing a key without allocating');
+    const w = WRITES[this.mode];
+    drawSlots(ctx, IX.x, IX.y, IX.w, IX.rh, 16, plainSlots(ALL_RECS), { title: 'RecordIndex · 16 slots' });
+    ctx.d.file = drawFile(ctx, 420, 350, 8.4, ALL_RECS, 66, { title: 'mapped file' });
+    ctx.box('keybox', 420, 50, 250, 74, C.key, `key: "${w.r.key}"`, ['String.withUTF8', 'the string\'s own bytes, not a copy'], { ts: 13 });
+    ctx.box('valbox', 700, 50, 270, 74, C.val, `value: ${w.val}`, ['withUnsafeTemporaryAllocation', `encoded on the stack: ${w.enc}`], { ts: 13 });
+  },
+  steps(mode) {
+    const w = WRITES[mode];
+    return [
+      { t: 'Use the key\'s own bytes', cap: '<code>String.withUTF8</code> lends out the bytes the string already holds, so the key is never copied. A native Swift string is stored as UTF-8, so this costs nothing. The C++ core takes a <code>std::string</code> it was handed.',
+        run(ctx) { ctx.hot('keybox'); } },
+      { t: 'Encode the value on the stack', cap: 'The encoded value, here a varint, goes in a buffer from <code>withUnsafeTemporaryAllocation</code>, which is on the stack for sizes like these. Strings and byte values are written from their own storage.',
+        run(ctx) { ctx.hot('valbox'); } },
+      { t: 'Look the key up once', cap: w.found
+          ? 'One probe, as in scene 04, finds the key in slot 8. The store keeps the slot number and the table\'s version, a counter that changes whenever keys are added or removed or the table is resized.'
+          : 'One probe, as in scene 04, finds that the key is absent and would go in slot 9. The store keeps that slot number and the table\'s version, a counter that changes whenever keys are added or removed or the table is resized.',
+        run(ctx) {
+          ctx.fly('keybox', 'row7', { color: C.hash, fs: 'b', ts: 'r', bend: 0.15 });
+          if (w.found) rowMark(ctx, 7, '≠ hash · skip', C.muted);
+          rowMark(ctx, w.slot, w.found ? '.found(8)' : '.vacant(9)', C.ok);
+          ctx.hot('row' + w.slot);
+        } },
+      { t: 'Append the record', cap: 'The record goes at the end of the data in the mapped file: key length, key, value length, value. Then the stored size and CRC are updated. If the file has no room, the store first rewrites it without overwritten records, or grows it. Rewriting moves records, and each slot\'s offset is updated where it is, so the slot number still holds.',
+        run(ctx) {
+          const f = ctx.d.file, end = w.r.off + recSize(w.r);
+          // The record takes the start of the free space.
+          ctx.rect(f.x0 + w.r.off * f.bpx, f.y - 2, (66 - w.r.off) * f.bpx + 2, f.h + 4, { fill: '#111825', rx: 0, parent: ctx.dyn });
+          strip(ctx, f.x0 + end * f.bpx, f.y, f.bpx, f.h, [{ n: 'free', b: 66 - end, c: C.dim, fo: 0.02, dash: '4 4', ts: 11 }], { parent: ctx.dyn });
+          const rec = drawRecord(ctx, f.x0, f.y, f.bpx, f.h, w.r, ctx.dyn, { glow: true });
+          ctx.d.newRec = rec;
+          ctx.fly('keybox', { x: rec.key.x + rec.key.w / 2, y: rec.y }, { color: C.key, fs: 'b', label: 'key' });
+          ctx.fly('valbox', { x: rec.val.x + rec.val.w / 2, y: rec.y }, { color: C.val, fs: 'b', label: w.enc, delay: 250 });
+          ring(ctx, rec, C.file, 3);
+        } },
+      { t: w.found ? 'Point the slot at it' : 'Fill the slot', cap: w.found
+          ? 'If the version hasn\'t changed, slot 8 still holds this key, and its location is replaced: the offset becomes 52. The old record at 16 is now garbage in the file until the next rewrite, as in the C++ core. If making room dropped expired keys, keys can have moved between slots, so the store looks the key up again. There were no heap allocations in the whole write.'
+          : 'If the version hasn\'t changed, the new slot goes where the probe said, slot 9. The table now holds 5 keys in 16 slots. The 13th key would take it past three-quarters full and double it. If making room dropped expired keys, keys can have moved between slots, so the store looks the key up again. There were no heap allocations in the whole write.',
+        run(ctx) {
+          const f = ctx.d.file, rec = drawRecord(ctx, f.x0, f.y, f.bpx, f.h, w.r, ctx.dyn);
+          const r = ctx.n['row' + w.slot];
+          if (w.found) {
+            r.tb.textContent = locText(w.r);
+            r.tb.setAttribute('fill', C.ok);
+            garbage(ctx, ctx.d.file.key42, 'old record: garbage');
+          } else {
+            const g = S('g', null, ctx.dyn);
+            ctx.rect(r.x, r.y, r.w, r.h, { fill: '#162033', stroke: C.idx, so: 0.8, rx: 5, parent: g });
+            ctx.text(r.x + 8, r.y + r.h / 2 + 4, hex8(w.r.h), { mono: true, size: 11, fill: C.hash, parent: g });
+            ctx.text(r.x + 90, r.y + r.h / 2 + 4, locText(w.r), { mono: true, size: 11, fill: C.ok, parent: g });
+            ctx.text(r.x + r.w - 8, r.y + r.h / 2 + 4, w.r.key, { anchor: 'end', size: 10.5, fill: C.dim, italic: true, parent: g });
+          }
+          curve(ctx, [r.x + r.w + 110, r.y + r.h / 2], [rec.x + 4, rec.y - 4], C.ok, { horizontal: true });
+          ctx.chip(700, 200, '0 heap allocations', C.ok, { parent: ctx.dyn, size: 13, solid: true });
+          ctx.hot('row' + w.slot);
+        } },
+    ];
+  },
+});
+
+/* ====================================================================================
+   06 · Removal
+   ==================================================================================== */
+const RM_STEPS = [
+  { t: 'A run of keys', s: [null, null, ['A', 2], ['B', 2], ['C', 3], ['D', 5], null, null, null, null],
+    cap: 'Four keys in a run of occupied slots. A and B both have home slot 2, so B went in 3. C\'s home, 3, was taken, so it went in 4. D is in its home, 5. Each key is found by scanning from its home until the key or an empty slot.' },
+  { t: 'Remove A', s: [null, null, 'hole', ['B', 2], ['C', 3], ['D', 5], null, null, null, null], hole: 2,
+    cap: 'Removing A leaves a hole in slot 2. Left empty, it would stop the scans for B and C before they reached them. Many tables leave a tombstone there instead, which every later scan has to step over. This one fills the hole.' },
+  { t: 'B moves back', s: [null, null, ['B', 2], 'hole', ['C', 3], ['D', 5], null, null, null, null], hole: 3, move: [3, 2],
+    cap: 'The next slot holds B, whose home is 2. The hole lies between B\'s home and B, so B moves into it and the hole moves to 3. The test is <code>(next − home) &amp; mask ≥ (next − hole) &amp; mask</code>, which also works where the run wraps around the end.' },
+  { t: 'C moves back', s: [null, null, ['B', 2], ['C', 3], 'hole', ['D', 5], null, null, null, null], hole: 4, move: [4, 3],
+    cap: 'C\'s home is 3, now the hole, so C moves back into its home and the hole moves to 4.' },
+  { t: 'D stays, and the scan stops', s: [null, null, ['B', 2], ['C', 3], null, ['D', 5], null, null, null, null], stay: 5, stop: 6,
+    cap: 'D\'s home is 5, after the hole. Moving it to 4 would put it before its home, where its scans never start, so it stays. Slot 6 is empty, so no later key can depend on the hole, and slot 4 is emptied. Every key is still found, and nothing is left to make later scans longer. The table\'s version changes, so a write holding a slot number looks its key up again.' },
+];
+function rmDraw(ctx, st) {
+  ctx.dyn.textContent = '';
+  const x0 = 40, y = 120, w = 86, h = 70;
+  for (let i = 0; i < 10; i++) {
+    const x = x0 + i * 92, c = st.s[i];
+    ctx.text(x + w / 2, y - 12, String(i), { anchor: 'middle', mono: true, size: 11, fill: C.dim, parent: ctx.dyn });
+    if (c === 'hole') {
+      ctx.rect(x, y, w, h, { stroke: C.bad, so: 0.9, dash: '5 4', rx: 8, parent: ctx.dyn, glow: ctx.cur });
+      ctx.text(x + w / 2, y + h / 2 + 5, 'hole', { anchor: 'middle', mono: true, size: 13, fill: C.bad, parent: ctx.dyn });
+    } else if (c) {
+      ctx.rect(x, y, w, h, { fill: C.idx, fo: 0.12, stroke: C.idx, so: 0.7, rx: 8, parent: ctx.dyn });
+      ctx.text(x + w / 2, y + 32, c[0], { anchor: 'middle', size: 22, weight: 700, fill: C.text, parent: ctx.dyn });
+      ctx.text(x + w / 2, y + 54, 'home ' + c[1], { anchor: 'middle', mono: true, size: 11, fill: c[1] === i ? C.muted : C.hash, parent: ctx.dyn });
+    } else {
+      ctx.rect(x, y, w, h, { fill: C.dim, fo: 0.03, stroke: C.dim, so: 0.3, rx: 8, parent: ctx.dyn });
+      ctx.text(x + w / 2, y + h / 2 + 4, 'empty', { anchor: 'middle', mono: true, size: 11, fill: C.dim, parent: ctx.dyn });
+    }
+  }
+  const cx = i => x0 + i * 92 + w / 2;
+  if (st.move) {
+    const [a, b] = st.move;
+    ctx.path(`M${cx(a)},${y + h + 6} C${cx(a)},${y + h + 46} ${cx(b)},${y + h + 46} ${cx(b)},${y + h + 8}`, { stroke: C.ok, arrow: true, sw: 2, parent: ctx.dyn });
+    ctx.text((cx(a) + cx(b)) / 2, y + h + 60, 'moves back', { anchor: 'middle', size: 11.5, fill: C.ok, parent: ctx.dyn });
+  }
+  if (st.stay != null) ctx.text(cx(st.stay), y + h + 26, 'stays: home is after the hole', { anchor: 'middle', size: 11.5, fill: C.muted, parent: ctx.dyn });
+  if (st.stop != null) ctx.text(cx(st.stop) + 20, y + h + 48, 'empty: stop', { anchor: 'middle', size: 11.5, fill: C.ok, parent: ctx.dyn });
+}
+new Scene({
+  id: 'remove',
+  build(ctx) { ctx.svg(1000, 270, 'Backward-shift deletion in a slot table'); ctx.text(40, 60, 'slots 0–9 of a table · letters stand for keys', { mono: true, size: 12, weight: 650, fill: C.idx }); },
+  steps() { return RM_STEPS.map(st => ({ t: st.t, cap: st.cap, run(ctx) { rmDraw(ctx, st); } })); },
+});
+
+/* ====================================================================================
+   07 · CryptIndex
+   ==================================================================================== */
+const AR = { x0: 430, y: 236, bpx: 8, cap: 64 };
+// Arena entries for each step: [id, key, start, payload size, payload label, kind].
+const CR_ENTRIES = {
+  theme: ['theme', 'theme', 0, 5, '"dark"', 'val'],
+  launches: ['launches', 'launches', 10, 2, '318', 'val'],
+  key42: ['key42', 'key-42', 20, 1, '7', 'val'],
+  avatar: ['avatar', 'avatar', 27, 20, 'cipher state', 'state'],
+};
+const CR_SLOTS = { theme: 2, launches: 7, key42: 8, avatar: 13 };
+const CR_HASH = { theme: 0x3c0d55f2, launches: 0x1f6a2c07, key42: 0x9b44e3a7, avatar: 0x0a7e6b1d };
+const CR_POS = { theme: 4, launches: 16, key42: 28, avatar: 37 };
+function crState(k) {
+  const e = JSON.parse(JSON.stringify(CR_ENTRIES)), st = { e, garbage: [], used: 0, show: [] };
+  if (k >= 1) { st.show.push('theme', 'launches', 'key42'); st.used = 27; }
+  if (k >= 2) { st.show.push('avatar'); st.used = 53; }
+  if (k >= 3) e.key42[4] = '9';
+  if (k >= 4) { st.garbage.push([0, 10]); e.theme = ['theme', 'theme', 53, 6, '"light"', 'val']; st.used = 64; }
+  if (k >= 5) {
+    st.garbage = [];
+    e.launches[2] = 0; e.key42[2] = 10; e.avatar[2] = 17; e.theme[2] = 43; st.used = 54;
+  }
+  return st;
+}
+function crDraw(ctx, k) {
+  const st = crState(k), L = ctx.d.L;
+  L.textContent = ''; ctx.dyn.textContent = '';
+  const slots = {};
+  for (const id of st.show) {
+    const en = st.e[id];
+    slots[CR_SLOTS[id]] = { h: CR_HASH[id], k: en[1], loc: `arena ${en[2]} · ${en[1].length}+${en[5] === 'state' ? 'state' : en[3]}` };
+  }
+  drawSlots(ctx, 50, 190, 320, 18, 16, slots, { title: 'CryptIndex · 16 slots', parent: L });
+  ctx.text(AR.x0, AR.y - 12, `arena · ${st.used} of ${AR.cap} bytes used`, { mono: true, size: 12, weight: 650, fill: C.arena, parent: L });
+  ctx.rect(AR.x0, AR.y - 3, AR.cap * AR.bpx, 50, { stroke: C.arena, so: 0.45, dash: '5 4', rx: 8, parent: L });
+  const out = {};
+  for (const id of st.show) {
+    const [, key, at, plen, plabel, kind] = st.e[id];
+    const s = strip(ctx, AR.x0 + at * AR.bpx, AR.y + 2, AR.bpx, 40, [
+      { id: 'key', n: key, b: key.length, c: C.key, ts: 10.5 },
+      { id: 'pay', n: plabel, b: plen, c: kind === 'state' ? C.cs : C.val, fo: 0.12, ts: kind === 'state' ? 10.5 : 10 },
+    ], { parent: L });
+    ctx.text(AR.x0 + at * AR.bpx + 1, AR.y + 58, String(at), { mono: true, size: 10, fill: C.dim, parent: L });
+    out[id] = { key: s.key, pay: s.pay, all: { x: s.key.x, y: s.key.y, w: s.pay.x + s.pay.w - s.key.x, h: 40 } };
+  }
+  for (const [a, b] of st.garbage) garbage(ctx, { x: AR.x0 + a * AR.bpx + 1, y: AR.y + 2, w: (b - a) * AR.bpx - 2, h: 40 }, null, L);
+  ctx.d.ar = out;
+}
+function crFile(ctx) {
+  const y = 400, x0 = AR.x0, b = AR.bpx;
+  ctx.text(x0, y - 12, 'mapped file · ciphertext', { mono: true, size: 12, weight: 650, fill: C.file });
+  const parts = [['⋯', 0, 4], ['theme', 4, 12], ['launches', 16, 12], ['key-42', 28, 9], ['avatar · 4,812-byte value', 37, 30]];
+  ctx.d.cf = {};
+  for (const [n, at, len] of parts) {
+    const r = strip(ctx, x0 + at * b, y, b, 40, [{ n: '', b: len, c: C.file, fo: 0.07, so: 0.45 }]);
+    ctx.text(x0 + at * b + len * b / 2, y + 25, n === '⋯' ? '⋯' : '░░░', { anchor: 'middle', mono: true, size: 11, fill: C.dim });
+    if (n !== '⋯') ctx.text(x0 + at * b + 2, y + 56, `${n} @${at}`, { mono: true, size: 10, fill: C.dim });
+    ctx.d.cf[n.split(' ')[0]] = r[''];
+  }
+}
+new Scene({
+  id: 'crypt',
+  build(ctx) {
+    ctx.svg(1000, 500, 'The slots and arena of a CryptIndex');
+    ctx.text(40, 34, 'a CryptIndex slot · 20 bytes', { mono: true, size: 12, weight: 650, fill: C.idx });
+    strip(ctx, 40, 46, 44, 44, [
+      { n: 'hash', v: 'UInt32', b: 4, c: C.hash },
+      { n: 'arenaOffset', v: 'where the key is', b: 4, c: C.arena },
+      { n: 'keySize', v: 'UInt16', b: 2, c: C.key },
+      { n: 'isOff', v: 'Bool', b: 1, c: C.cs, ts: 10 },
+      { n: 'pbKV', v: 'UInt8', b: 1, c: C.cs, ts: 10 },
+      { n: 'valueSize', v: 'UInt32', b: 4, c: C.val },
+      { n: 'position', v: 'record @', b: 4, c: C.file },
+    ], { bytes: true });
+    crFile(ctx);
+    ctx.d.L = S('g', null, ctx.nodeLayer);
+  },
+  steps() {
+    const link = (ctx, id, color) => {
+      const r = ctx.n['row' + CR_SLOTS[id]], a = ctx.d.ar[id];
+      curve(ctx, [r.x + r.w, r.y + r.h / 2], [a.key.x + 3, a.key.y + a.key.h / 2], color || C.arena, { horizontal: true });
+      ctx.hot('row' + CR_SLOTS[id]);
+    };
+    return [
+      { t: 'The keys have to be kept', cap: 'In an encrypted store the records are ciphertext, so a key can\'t be compared where it is in the file, as <code>RecordIndex</code> does. The index keeps each key decrypted, and each value of up to 256 bytes too, so that reading it needs no decryption.',
+        run(ctx) { crDraw(ctx, 0); Object.values(ctx.d.cf).forEach(r => ring(ctx, r, C.file, 2)); } },
+      { t: 'A small value: key and value in the arena', cap: 'The arena is one block from <code>malloc</code>. A slot\'s <code>arenaOffset</code> says where its key starts, and the value follows the key directly. <code>keySize</code> and <code>valueSize</code> give their lengths, and <code>position</code> records where the record was, so that values are written back in a stable order.',
+        run(ctx) { crDraw(ctx, 1); link(ctx, 'theme'); ring(ctx, ctx.d.ar.theme.all, C.arena, 3); } },
+      { t: 'A large value: key and cipher state', cap: 'A value over 256 bytes stays in the file. After the key, the arena keeps the 20-byte cipher state at the record\'s start, a 16-byte register and a 4-byte position in the block, so the value can be decrypted from the file when it is read. <code>isOffset</code> is set, <code>position</code> is the record\'s offset, and <code>pbKeyValueSize</code> is the size of its length prefixes.',
+        run(ctx) {
+          crDraw(ctx, 2); link(ctx, 'avatar', C.cs);
+          const p = ctx.d.ar.avatar.pay, f = ctx.d.cf.avatar;
+          curve(ctx, bottomOf(p), [f.x + 6, f.y - 4], C.cs);
+          ring(ctx, ctx.d.ar.avatar.all, C.cs, 3); ring(ctx, f, C.cs, 2);
+        } },
+      { t: 'The same size: overwritten in place', cap: 'Writing <code>key-42 = 9</code> gives a value the same size as before, so its bytes are overwritten where they are. Nothing moves and nothing is added.',
+        run(ctx) { crDraw(ctx, 3); link(ctx, 'key42'); ring(ctx, ctx.d.ar.key42.pay, C.ok, 3); } },
+      { t: 'A new size: appended', cap: 'Writing <code>theme = "light"</code> needs 11 bytes instead of 10, so the key and the new value are appended at the end, and the slot points there. The old 10 bytes become garbage, which the index counts. If the arena is full, it grows with <code>realloc</code>, which can often extend the block where it is.',
+        run(ctx) { crDraw(ctx, 4); link(ctx, 'theme'); ring(ctx, ctx.d.ar.theme.all, C.arena, 3); } },
+      { t: 'Compaction', cap: 'Once garbage is over 4 KiB and more than half of the used bytes, the live entries slide to the start in arena order, and each slot\'s offset is updated. An entry only ever moves toward the start, so none is overwritten before it moves. If the arena is now over four times the size of what it holds, it shrinks. (This small example compacts with only 10 bytes of garbage, to show it.)',
+        run(ctx) { crDraw(ctx, 5); ['launches', 'key42', 'avatar', 'theme'].forEach(id => ring(ctx, ctx.d.ar[id].all, C.arena, 2)); } },
+    ];
+  },
+});
+
+/* ====================================================================================
+   08 · Loading
+   ==================================================================================== */
+// Records of the example data, in px: [key width, value width, large].
+const LD_RECS = [[30, 34], [24, 40], [34, 26], [30, 190, true], [26, 38], [32, 30], [28, 42], [30, 28], [24, 36], [32, 34], [26, 30]];
+function ldFile(ctx) {
+  const x0 = 40, y = 70;
+  ctx.text(x0, y - 14, 'mapped file · ciphertext, one AES-CFB-128 stream', { mono: true, size: 12, weight: 650, fill: C.file });
+  let x = x0; ctx.d.recs = [];
+  for (const [kw, vw, big] of LD_RECS) {
+    const k = { x: x + 1, y, w: kw - 2, h: 40 }, v = { x: x + kw + 1, y, w: vw - 2, h: 40 };
+    ctx.rect(k.x, y, k.w, 40, { fill: C.file, fo: 0.08, stroke: C.file, so: 0.5, rx: 4 });
+    ctx.rect(v.x, y, v.w, 40, { fill: C.file, fo: 0.04, stroke: C.file, so: 0.35, rx: 4 });
+    if (big) ctx.text(v.x + v.w / 2, y + 25, '4,812-byte value', { anchor: 'middle', mono: true, size: 11, fill: C.dim });
+    ctx.d.recs.push({ k, v, big, x, w: kw + vw });
+    x += kw + vw + 2;
+  }
+  ctx.d.fileEnd = x;
+}
+function decrypted(ctx, b, color) {
+  ctx.rect(b.x, b.y, b.w, b.h, { fill: color || C.key, fo: 0.28, stroke: color || C.key, so: 0.9, rx: 4, parent: ctx.dyn });
+}
+function ldWindow(ctx, x, w, label) {
+  ctx.rect(x - 2, 62, w + 4, 56, { stroke: C.hash, sw: 2, rx: 8, parent: ctx.dyn, glow: ctx.cur });
+  ctx.text(x, 136, label, { mono: true, size: 11.5, fill: C.hash, parent: ctx.dyn });
+}
+function ldArena(ctx, filled, reserved) {
+  const y = 250;
+  ctx.text(40, y - 12, reserved ? 'arena · reserved for the rest of the data' : 'arena · shrunk to fit', { mono: true, size: 12, weight: 650, fill: C.arena, parent: ctx.dyn });
+  ctx.rect(40, y, (reserved ? ctx.d.fileEnd - 40 : filled + 4), 44, { stroke: C.arena, so: 0.6, dash: reserved ? '5 4' : null, rx: 8, parent: ctx.dyn });
+  let x = 42;
+  for (const part of ctx.d.arenaParts || []) {
+    if (x - 42 >= filled) break;
+    ctx.rect(x, y + 4, part.w - 1, 36, { fill: part.c, fo: 0.22, stroke: part.c, so: 0.7, rx: 3, parent: ctx.dyn });
+    x += part.w;
+  }
+}
+function arenaParts(ctx, upTo) {
+  const parts = [];
+  ctx.d.recs.slice(0, upTo).forEach(r => {
+    parts.push({ w: Math.round(r.k.w * 0.7), c: C.key });
+    parts.push({ w: r.big ? 16 : Math.round(r.v.w * 0.7), c: r.big ? C.cs : C.val });
+  });
+  ctx.d.arenaParts = parts;
+  return parts.reduce((s, p) => s + p.w, 0);
+}
+new Scene({
+  id: 'load',
+  build(ctx) { ctx.svg(1000, 320, 'Loading an encrypted store'); ldFile(ctx); },
+  steps() {
+    return [
+      { t: 'Reserve the arena once', cap: 'Before decoding, the arena is reserved at the size of the data left to read. No entry takes more arena bytes than its record takes in the file, so the arena never grows during the load. Growing would copy it and leave the old blocks behind. Pages that are never written cost nothing.',
+        run(ctx) { ctx.dyn.textContent = ''; ctx.d.arenaParts = []; ldArena(ctx, 0, true); } },
+      { t: 'Decrypt a window', cap: 'The reader decrypts at most 128 KiB at a time into a window. When it decrypts a key, it also decrypts up to 266 bytes after it, enough for the value\'s length and a value kept in memory, so the key stays in the window while they are read.',
+        run(ctx) {
+          ctx.dyn.textContent = ''; ctx.d.arenaParts = []; ldArena(ctx, 0, true);
+          const r = ctx.d.recs; ldWindow(ctx, r[0].x, r[2].x + r[2].w - r[0].x, 'window ≤ 128 KiB, decrypted');
+          r.slice(0, 3).forEach(x => { decrypted(ctx, x.k); decrypted(ctx, x.v, C.val); });
+        } },
+      { t: 'Keys and small values go into the arena', cap: 'Each key, and each value of up to 256 bytes, is copied from the window into the arena, and a slot is added for it. Nothing else is allocated per key.',
+        run(ctx) {
+          ctx.dyn.textContent = '';
+          const r = ctx.d.recs; ldWindow(ctx, r[0].x, r[2].x + r[2].w - r[0].x, 'window ≤ 128 KiB, decrypted');
+          r.slice(0, 3).forEach(x => { decrypted(ctx, x.k); decrypted(ctx, x.v, C.val); });
+          const filled = arenaParts(ctx, 3); ldArena(ctx, filled, true);
+          ctx.fly({ x: r[1].x + 20, y: 112 }, { x: 42 + filled - 20, y: 252 }, { color: C.arena, label: 'copy' });
+        } },
+      { t: 'A large value is skipped', cap: 'A value over 256 bytes is left in the file and isn\'t decrypted at all. Its key is, and the arena keeps the key with the cipher state at the record\'s start. In CFB mode that state comes from the ciphertext just before the record, the previous 16-byte block, with at most one AES block operation. The reader then carries on after the value.',
+        run(ctx) {
+          ctx.dyn.textContent = '';
+          const r = ctx.d.recs, big = r[3];
+          ldWindow(ctx, big.x, r[5].x + r[5].w - big.x, 'window moves on past the value');
+          decrypted(ctx, big.k);
+          ctx.rect(big.v.x, big.v.y, big.v.w, big.v.h, { fill: hatch(ctx), stroke: C.dim, so: 0.6, rx: 4, parent: ctx.dyn });
+          ctx.text(big.v.x + big.v.w / 2, big.v.y + 25, 'not decrypted', { anchor: 'middle', mono: true, size: 11, fill: C.text, parent: ctx.dyn });
+          [r[4], r[5]].forEach(x => { decrypted(ctx, x.k); decrypted(ctx, x.v, C.val); });
+          ctx.path(`M${big.x - 8},${118} C${big.x - 8},${170} ${big.x + 30},${170} ${big.x + 30},${196}`, { stroke: C.cs, arrow: true, sw: 1.6, parent: ctx.dyn });
+          ctx.chip(big.x + 30, 210, 'state from the previous block', C.cs, { parent: ctx.dyn, anchor: 'middle' });
+          const filled = arenaParts(ctx, 6); ldArena(ctx, filled, true);
+        } },
+      { t: 'Shrink to fit', cap: 'At the end, the arena is shrunk to what it holds and the window is freed. The peak is the arena\'s pages, the slots and one window. Through opening and a trim, a store of 100,000 keys peaks at 23.7 MB, against 36.9 MB for the C++ core.',
+        run(ctx) { ctx.dyn.textContent = ''; const filled = arenaParts(ctx, LD_RECS.length); ldArena(ctx, filled, false); ctx.text(48 + filled + 10, 278, 'realloc to the bytes used', { size: 11.5, fill: C.arena, parent: ctx.dyn }); } },
+    ];
+  },
+});
+/* ====================================================================================
+   Boot
+   ==================================================================================== */
+SCENES.forEach(s => s.mount());
+if ('IntersectionObserver' in window) {
+  const io = new IntersectionObserver(entries => {
+    for (const e of entries) {
+      const s = SCENES.find(x => x.sec === e.target);
+      if (!s) continue;
+      if (e.isIntersecting && e.intersectionRatio >= 0.3) {
+        if (!RM.matches && !s.userPaused && !s.playing && s.step < s.list().length - 1) s.play(false);
+      } else if (e.intersectionRatio < 0.12 && s.playing) s.pause();
+    }
+  }, { threshold: [0, 0.12, 0.3, 0.6] });
+  SCENES.forEach(s => io.observe(s.sec));
+  const links = [...document.querySelectorAll('nav.top a')];
+  const nio = new IntersectionObserver(entries => {
+    for (const e of entries) if (e.isIntersecting) {
+      links.forEach(a => a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id));
+      const on = links.find(a => a.classList.contains('on'));
+      if (on && on.scrollIntoView && on.parentElement.scrollWidth > on.parentElement.clientWidth) {
+        on.parentElement.scrollTo({ left: on.offsetLeft - 40, behavior: RM.matches ? 'auto' : 'smooth' });
+      }
+    }
+  }, { rootMargin: '-45% 0px -50% 0px' });
+  document.querySelectorAll('section.scene').forEach(s => nio.observe(s));
+}
+let resizeTimer = null;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(onResize, 150); });
+</script>
+</body>
+</html>

@@ -412,14 +412,15 @@ bool mmkv_contains(mmkv_store *store, mmkv_bytes key) {
   return core(store)->containsKey(view(key));
 }
 
+// Both filter out expired keys. They are asked to filter unconditionally because the core only
+// learns whether the store has expiring keys when it loads, which these calls do themselves.
 size_t mmkv_count(mmkv_store *store) {
-  auto kv = core(store);
-  return kv->count(kv->isExpirationEnabled());
+  return core(store)->count(true);
 }
 
 void mmkv_keys(mmkv_store *store, void *context, mmkv_bytes_callback callback) {
   auto kv = core(store);
-  for (const auto &key : kv->allKeys(kv->isExpirationEnabled())) {
+  for (const auto &key : kv->allKeys(true)) {
     callback(context, mmkv_bytes{key.data(), key.size()});
   }
 }

@@ -62,6 +62,11 @@
       /// - Throws: ``MMKVError/Code/appGroupContainerUnavailable`` if the app group has
       ///   no container this process can reach.
       public static func appGroup(identifier: String) throws(MMKVError) -> MMKVDirectory {
+        let container = try Self.container(ofAppGroup: identifier)
+        return MMKVDirectory(url: container.appendingPathComponent("mmkv", isDirectory: true))
+      }
+
+      private static func container(ofAppGroup identifier: String) throws(MMKVError) -> URL {
         guard
           let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: identifier
@@ -69,7 +74,7 @@
         else {
           throw MMKVErrors.appGroupContainerUnavailable(identifier: identifier)
         }
-        return MMKVDirectory(url: container.appendingPathComponent("mmkv", isDirectory: true))
+        return container
       }
     }
 
@@ -90,14 +95,7 @@
         if let identifier = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier")
           as? String
         {
-          guard
-            let container = FileManager.default.containerURL(
-              forSecurityApplicationGroupIdentifier: identifier
-            )
-          else {
-            throw MMKVErrors.appGroupContainerUnavailable(identifier: identifier)
-          }
-          return MMKVDirectory(url: container)
+          return MMKVDirectory(url: try Self.container(ofAppGroup: identifier))
         }
         #if os(tvOS)
           let directory = FileManager.SearchPathDirectory.cachesDirectory

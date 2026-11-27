@@ -15,27 +15,27 @@ public struct MMKVValueReader: ~Copyable, ~Escapable {
 
   /// Reads the key as a Boolean.
   public func bool() -> Bool? {
-    self.core.bool(forKey: self.key)
+    self.core.read { $0.bool(forKey: self.key) }
   }
 
   /// Reads the key as a signed 32-bit integer.
   public func int32() -> Int32? {
-    self.core.int32(forKey: self.key)
+    self.core.read { $0.int32(forKey: self.key) }
   }
 
   /// Reads the key as an unsigned 32-bit integer.
   public func uint32() -> UInt32? {
-    self.core.uint32(forKey: self.key)
+    self.core.read { $0.uint32(forKey: self.key) }
   }
 
   /// Reads the key as a signed 64-bit integer.
   public func int64() -> Int64? {
-    self.core.int64(forKey: self.key)
+    self.core.read { $0.int64(forKey: self.key) }
   }
 
   /// Reads the key as an unsigned 64-bit integer.
   public func uint64() -> UInt64? {
-    self.core.uint64(forKey: self.key)
+    self.core.read { $0.uint64(forKey: self.key) }
   }
 
   /// Reads the key as a signed 64-bit integer that fits in an `Int`.
@@ -52,13 +52,13 @@ public struct MMKVValueReader: ~Copyable, ~Escapable {
 
   /// Reads the key as a single-precision floating-point number.
   public func float() -> Float? {
-    self.core.float(forKey: self.key)
+    self.core.read { $0.float(forKey: self.key) }
   }
 
   /// Reads the key as a double-precision floating-point number, which is how JavaScript numbers
   /// are stored.
   public func double() -> Double? {
-    self.core.double(forKey: self.key)
+    self.core.read { $0.double(forKey: self.key) }
   }
 
   /// Reads the key as an integer that was stored as a `Double`, which is how JavaScript stores
@@ -73,12 +73,12 @@ public struct MMKVValueReader: ~Copyable, ~Escapable {
 
   /// Reads the key as a UTF-8 string, repairing any invalid UTF-8.
   public func string() -> String? {
-    self.core.string(forKey: self.key)
+    self.core.read { $0.string(forKey: self.key) }
   }
 
   /// Reads the key as a list of strings.
   public func strings() -> [String]? {
-    self.core.strings(forKey: self.key)
+    self.core.read { $0.strings(forKey: self.key) }
   }
 
   /// Reads the key as raw bytes, which are only valid for the duration of `body`.
@@ -88,7 +88,9 @@ public struct MMKVValueReader: ~Copyable, ~Escapable {
   ///
   /// - Returns: The result of `body`, or `nil` if the key has no value.
   public func withBytes<R, E: Error>(_ body: (RawSpan) throws(E) -> R) throws(E) -> R? {
-    try self.core.withBytes(forKey: self.key, body)
+    try self.core.readScope { (engine) throws(E) -> R? in
+      try engine.withBytes(forKey: self.key, body)
+    }
   }
 
   /// Reads the key as raw bytes through a buffer pointer, which is only valid for the duration

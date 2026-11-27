@@ -15,13 +15,7 @@ import Testing
   }
 }
 
-@Suite struct MMKVDirectoryStoreTests {
-  /// Creates a store's files without opening it in this process, by copying those of a store
-  /// that is open under another identifier.
-  private func makeUnopenedStore(id: String, in rootDirectory: String) throws {
-    try makeUnopenedStoreFiles(at: "\(rootDirectory)/\(id)")
-  }
-
+@Suite(.requires(.store, .directory)) struct MMKVDirectoryStoreTests {
   @Test func `Contains A Store Once Its Files Exist`() throws {
     let rootDirectory = temporaryRootDirectory()
     let directory = MMKVDirectory(path: rootDirectory)
@@ -46,7 +40,7 @@ import Testing
   @Test func `Removes The Files Of A Store That Is Not Open`() throws {
     let rootDirectory = temporaryRootDirectory()
     let directory = MMKVDirectory(path: rootDirectory)
-    try self.makeUnopenedStore(id: "store", in: rootDirectory)
+    try makeUnopenedStoreFiles(at: "\(rootDirectory)/store")
     #expect(directory.containsStore(id: "store"))
 
     #expect(try directory.removeStore(id: "store"))
@@ -103,7 +97,7 @@ import Testing
   }
 }
 
-@Suite struct MMKVDirectoryListingTests {
+@Suite(.requires(.store, .directory)) struct MMKVDirectoryListingTests {
   @Test func `Lists The Stores That Have Files`() throws {
     let rootDirectory = temporaryRootDirectory()
     let directory = MMKVDirectory(path: rootDirectory)

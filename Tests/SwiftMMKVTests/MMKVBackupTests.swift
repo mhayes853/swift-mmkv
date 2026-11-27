@@ -241,4 +241,51 @@ import Testing
 
     #expect(store.value(forKey: "token", as: String.self) == "token")
   }
+
+  @Test func `A Multi Process Store Is Backed Up And Restored While It Is Locked`() throws {
+    let backup = MMKVDirectory(path: temporaryRootDirectory())
+    let store = try makeStore(id: "settings", mode: .multiProcess)
+    store.set("dark", forKey: "theme")
+
+    try store.withExclusiveLock { store in
+      try store.backUp(to: backup)
+      store.set("light", forKey: "theme")
+      try store.restore(from: backup)
+      #expect(store.value(forKey: "theme", as: String.self) == "dark")
+      store.set(1.0, forKey: "extra")
+    }
+
+    #expect(store.value(forKey: "theme", as: String.self) == "dark")
+    #expect(store.value(forKey: "extra", as: Double.self) == 1.0)
+  }
+
+  @Test func `Open Stores Are Restored Together While One Is Being Written`() async throws {
+    let rootDirectory = temporaryRootDirectory()
+    let directory = MMKVDirectory(path: rootDirectory)
+    let backup = MMKVDirectory(path: temporaryRootDirectory())
+    let stores = try ["a", "b", "c"]
+      .map {
+        try makeStore(id: MMKVStore.ID(rawValue: $0), rootDirectory: rootDirectory)
+      }
+    for store in stores {
+      store.set("backed up", forKey: "state")
+    }
+    #expect(try directory.backUpAllStores(to: backup) == 3)
+
+    let writer = Task {
+      for index in 0..<2_000 {
+        stores[index % 3].set(index, forKey: "counter")
+      }
+    }
+    for _ in 0..<20 {
+      #expect(try directory.restoreAllStores(from: backup) == 3)
+    }
+    await writer.value
+    #expect(try directory.restoreAllStores(from: backup) == 3)
+
+    for store in stores {
+      #expect(store.value(forKey: "state", as: String.self) == "backed up")
+      #expect(!store.contains("counter"))
+    }
+  }
 }

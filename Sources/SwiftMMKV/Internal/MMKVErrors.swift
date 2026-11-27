@@ -23,6 +23,14 @@ enum MMKVErrors {
     )
   }
 
+  static func wrongEncryptionKey(id: MMKVStore.ID, directory: MMKVDirectory) -> MMKVError {
+    MMKVError(
+      code: .wrongEncryptionKey,
+      message: "The store \(quoted: id) in \(quoted: directory) was written with another "
+        + "encryption key than the one it was opened with."
+    )
+  }
+
   static func appGroupContainerUnavailable(identifier: String) -> MMKVError {
     MMKVError(
       code: .appGroupContainerUnavailable,

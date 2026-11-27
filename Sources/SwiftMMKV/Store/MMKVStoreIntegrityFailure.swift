@@ -14,6 +14,12 @@ extension MMKVStore {
 
       /// The file is not as long as it records itself to be.
       case fileLength
+
+      /// The file is intact but cannot be read with the store's encryption key, or without one:
+      /// it was written with another key. Opening a store with the wrong key also throws
+      /// ``MMKVError/Code/wrongEncryptionKey``, and whatever the store's
+      /// ``MMKVConfiguration/recovery``, the file is left as it is.
+      case wrongEncryptionKey
     }
 
     /// The identifier of the store whose file failed the check.

@@ -20,11 +20,18 @@ import CSwiftMMKVCore
 /// Every read and write passes through, so entering and leaving are one atomic addition and
 /// one atomic load each. The mutex and the condition are only for a suspension or a closure,
 /// and for an operation that enters or leaves while one is under way.
+///
+/// While the gate has an ``ExpiringActivity``, each operation that is not inside another of its
+/// thread's runs inside it, so the process is not suspended while that operation holds the file
+/// lock. An operation the activity cannot keep the process running for is turned away, as if
+/// the store were suspended.
 final class StoreGate: @unchecked Sendable {
   /// What ``enter()`` and ``enterScope()`` hand back for ``leave(_:)``.
   enum Pass {
     /// The operation is counted among those under way.
     case counted
+    /// The operation is counted, and joined this activity, which it must leave.
+    case joined(ExpiringActivity)
     /// The operation is inside one of the calling thread's own, which is counted.
     case inside
   }
@@ -33,6 +40,9 @@ final class StoreGate: @unchecked Sendable {
   private let underWay: UnsafeMutablePointer<Int64>
   /// Not zero while the gate is suspended, and once it is closed.
   private let isTurningAway: UnsafeMutablePointer<Int64>
+  /// Not zero while the gate has an activity, so that an operation only takes the mutex to
+  /// look for one when there is one.
+  private let hasActivity: UnsafeMutablePointer<Int64>
   private let mutex: UnsafeMutablePointer<pthread_mutex_t>
   private let didChange: UnsafeMutablePointer<pthread_cond_t>
   // Guarded by the mutex.
@@ -42,14 +52,17 @@ final class StoreGate: @unchecked Sendable {
   /// finds the gate empty first.
   private var free: (() -> Void)?
   private var hasFreed = false
+  private var activity: ExpiringActivity?
 
   init() {
     self.underWay = .allocate(capacity: 1)
     self.isTurningAway = .allocate(capacity: 1)
+    self.hasActivity = .allocate(capacity: 1)
     self.mutex = .allocate(capacity: 1)
     self.didChange = .allocate(capacity: 1)
     self.underWay.initialize(to: 0)
     self.isTurningAway.initialize(to: 0)
+    self.hasActivity.initialize(to: 0)
     pthread_mutex_init(self.mutex, nil)
     pthread_cond_init(self.didChange, nil)
   }
@@ -59,6 +72,7 @@ final class StoreGate: @unchecked Sendable {
     pthread_mutex_destroy(self.mutex)
     self.didChange.deallocate()
     self.mutex.deallocate()
+    self.hasActivity.deallocate()
     self.isTurningAway.deallocate()
     self.underWay.deallocate()
   }
@@ -76,6 +90,24 @@ final class StoreGate: @unchecked Sendable {
     return self.hasClosed
   }
 
+  /// Runs the operations that begin from now on inside `activity`, or directly if it is `nil`.
+  func setActivity(_ activity: ExpiringActivity?) {
+    pthread_mutex_lock(self.mutex)
+    defer { pthread_mutex_unlock(self.mutex) }
+    self.activity = activity
+    mmkv_atomic_store(self.hasActivity, activity == nil ? 0 : 1)
+  }
+
+  /// Stops running operations inside `activity`, unless the gate has another activity by now.
+  func removeActivity(_ activity: ExpiringActivity) {
+    pthread_mutex_lock(self.mutex)
+    defer { pthread_mutex_unlock(self.mutex) }
+    if self.activity === activity {
+      self.activity = nil
+      mmkv_atomic_store(self.hasActivity, 0)
+    }
+  }
+
   /// Begins an operation that runs none of the caller's code.
   ///
   /// An operation inside one of the calling thread's scopes is always let through, because the
@@ -88,9 +120,31 @@ final class StoreGate: @unchecked Sendable {
     // Counted before looking, so that a suspension or a closure that has not seen this
     // operation is seen by it.
     mmkv_atomic_add(self.underWay, 1)
-    guard mmkv_atomic_load(self.isTurningAway) != 0 else { return .counted }
+    guard mmkv_atomic_load(self.isTurningAway) != 0 else {
+      guard mmkv_atomic_load(self.hasActivity) != 0 else { return .counted }
+      // The activity a scope of this thread joined already covers the operation.
+      return ThreadGateScopes.current.isInside(self) ? .counted : self.joinActivity()
+    }
     self.uncount()
     return ThreadGateScopes.current.isInside(self) ? .inside : nil
+  }
+
+  /// Joins the gate's activity, if it still has one, on behalf of an operation that has been
+  /// counted. A suspension waits for the operation meanwhile.
+  ///
+  /// - Returns: `nil`, having taken back the operation's count, if the activity cannot keep the
+  ///   process running.
+  private func joinActivity() -> Pass? {
+    pthread_mutex_lock(self.mutex)
+    let activity = self.activity
+    pthread_mutex_unlock(self.mutex)
+    guard let activity else { return .counted }
+    // Starting an activity can wait on the system, so it happens outside the mutex.
+    guard activity.enter() else {
+      self.uncount()
+      return nil
+    }
+    return .joined(activity)
   }
 
   /// Begins an operation that runs the caller's code, which may begin operations of its own,
@@ -108,17 +162,26 @@ final class StoreGate: @unchecked Sendable {
       self.uncount()
       return nil
     }
-    scopes.enter(self)
-    return .counted
+    let pass = mmkv_atomic_load(self.hasActivity) != 0 ? self.joinActivity() : .counted
+    if pass != nil {
+      scopes.enter(self)
+    }
+    return pass
   }
 
   /// Ends an operation that ``enter()`` let through.
   func leave(_ pass: Pass) {
-    guard pass == .counted else { return }
+    let activity: ExpiringActivity?
+    switch pass {
+    case .inside: return
+    case .counted: activity = nil
+    case .joined(let joined): activity = joined
+    }
     mmkv_atomic_add(self.underWay, -1)
     if mmkv_atomic_load(self.isTurningAway) != 0 {
       self.didUncount()
     }
+    activity?.leave()
   }
 
   /// Ends an operation that ``enterScope()`` let through.

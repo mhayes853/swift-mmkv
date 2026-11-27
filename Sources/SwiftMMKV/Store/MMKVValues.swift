@@ -203,29 +203,21 @@ public struct MMKVValues<Element: Sendable>: AsyncSequence, Sendable {
   }
 
   public struct AsyncIterator: AsyncIteratorProtocol {
-    private let store: MMKVStore
     private let read: Read
-    private var signals: KeyChangeSignals
+    private var values: KeyValueIterator
 
     fileprivate init(store: MMKVStore, key: String, read: @escaping Read) {
-      self.store = store
       self.read = read
-      self.signals = KeyChangeSignals(store: store, keys: .one(key))
+      self.values = KeyValueIterator(store: store, keys: .one(key))
     }
 
     public mutating func next() async -> Element? {
-      while await self.signals.next() {
-        if let element = self.read(self.store) { return element }
-      }
-      return nil
+      await self.values.next(self.read)
     }
 
     @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
     public mutating func next(isolation actor: isolated (any Actor)?) async -> Element? {
-      while await self.signals.next(isolation: actor) {
-        if let element = self.read(self.store) { return element }
-      }
-      return nil
+      await self.values.next(isolation: actor, self.read)
     }
   }
 }
@@ -239,7 +231,7 @@ public struct MMKVValues<Element: Sendable>: AsyncSequence, Sendable {
 /// and the value itself for a key with a default. An error ends the sequence.
 public struct MMKVThrowingValues<Element: Sendable>: AsyncSequence, Sendable {
   private let store: MMKVStore
-  private let keys: KeyChangeSignals.Keys
+  private let keys: KeyValueIterator.Keys
   private let read: Read
 
   fileprivate typealias Read = @Sendable (MMKVStore) throws -> Element
@@ -248,7 +240,7 @@ public struct MMKVThrowingValues<Element: Sendable>: AsyncSequence, Sendable {
     self.init(store: store, keys: .one(key), read: read)
   }
 
-  fileprivate init(store: MMKVStore, keys: KeyChangeSignals.Keys, read: @escaping Read) {
+  fileprivate init(store: MMKVStore, keys: KeyValueIterator.Keys, read: @escaping Read) {
     self.store = store
     self.keys = keys
     self.read = read
@@ -259,43 +251,34 @@ public struct MMKVThrowingValues<Element: Sendable>: AsyncSequence, Sendable {
   }
 
   public struct AsyncIterator: AsyncIteratorProtocol {
-    private let store: MMKVStore
     private let read: Read
-    private var signals: KeyChangeSignals?
+    private var values: KeyValueIterator
 
-    fileprivate init(store: MMKVStore, keys: KeyChangeSignals.Keys, read: @escaping Read) {
-      self.store = store
+    fileprivate init(store: MMKVStore, keys: KeyValueIterator.Keys, read: @escaping Read) {
       self.read = read
-      self.signals = KeyChangeSignals(store: store, keys: keys)
+      self.values = KeyValueIterator(store: store, keys: keys)
     }
 
     public mutating func next() async throws -> Element? {
-      while await self.signals?.next() == true {
-        if let element = try self.readOrFinish() { return element }
-      }
-      return nil
+      let read = self.read
+      return try await self.values.next { try Self.element(from: $0, reading: read) }
     }
 
     @available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
     public mutating func next(isolation actor: isolated (any Actor)?) async throws -> Element? {
-      while await self.signals?.next(isolation: actor) == true {
-        if let element = try self.readOrFinish() { return element }
+      let read = self.read
+      return try await self.values.next(isolation: actor) {
+        try Self.element(from: $0, reading: read)
       }
-      return nil
     }
 
-    /// Reads the element, ending the sequence if that fails.
-    ///
-    /// - Returns: `nil` if the store is suspended and turned the read away. Resuming the store
-    ///   signals a change, which reads the element again.
-    private mutating func readOrFinish() throws -> Element? {
+    /// Reads the element, or returns `nil` if the store is suspended and turned the read away.
+    /// Resuming the store signals a change, which reads the element again.
+    private static func element(from store: MMKVStore, reading read: Read) throws -> Element? {
       do {
-        return try self.read(self.store)
+        return try read(store)
       } catch let error as MMKVError where error.code == .storeIsSuspended {
         return nil
-      } catch {
-        self.signals = nil
-        throw error
       }
     }
   }

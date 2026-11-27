@@ -1,4 +1,5 @@
 import CSwiftMMKVCore
+import _SwiftMMKVCore
 
 /// The files of the stores in one directory, and what this package does with them without
 /// opening a store.
@@ -16,6 +17,7 @@ extension MMKVStorage {
   /// file names.
   private static let hashedDirectoryName = "specialCharacter"
   private static let crcSuffix = ".crc"
+  private static let journalSuffix = ".journal"
 
   /// The path the data file of the store with this identifier has relative to its directory.
   ///
@@ -85,42 +87,46 @@ extension MMKVStorage {
 
   private struct OpenStore: Sendable, Hashable {
     let id: MMKVStore.ID
-    /// The bits of the core's pointer to the instance, which is what its state is filed under.
-    let handle: UInt
+    let engine: MMKVConfiguration.Engine
+    /// The engine's ``MMKVEngine/instance``, which is what the store's state is filed under.
+    let instance: UInt
+
+    /// The Swift core's instance, which the C++ core does not know is open.
+    var swiftInstance: StoreInstance? {
+      self.engine == .swift ? StoreRegistry.instance(atAddress: self.instance) : nil
+    }
   }
 
-  /// Runs `open`, and records the store as open if it returns an instance.
+  /// Runs `open`, and records the store as open once it returns the store's engine.
   ///
   /// - Parameters:
-  ///   - open: Returns the store's instance, or `nil` if it could not be opened.
-  ///   - state: Returns the state of an instance. It runs before the instance can be closed,
-  ///     so that the state it returns is not that of an instance that has been freed.
-  /// - Returns: The instance and its state, or `nil` if `open` returned `nil`.
+  ///   - open: Returns the engine over the store's instance.
+  ///   - state: Returns the state of an engine's instance. It runs before the instance can be
+  ///     closed, so that the state it returns is not that of an instance that has been closed.
+  /// - Returns: The engine and its state.
   func opening(
     id: MMKVStore.ID,
-    _ open: () -> OpaquePointer?,
-    state: (OpaquePointer) -> MMKVStoreState
-  ) -> (handle: OpaquePointer, state: MMKVStoreState)? {
-    let opened: (handle: UInt, state: MMKVStoreState)? = Self.openStores.withLock { openStores in
-      guard let handle = open() else { return nil }
+    _ open: () throws(MMKVError) -> any MMKVEngine,
+    state: (any MMKVEngine) -> MMKVStoreState
+  ) throws(MMKVError) -> (engine: any MMKVEngine, state: MMKVStoreState) {
+    try Self.openStores.withLock { openStores throws(MMKVError) in
+      let engine = try open()
+      let store = OpenStore(id: id, engine: engine.kind, instance: engine.instance)
       for path in self.dataPaths(forID: id) {
-        openStores[path] = OpenStore(id: id, handle: UInt(bitPattern: handle))
+        openStores[path] = store
       }
-      return (UInt(bitPattern: handle), state(handle))
+      return (engine, state(engine))
     }
-    guard let opened, let handle = OpaquePointer(bitPattern: opened.handle) else { return nil }
-    return (handle, opened.state)
   }
 
-  /// Frees the instance whose pointer has these bits, and forgets that its store is open. The
-  /// caller must make sure that nothing is using the instance, or will.
-  static func close(handle: UInt) {
+  /// Closes the instance of `engine`, and forgets that its store is open. The caller must make
+  /// sure that nothing is using the instance, or will.
+  static func close(_ engine: any MMKVEngine) {
+    let instance = engine.instance
     Self.openStores.withLock { openStores in
-      openStores = openStores.filter { $0.value.handle != handle }
-      MMKVStoreState.remove(forHandle: handle)
-      if let handle = OpaquePointer(bitPattern: handle) {
-        mmkv_close(handle)
-      }
+      openStores = openStores.filter { $0.value.instance != instance }
+      MMKVStoreState.remove(for: instance)
+      engine.close()
     }
   }
 
@@ -226,9 +232,14 @@ extension MMKVStorage {
       if Self.openID(forDataPaths: dataPaths, in: openStores) != nil {
         throw MMKVErrors.storeIsOpen(id: id, directory: self.directory)
       }
-      return id.rawValue.withMMKVBytes { id in
+      let didRemove = id.rawValue.withMMKVBytes { id in
         self.path.withMMKVBytes { mmkv_remove_storage(id, $0) }
       }
+      // The Swift core's journal of a rewrite that a process stopped in the middle of.
+      for dataPath in dataPaths {
+        removeFile(atPath: dataPath + Self.journalSuffix)
+      }
+      return didRemove
     }
   }
 
@@ -256,6 +267,7 @@ extension MMKVStorage {
       if didLock == nil {
         removeFile(atPath: dataPath)
       }
+      removeFile(atPath: dataPath + Self.journalSuffix)
       return true
     }
   }
@@ -264,7 +276,8 @@ extension MMKVStorage {
 // MARK: - File protection
 
 extension MMKVStorage {
-  /// Gives both files of the store with this identifier a data protection class.
+  /// Gives the files of the store with this identifier a data protection class: its two files,
+  /// and the Swift core's journal of a rewrite if one is there.
   ///
   /// The core creates the files and maps them before this is called, so a new file has the
   /// class it inherited until then. The class belongs to the file, so it holds for the core's
@@ -276,7 +289,7 @@ extension MMKVStorage {
     forID id: MMKVStore.ID
   ) -> [(path: String, error: Int32)] {
     self.dataPaths(forID: id)
-      .flatMap { [$0, $0 + Self.crcSuffix] }
+      .flatMap { [$0, $0 + Self.crcSuffix, $0 + Self.journalSuffix] }
       .filter { FileIdentity(path: $0) != nil }
       .compactMap { path in
         SwiftMMKV.setProtectionClass(protectionClass, ofFileAtPath: path).map { (path, $0) }
@@ -327,13 +340,18 @@ extension MMKVStorage {
     guard backup.isValid(id: id) else {
       throw MMKVErrors.backupInvalid(id: id, backup: backup.directory)
     }
+    let openStore = self.openStore(id: id)
+    // The C++ core refuses this for a store it has open itself.
+    if openStore?.swiftInstance?.isReadOnly == true {
+      throw MMKVErrors.restoreFailed(id: id, directory: self.directory, backup: backup.directory)
+    }
     var restored = [MMKVStoreState]()
     defer {
       for state in restored {
         state.notifyExternalChange()
       }
     }
-    let didRestore = try Self.entering(self.openStore(id: id).map { [$0] } ?? []) { states in
+    let didRestore = try Self.entering(openStore.map { [$0] } ?? [], overwriting: true) { states in
       restored = states
       return id.rawValue.withMMKVBytes { id in
         self.path.withMMKVBytes { path in
@@ -391,7 +409,7 @@ extension MMKVStorage {
         state.notifyExternalChange()
       }
     }
-    let count = try Self.entering(self.openStores) { states in
+    let count = try Self.entering(self.openStores, overwriting: true) { states in
       restored = states
       return self.path.withMMKVBytes { path in
         backup.path.withMMKVBytes { mmkv_restore_all_storage(path, $0) }
@@ -418,16 +436,21 @@ extension MMKVStorage {
     }
   }
 
-  /// Runs `body`, which takes the file locks of `stores`, unless one of them is suspended or
-  /// closed. None of them is closed until `body` returns.
+  /// Runs `body`, which has the C++ core copy the files of `stores` under their file locks,
+  /// unless one of them is suspended or closed. None of them is closed until `body` returns.
+  ///
+  /// The C++ core takes the lock of a store it has open itself. One the Swift core has open is a
+  /// closed store to it, so that store's instance is kept from its files meanwhile, and loads
+  /// them again if `body` overwrites them.
   ///
   /// The lock on the open stores is not held meanwhile, because `body` waits for the locks of
   /// those stores, and a thread that holds one of them may be opening another store.
   private static func entering<R>(
     _ stores: [OpenStore],
+    overwriting: Bool = false,
     _ body: ([MMKVStoreState]) -> R
   ) throws(MMKVError) -> R {
-    let states = stores.compactMap { MMKVStoreState.existing(forHandle: $0.handle) }
+    let states = stores.compactMap { MMKVStoreState.existing(for: $0.instance) }
     var entered = [(gate: StoreGate, pass: StoreGate.Pass)]()
     defer {
       for (gate, pass) in entered {
@@ -438,6 +461,11 @@ extension MMKVStorage {
       guard let pass = state.gate.enterScope() else { throw MMKVErrors.unavailable(state) }
       entered.append((state.gate, pass))
     }
-    return body(states)
+    return StoreInstance.withFilesHandedOver(
+      stores.compactMap(\.swiftInstance),
+      reloading: overwriting
+    ) {
+      body(states)
+    }
   }
 }

@@ -2,7 +2,7 @@ import Foundation
 import SwiftMMKV
 import Testing
 
-@Suite struct MMKVStoreSuspensionTests {
+@Suite(.requires(.store, .multiProcess)) struct MMKVStoreSuspensionTests {
   @Test func `A Suspended Store Turns Reads And Writes Away`() throws {
     let store = try makeStore(mode: .multiProcess)
     store.set("blob", forKey: "username")
@@ -68,21 +68,21 @@ import Testing
 
   @Test func `Throwing Operations Report The Suspension`() throws {
     let store = try makeStore(mode: .multiProcess)
-    try store.encode(["a": 1], forKey: "object", with: IntegerMapCoder())
+    try store.encode(1, forKey: "number", with: TextCoder.shared)
     store.suspend()
 
     expectError(.storeIsSuspended) {
-      try store.decode([String: Int].self, forKey: "object", with: IntegerMapCoder())
+      try store.decode(Int.self, forKey: "number", with: TextCoder.shared)
     }
     expectError(.storeIsSuspended) {
-      try store.encode(["a": 2], forKey: "object", with: IntegerMapCoder())
+      try store.encode(2, forKey: "number", with: TextCoder.shared)
     }
     expectError(.storeIsSuspended) {
       try store.rekey(.aes128(key: "key"))
     }
 
     store.resume()
-    #expect(try store.decode(forKey: "object", with: IntegerMapCoder()) == ["a": 1])
+    #expect(try store.decode(forKey: "number", with: TextCoder.shared) == 1)
   }
 
   @Test func `An Exclusive Lock Body Runs Without The Lock While Suspended`() throws {
@@ -175,30 +175,12 @@ import Testing
 
   @Test func `A Decoding Sequence Survives A Suspension`() async throws {
     let store = try makeStore(mode: .multiProcess)
-    try store.encode(["a": 1], forKey: "object", with: IntegerMapCoder())
+    try store.encode(1, forKey: "number", with: TextCoder.shared)
     store.suspend()
-    var values = store.values(forKey: "object", as: [String: Int].self, with: IntegerMapCoder())
+    var values = store.values(forKey: "number", as: Int.self, with: TextCoder.shared)
       .makeAsyncIterator()
 
     store.resume()
-    #expect(try await values.next() == .some(["a": 1]))
-  }
-}
-
-/// Encodes a `[String: Int]` as `key=value` pairs, so the tests need no Foundation coder.
-private struct IntegerMapCoder: MMKVTopLevelEncoder, MMKVTopLevelDecoder, Sendable {
-  func encode<T: Encodable>(_ value: T) throws -> String {
-    (value as! [String: Int]).sorted { $0.key < $1.key }
-      .map { "\($0.key)=\($0.value)" }
-      .joined(separator: ",")
-  }
-
-  func decode<T: Decodable>(_ type: T.Type, from input: String) throws -> T {
-    var map = [String: Int]()
-    for pair in input.split(separator: ",") {
-      let parts = pair.split(separator: "=")
-      map[String(parts[0])] = Int(parts[1])
-    }
-    return map as! T
+    #expect(try await values.next() == .some(1))
   }
 }

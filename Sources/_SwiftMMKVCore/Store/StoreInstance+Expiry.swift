@@ -1,0 +1,206 @@
+// Expiring keys, from the "auto expire" section of MMKV_IO.cpp.
+
+extension StoreState {
+  /// Seconds since 1970, as `time(nullptr)`.
+  static func currentTimeInSeconds() -> UInt32 {
+    UInt32(truncatingIfNeeded: time(nil))
+  }
+
+  /// The expiry time of a value written now to last `duration` seconds, capped at `UInt32.max`,
+  /// or 0, which is never, for a duration of 0 (`safeExpirationPlusCurrentTime`).
+  static func expirationTime(after duration: UInt32) -> UInt32 {
+    guard duration != 0 else { return 0 }
+    let time = UInt64(Self.currentTimeInSeconds()) + UInt64(duration)
+    return time > UInt64(UInt32.max) ? UInt32.max : UInt32(time)
+  }
+
+  /// The expiry time at the end of an expiring key's value: seconds since 1970, or 0 for never.
+  static func expirationTime(of value: UnsafeRawBufferPointer) -> UInt32 {
+    UInt32(
+      littleEndian: value.loadUnaligned(fromByteOffset: value.count - fixed32Size, as: UInt32.self)
+    )
+  }
+
+  /// Turns on expiry for the whole store, adding an expiry time to every value already in it
+  /// (`enableAutoKeyExpire`).
+  ///
+  /// The C++ core adds the times in the order of its hash table. This adds them in the order the
+  /// records are in the file, so after this the two cores' files hold the same records in a
+  /// different order.
+  ///
+  /// - Parameter expiredInSeconds: How long values written without an expiry of their own last,
+  ///   or 0 for never.
+  @discardableResult
+  mutating func enableAutoKeyExpire(_ expiredInSeconds: UInt32) -> Bool {
+    guard self.checkWritable() else { return false }
+    self.lockProcess(.exclusive)
+    defer { self.unlockProcess(.exclusive) }
+    self.checkLoadData(checkingFileSize: true)
+    guard self.isFileValid, self.metaFile.isFileValid else {
+      Log.warning("[\(self.id)] file not valid")
+      return false
+    }
+    let hasExpireFlag = self.metaInfo.hasFlag(MetaInfo.Flag.enableKeyExpire)
+    var records = [(key: StoreKey, value: [UInt8])]()
+    if !hasExpireFlag {
+      let time = Self.expirationTime(after: expiredInSeconds)
+      let maximumMigrationSize = min(
+        Int(UInt32.max),
+        Int(UInt32.max) - pbRawVarint32Size(UInt32.max) + itemSizeHolderSize
+      )
+      var prospectiveSize = itemSizeHolderSize
+      for key in self.keysInRecordOrder() {
+        let value = key.bytes.withUnsafeBytes { self.getRawDataForKey($0) }
+        let dataLength = value.count + fixed32Size
+        guard
+          let entry = Self.encodedEntrySize(
+            keyLength: key.bytes.count,
+            dataLength: dataLength,
+            isDataHolder: false,
+            needsPlainHolder: self.crypter == nil
+          )
+        else {
+          Log.error("[\(self.id)] reject enabling expiration: encoded data would be too large")
+          return false
+        }
+        if entry.totalSize > maximumMigrationSize - prospectiveSize {
+          Log.error(
+            "[\(self.id)] reject enabling expiration: total encoded data would be too large"
+          )
+          return false
+        }
+        prospectiveSize += entry.totalSize
+        var data = value.array
+        withUnsafeBytes(of: time.littleEndian) { data.append(contentsOf: $0) }
+        records.append((key, data))
+      }
+    }
+    if self.enableCompareBeforeSet {
+      Log.error("enableCompareBeforeSet will be invalid when Expiration is on")
+      self.enableCompareBeforeSet = false
+    }
+    self.expiredInSeconds = expiredInSeconds
+    self.enableKeyExpire = true
+    if hasExpireFlag {
+      return true
+    }
+    self.metaInfo.flags |= MetaInfo.Flag.enableKeyExpire
+    self.metaInfo.version = MetaInfo.Version.flag
+    if self.file.size == self.expectedCapacity && self.actualSize == 0 {
+      // A new file needs no rewrite, only the metadata.
+      self.writeActualSize(0, crcDigest: 0, iv: nil, increaseSequence: true)
+      self.metaFile.msync(synchronously: true)
+      return true
+    }
+    return self.doFullWriteBack(records)
+  }
+
+  /// Turns expiry off for the whole store, taking the expiry time off every value in it
+  /// (`disableAutoKeyExpire`). Keys that have expired but are still in the index are kept.
+  ///
+  /// As with turning it on, the records are rewritten in the order they are in the file, where
+  /// the C++ core uses the order of its hash table.
+  @discardableResult
+  mutating func disableAutoKeyExpire() -> Bool {
+    guard self.checkWritable() else { return false }
+    self.lockProcess(.exclusive)
+    defer { self.unlockProcess(.exclusive) }
+    self.checkLoadData(checkingFileSize: true)
+    guard self.isFileValid, self.metaFile.isFileValid else {
+      Log.warning("[\(self.id)] file not valid")
+      return false
+    }
+    guard self.checkDecodable() else { return false }
+    self.expiredInSeconds = 0
+    self.enableKeyExpire = false
+    guard self.metaInfo.hasFlag(MetaInfo.Flag.enableKeyExpire) else { return true }
+    var records = [(key: StoreKey, value: [UInt8])]()
+    for key in self.keysInRecordOrder() {
+      let value = key.bytes.withUnsafeBytes { self.getRawDataForKey($0) }
+      guard value.count >= fixed32Size else {
+        Log.warning("key has invalid value size \(value.count)")
+        continue
+      }
+      records.append((key, value.prefix(value.count - fixed32Size).array))
+    }
+    self.metaInfo.flags &= ~MetaInfo.Flag.enableKeyExpire
+    self.metaInfo.version = MetaInfo.Version.flag
+    if self.file.size == self.expectedCapacity && self.actualSize == 0 {
+      // A new file needs no rewrite, only the metadata.
+      self.writeActualSize(0, crcDigest: 0, iv: nil, increaseSequence: true)
+      self.metaFile.msync(synchronously: true)
+      return true
+    }
+    return self.doFullWriteBack(records)
+  }
+
+  /// The bytes of `key`'s value without its expiry time. An expired key is removed and reads as
+  /// empty (`getDataWithoutMTimeForKey`).
+  mutating func getDataWithoutMTimeForKey(_ key: UnsafeRawBufferPointer) -> RawValue {
+    self.lockProcess(.shared)
+    defer { self.unlockProcess(.shared) }
+    self.checkLoadData()
+    let raw = self.getRawDataForKey(key)
+    guard self.hasExpired(raw) else { return Self.withoutExpirationTime(raw) }
+    guard self.checkWritable() else { return .empty }
+    self.lockProcess(.exclusive)
+    defer { self.unlockProcess(.exclusive) }
+    // Upgrading the lock can let another process write the key first, and its value must stay.
+    // The C++ core removes the key without looking again.
+    self.checkLoadData()
+    let current = self.getRawDataForKey(key)
+    guard self.hasExpired(current) else { return Self.withoutExpirationTime(current) }
+    _ = self.removeDataForKey(key)
+    return .empty
+  }
+
+  /// Whether `raw`, a value with an expiry time at its end, has expired.
+  private func hasExpired(_ raw: RawValue) -> Bool {
+    guard self.enableKeyExpire, raw.count >= fixed32Size else { return false }
+    let time = raw.withBytes { Self.expirationTime(of: $0) }
+    return time != 0 && time <= Self.currentTimeInSeconds()
+  }
+
+  private static func withoutExpirationTime(_ raw: RawValue) -> RawValue {
+    if raw.count < fixed32Size {
+      if raw.count != 0 {
+        Log.warning("key has invalid value size \(raw.count)")
+      }
+      return raw
+    }
+    return raw.prefix(raw.count - fixed32Size)
+  }
+
+  /// Drops expired keys from the index, without writing anything (`filterExpiredKeys`).
+  ///
+  /// - Returns: How many keys were dropped.
+  @discardableResult
+  mutating func filterExpiredKeys() -> Int {
+    guard self.enableKeyExpire, self.indexCount != 0, let memory = self.file.memory else {
+      return 0
+    }
+    self.lockProcess(.shared)
+    defer { self.unlockProcess(.shared) }
+    let now = Self.currentTimeInSeconds()
+    if let crypter = self.crypter {
+      return self.dicCrypt.removeAll { entry in
+        guard entry.realValueSize >= fixed32Size else {
+          Log.warning("key has invalid value size \(entry.realValueSize)")
+          return false
+        }
+        let time = Self.value(of: entry, memory: memory, crypter: crypter)
+          .withBytes { Self.expirationTime(of: $0) }
+        return time != 0 && time <= now
+      }
+    }
+    let base = UnsafeRawPointer(memory + fixed32Size)
+    return self.dic.removeAll { location in
+      guard location.valueSize >= UInt32(fixed32Size) else {
+        Log.warning("key has invalid value size \(location.valueSize)")
+        return false
+      }
+      let time = Self.expirationTime(of: RecordIndex.value(at: location, in: base))
+      return time != 0 && time <= now
+    }
+  }
+}

@@ -47,7 +47,7 @@ extension [UInt8] {
       case UInt8(ascii: "\t"):
         self.append(contentsOf: [UInt8(ascii: "\\"), UInt8(ascii: "t")])
       case 0..<0x20:
-        self.append(contentsOf: Array("\\u00".utf8))
+        self.append(contentsOf: "\\u00".utf8)
         self.append(hexDigits[Int(byte >> 4)])
         self.append(hexDigits[Int(byte & 0xF)])
       default:

@@ -1,7 +1,7 @@
 import SwiftMMKV
 import Testing
 
-@Suite struct MMKVStoreKeySubscriptionTests {
+@Suite(.requires(.store)) struct MMKVStoreKeySubscriptionTests {
   @Test func `Reports Changes To Its Key Only`() throws {
     let store = try makeStore()
     let recorder = ValueRecorder<Bool>()
@@ -51,7 +51,8 @@ import Testing
     #expect(recorder.all == [nil])
   }
 
-  @Test func `Delivers The Value Again After A Change Made Outside The Store`() throws {
+  @Test(.requires(.multiProcess))
+  func `Delivers The Value Again After A Change Made Outside The Store`() throws {
     let (other, store) = try makeLinkedStores(mode: .multiProcess)
     let recorder = ValueRecorder<String?>()
     let subscription = store.subscribe(forKey: "username", as: String.self, recorder.record)
@@ -73,7 +74,7 @@ import Testing
     let subscription = store.subscribe(
       forKey: "count",
       as: Int.self,
-      with: IntegerTextDecoder(),
+      with: TextCoder.shared,
       recorder.record
     )
     store.set("two", forKey: "count")
@@ -81,12 +82,12 @@ import Testing
     store.removeValue(forKey: "count")
 
     #expect(recorder.all.map(\.success) == [.some(1), nil, .some(3), .some(nil)])
-    #expect(throws: IntegerTextDecoder.NotAnInteger.self) { try recorder.all[1].get() }
+    #expect(throws: TextCoder.Failure.self) { try recorder.all[1].get() }
     subscription.cancel()
   }
 }
 
-@Suite struct MMKVValuesTests {
+@Suite(.requires(.store)) struct MMKVValuesTests {
   @Test func `Starts With The Current Value And Follows Each Change`() async throws {
     let store = try makeStore()
     store.set(0.5, forKey: "volume")
@@ -160,7 +161,8 @@ import Testing
     #expect(await task.value == 1)
   }
 
-  @Test func `Follows A Change Made Outside The Store Once It Is Noticed`() async throws {
+  @Test(.requires(.multiProcess))
+  func `Follows A Change Made Outside The Store Once It Is Noticed`() async throws {
     let (other, store) = try makeLinkedStores(mode: .multiProcess)
     var values = store.values(forKey: "username", as: String.self).makeAsyncIterator()
     #expect(await values.next() == .some(nil))
@@ -173,7 +175,7 @@ import Testing
 
   @Test func `Decodes Values With A Custom Decoder`() async throws {
     let store = try makeStore()
-    var values = store.values(forKey: "count", as: Int.self, with: IntegerTextDecoder())
+    var values = store.values(forKey: "count", as: Int.self, with: TextCoder.shared)
       .makeAsyncIterator()
     #expect(try await values.next() == .some(nil))
 
@@ -184,22 +186,12 @@ import Testing
   @Test func `A Value That Cannot Be Decoded Is Thrown And Ends The Sequence`() async throws {
     let store = try makeStore()
     store.set("not a number", forKey: "count")
-    var values = store.values(forKey: "count", as: Int.self, with: IntegerTextDecoder())
+    var values = store.values(forKey: "count", as: Int.self, with: TextCoder.shared)
       .makeAsyncIterator()
 
-    await #expect(throws: IntegerTextDecoder.NotAnInteger.self) { try await values.next() }
+    await #expect(throws: TextCoder.Failure.self) { try await values.next() }
 
     store.set("42", forKey: "count")
     #expect(try await values.next() == nil)
-  }
-}
-
-/// Decodes an integer from its decimal text.
-private struct IntegerTextDecoder: MMKVTopLevelDecoder {
-  struct NotAnInteger: Error {}
-
-  func decode<T: Decodable>(_ type: T.Type, from input: String) throws -> T {
-    guard let integer = Int(input), let value = integer as? T else { throw NotAnInteger() }
-    return value
   }
 }

@@ -806,8 +806,8 @@ While a store is suspended:
 Resuming notifies listeners with `.external`, so sequences and shared state read the store again.
 A single-process store takes no file lock, so suspending one does nothing.
 
-With the `Foundation` trait, `MMKVSuspensionController` does this as the app enters the background
-and returns to the foreground. Retain it for as long as the stores are in use:
+With the `Foundation` trait, `MMKVSuspensionController` handles this for an app. Retain it for as
+long as the stores are in use:
 
 ```swift
 let suspension = MMKVSuspensionController(stores: [store], observing: .application)
@@ -825,16 +825,22 @@ WindowGroup {
 The controller and the modifiers take several stores at once, either listed or as any sequence:
 `.mmkvSuspension(settings, session)` or `.mmkvSuspension(stores)`.
 
+The stores stay usable in the background. Each read or write there runs inside an expiring
+activity (`ProcessInfo.performExpiringActivity`), which keeps the app running until it has
+released the lock. Operations that follow one another closely share one activity, which ends about
+a second after the last of them, so a burst of writes asks the system once. When the app's
+background time runs out, the controller suspends the stores, and it resumes them when the app
+returns to the foreground. In the foreground, operations run as they always do.
+
 Things to know:
 
-- The stores stay usable while the app is only inactive, as it is under the app switcher, because
-  a suspended store turns reads away too.
-- Anything the app does after entering the background is turned away, including writes made by
-  its own handling of that event. Save state before then, or drive the suspension yourself with
+- An operation the system will not keep the app running for is turned away, as if the store were
+  suspended. This happens once the app's background time is nearly used up.
+- An app launched in the background never enters the background, so the controller leaves its
+  stores unprotected. Suspend them when that work is done, or drive the suspension yourself with
   `MMKVSuspensionController(stores:)` and `setActive(_:)`, or with
   `.mmkvSuspension(store, isActive:)`.
-- An app launched in the background starts with its stores usable, and never enters the
-  background. Suspend the stores when that work is done.
+- A manual controller only suspends and resumes. It keeps nothing running.
 - On macOS there is nothing to observe, so only the manual forms are available.
 
 ## File protection

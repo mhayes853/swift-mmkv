@@ -49,6 +49,12 @@ extension MMKVError {
     /// The encryption key is empty or longer than its cipher allows.
     public static let invalidEncryptionKey = Self(rawValue: "invalid-encryption-key")
 
+    /// The store's file is intact but cannot be read with the configuration's encryption key,
+    /// or without one: it was written with another key. Nothing in the file is changed, and
+    /// the store can be opened again with the right key. If the key is lost, remove the store
+    /// with ``MMKVDirectory/removeStore(id:)`` to start again.
+    public static let wrongEncryptionKey = Self(rawValue: "wrong-encryption-key")
+
     /// The store could not be re-encrypted, for example because it is read-only.
     public static let rekeyFailed = Self(rawValue: "rekey-failed")
 

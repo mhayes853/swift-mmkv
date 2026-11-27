@@ -220,6 +220,7 @@ private func status<T>(
     case .storeIsSuspended: SWIFTMMKV_STORE_IS_SUSPENDED
     case .disableExpiryFailed: SWIFTMMKV_DISABLE_EXPIRY_FAILED
     case .storeIsClosed: SWIFTMMKV_STORE_IS_CLOSED
+    case .wrongEncryptionKey: SWIFTMMKV_WRONG_ENCRYPTION_KEY
     default: SWIFTMMKV_UNKNOWN_ERROR
     }
   }
@@ -256,6 +257,8 @@ public func swiftmmkv_status_message(_ status: swiftmmkv_status) -> UnsafePointe
     case SWIFTMMKV_UNKNOWN_ERROR:
       "The operation failed in a way this version of the interface has no status for."
     case SWIFTMMKV_STORE_IS_CLOSED: "The store is closed."
+    case SWIFTMMKV_WRONG_ENCRYPTION_KEY:
+      "The store was written with another encryption key than the one it was opened with."
     default: "An unknown status."
     }
   // A static string's bytes are NUL-terminated and live for the rest of the process.
@@ -1122,6 +1125,7 @@ public func swiftmmkv_subscribe_to_integrity_failures(
       switch failure.kind {
       case .checksum: SWIFTMMKV_INTEGRITY_FAILURE_CHECKSUM
       case .fileLength: SWIFTMMKV_INTEGRITY_FAILURE_FILE_LENGTH
+      case .wrongEncryptionKey: SWIFTMMKV_INTEGRITY_FAILURE_WRONG_ENCRYPTION_KEY
       }
     failure.id.rawValue.withCString { onFailure(context.pointer, $0, kind) }
   }

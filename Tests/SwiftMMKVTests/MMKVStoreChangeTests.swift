@@ -1,8 +1,7 @@
-import Foundation
 import SwiftMMKV
 import Testing
 
-@Suite struct MMKVStoreChangeTests {
+@Suite(.requires(.store)) struct MMKVStoreChangeTests {
   @Test func `Reports Each Key That Is Set Or Removed`() throws {
     let store = try makeStore()
     let recorder = ChangeRecorder()
@@ -106,7 +105,7 @@ import Testing
 }
 
 /// These tests use stores from `makeLinkedStores(mode:)`, which stand in for two processes.
-@Suite struct MMKVStoreMultiProcessTests {
+@Suite(.requires(.store, .multiProcess)) struct MMKVStoreMultiProcessTests {
   @Test func `Multi Process Stores See Each Other's Writes`() throws {
     let (first, second) = try makeLinkedStores(mode: .multiProcess)
 

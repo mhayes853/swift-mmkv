@@ -4,7 +4,7 @@ import SwiftMMKV
 import Testing
 
 /// The C interface, called the way a binding in another language would call it.
-@Suite struct CInterfaceTests {
+@Suite(.requires(.cInterface)) struct CInterfaceTests {
   // MARK: - Version And Status
 
   @Test func `Reports The Version Of The Header It Was Built With`() {
@@ -12,7 +12,7 @@ import Testing
   }
 
   @Test func `Every Status Has A Message Of Its Own`() {
-    let statuses = SWIFTMMKV_OK...SWIFTMMKV_STORE_IS_CLOSED
+    let statuses = SWIFTMMKV_OK...SWIFTMMKV_WRONG_ENCRYPTION_KEY
     let messages = statuses.map { String(cString: swiftmmkv_status_message($0)) }
     let unknown = String(cString: swiftmmkv_status_message(9999))
 
@@ -1013,10 +1013,20 @@ import Testing
     let slashes = CCallbackRecorder()
     let all = CCallbackRecorder()
     let first = swiftmmkv_store_subscribe_under(
-      store.handle, "settings", "/", slashes.context, CCallbackRecorder.onChange, nil
+      store.handle,
+      "settings",
+      "/",
+      slashes.context,
+      CCallbackRecorder.onChange,
+      nil
     )
     let second = swiftmmkv_store_subscribe_under(
-      store.handle, "", nil, all.context, CCallbackRecorder.onChange, nil
+      store.handle,
+      "",
+      nil,
+      all.context,
+      CCallbackRecorder.onChange,
+      nil
     )
 
     #expect(swiftmmkv_store_set_bool(store.handle, "settings.theme", true, 0) == true)

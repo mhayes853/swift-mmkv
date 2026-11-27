@@ -114,6 +114,9 @@ typedef int32_t swiftmmkv_status;
 #define SWIFTMMKV_UNKNOWN_ERROR 18
 /// The store is closed, so it turns every operation away. Open the store again to use it.
 #define SWIFTMMKV_STORE_IS_CLOSED 19
+/// The store's file is intact but was written with another encryption key than the one it was
+/// opened with, or with a key when it was opened without one. Nothing in the file is changed.
+#define SWIFTMMKV_WRONG_ENCRYPTION_KEY 20
 
 /// A description of `status` in English. The string is static and must not be freed.
 const char *_Nonnull swiftmmkv_status_message(swiftmmkv_status status);
@@ -666,6 +669,8 @@ typedef int32_t swiftmmkv_integrity_failure_kind;
 #define SWIFTMMKV_INTEGRITY_FAILURE_CHECKSUM 0
 /// The file is not as long as it records itself to be.
 #define SWIFTMMKV_INTEGRITY_FAILURE_FILE_LENGTH 1
+/// The file is intact but cannot be read with the encryption key the store was opened with.
+#define SWIFTMMKV_INTEGRITY_FAILURE_WRONG_ENCRYPTION_KEY 2
 
 /// Receives the identifier of a store whose file failed its integrity check. MMKV reports the
 /// identifier alone, so stores with the same identifier in different directories cannot be

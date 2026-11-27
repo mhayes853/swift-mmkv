@@ -5,7 +5,7 @@ import Testing
 
 /// Failures are reported to every listener in the process, so each test only looks at those of
 /// a store it made.
-@Suite struct MMKVStoreIntegrityFailureTests {
+@Suite(.requires(.integrityFailures)) struct MMKVStoreIntegrityFailureTests {
   // A store loads its file when it is first read or written, not when it is opened.
 
   @Test func `Reports A File That Does Not Match Its Checksum`() throws {
@@ -37,6 +37,31 @@ import Testing
     #expect(
       recorder.all.filter { $0.id == id }
         == [MMKVStore.IntegrityFailure(id: id, kind: .fileLength)]
+    )
+    subscription.cancel()
+  }
+
+  @Test(.requires(.encryptionKeyCheck))
+  func `Reports A Store Opened With The Wrong Encryption Key`() throws {
+    let recorder = ValueRecorder<MMKVStore.IntegrityFailure>()
+    let subscription = MMKVStore.subscribeToIntegrityFailures(recorder.record)
+    let id = MMKVStore.ID(rawValue: "integrity-\(UUID().uuidString)")
+    let rootDirectory = temporaryRootDirectory()
+    let source = try makeStore(
+      id: "source",
+      rootDirectory: rootDirectory,
+      encryption: .aes128(key: "the right key")
+    )
+    source.set("value", forKey: "key")
+    try copyStoreFiles(id: "source", to: id, in: rootDirectory)
+
+    #expect(throws: MMKVError.self) {
+      try makeStore(id: id, rootDirectory: rootDirectory, encryption: .aes128(key: "another"))
+    }
+
+    #expect(
+      recorder.all.filter { $0.id == id }
+        == [MMKVStore.IntegrityFailure(id: id, kind: .wrongEncryptionKey)]
     )
     subscription.cancel()
   }

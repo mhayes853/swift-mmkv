@@ -141,7 +141,9 @@ extension MMKVStore {
   public func set(bytes: RawSpan, forKey key: String, expiry: MMKVExpiry? = nil) -> Bool {
     let expiresInSeconds = self.core.expirySeconds(for: expiry)
     return self.write(forKey: key) {
-      self.core.set(bytes: bytes, forKey: key, expiresInSeconds: expiresInSeconds)
+      self.core.write {
+        $0.set(bytes: bytes, forKey: key, expiresInSeconds: expiresInSeconds)
+      }
     }
   }
 
@@ -157,7 +159,9 @@ extension MMKVStore {
     _ body: (RawSpan) throws(E) -> R
   ) throws(E) -> R? {
     defer { self.core.operationDidFinish() }
-    return try self.core.withBytes(forKey: key, body)
+    return try self.core.readScope { (engine) throws(E) -> R? in
+      try engine.withBytes(forKey: key, body)
+    }
   }
 
   /// Stores the raw bytes in `unsafeBytes` under `key`, replacing any existing value.
@@ -215,7 +219,7 @@ extension MMKVStore {
   ///   for, and otherwise `buffer` is left alone.
   public func copyBytes(forKey key: String, into buffer: UnsafeMutableRawBufferPointer) -> Int? {
     defer { self.core.operationDidFinish() }
-    return self.core.copyBytes(forKey: key, into: buffer)
+    return self.core.read { $0.copyBytes(forKey: key, into: buffer) }
   }
 
   /// The number of bytes stored under `key`, without reading them.
@@ -228,10 +232,7 @@ extension MMKVStore {
 
   private func write(forKey key: String, _ body: () -> Bool) -> Bool {
     let didWrite = body()
-    self.core.operationDidFinish()
-    if didWrite {
-      self.core.state.notify(key: key)
-    }
+    self.core.operationDidFinish(writingTo: didWrite ? key : nil)
     return didWrite
   }
 }
@@ -712,6 +713,19 @@ extension MMKVStore {
       self.core.state.notifyExternalChange()
     }
   }
+
+  /// Runs each operation that takes the file lock inside `activity` from now on, or directly if
+  /// it is `nil`. Every ``MMKVStore`` over the same files shares it. A single-process store takes
+  /// no file lock, so this does nothing to one.
+  package func setExpiringActivity(_ activity: ExpiringActivity?) {
+    guard self.core.state.canSuspend else { return }
+    self.core.state.gate.setActivity(activity)
+  }
+
+  /// Stops running operations inside `activity`, unless the store has been given another one.
+  package func removeExpiringActivity(_ activity: ExpiringActivity) {
+    self.core.state.gate.removeActivity(activity)
+  }
 }
 
 // MARK: - Closing
@@ -838,7 +852,9 @@ extension MMKVStore {
   /// Blocks until the store's contents are flushed to disk.
   ///
   /// The operating system flushes a memory-mapped file by itself, even if the process crashes,
-  /// so this only matters when the device may lose power.
+  /// so this only matters when the device may lose power. Everything written before a sync
+  /// survives that, whatever is written afterwards. Having the drive write out its cache takes
+  /// milliseconds, so sync after writes that must not be lost rather than after every write.
   public func sync() {
     self.core.sync()
     self.core.operationDidFinish()

@@ -31,7 +31,9 @@ import Testing
     #expect(MMKVLog.Level.allCases.map(\.description) == ["info", "warning", "error"])
   }
 
-  @Test func `The Handler Receives Messages At Or Above The Minimum Level`() throws {
+  @Test(.requires(.logging)) func `The Handler Receives Messages At Or Above The Minimum Level`()
+    throws
+  {
     defer { resetLogging() }
     let recorder = ValueRecorder<MMKVLog.Message>()
     MMKVLog.minimumLevel = .info
@@ -48,7 +50,7 @@ import Testing
     #expect(message.line > 0)
   }
 
-  @Test func `Messages Below The Minimum Level Are Dropped`() throws {
+  @Test(.requires(.logging)) func `Messages Below The Minimum Level Are Dropped`() throws {
     defer { resetLogging() }
     let recorder = ValueRecorder<MMKVLog.Message>()
     MMKVLog.minimumLevel = .warning
@@ -60,7 +62,7 @@ import Testing
     #expect(!recorder.all.contains { $0.text.contains(id.rawValue) })
   }
 
-  @Test func `Nothing Is Logged Without A Minimum Level`() throws {
+  @Test(.requires(.logging)) func `Nothing Is Logged Without A Minimum Level`() throws {
     defer { resetLogging() }
     let recorder = ValueRecorder<MMKVLog.Message>()
     MMKVLog.minimumLevel = nil
@@ -71,7 +73,7 @@ import Testing
     #expect(recorder.all.isEmpty)
   }
 
-  @Test func `A Removed Handler No Longer Receives Messages`() throws {
+  @Test(.requires(.logging)) func `A Removed Handler No Longer Receives Messages`() throws {
     defer { resetLogging() }
     let recorder = ValueRecorder<MMKVLog.Message>()
     MMKVLog.minimumLevel = .info
@@ -86,7 +88,7 @@ import Testing
   }
 
   #if Logging
-    @Test func `Messages Go To The Logger`() throws {
+    @Test(.requires(.logging)) func `Messages Go To The Logger`() throws {
       defer { resetLogging() }
       let recorder = ValueRecorder<RecordingLogHandler.Entry>()
       var logger = Logger(label: "test") { _ in RecordingLogHandler(recorder: recorder) }
@@ -119,7 +121,7 @@ import Testing
       #expect(MMKVLog.logger.label == "test")
     }
 
-    @Test func `The Minimum Level Can Be Stricter Than The Logger`() throws {
+    @Test(.requires(.logging)) func `The Minimum Level Can Be Stricter Than The Logger`() throws {
       defer { resetLogging() }
       let recorder = ValueRecorder<RecordingLogHandler.Entry>()
       var logger = Logger(label: "test") { _ in RecordingLogHandler(recorder: recorder) }
@@ -133,7 +135,9 @@ import Testing
       #expect(!recorder.all.contains { $0.message.contains(id.rawValue) })
     }
 
-    @Test func `A Handler Takes Over From The Logger Until It Is Removed`() throws {
+    @Test(.requires(.logging)) func `A Handler Takes Over From The Logger Until It Is Removed`()
+      throws
+    {
       defer { resetLogging() }
       let logged = ValueRecorder<RecordingLogHandler.Entry>()
       let handled = ValueRecorder<MMKVLog.Message>()
@@ -184,7 +188,8 @@ extension MMKVLogTests {
     #expect(swiftmmkv_log_minimum_level() == SWIFTMMKV_LOG_ERROR)
   }
 
-  @Test func `The C Interface's Handler Receives Messages Until It Is Replaced`() throws {
+  @Test(.requires(.logging, .cInterface))
+  func `The C Interface's Handler Receives Messages Until It Is Replaced`() throws {
     defer { resetLogging() }
     let first = CCallbackRecorder()
     let second = CCallbackRecorder()

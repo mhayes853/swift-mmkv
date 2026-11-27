@@ -64,10 +64,29 @@ let coreTarget: Target = .target(
   ]
 )
 
+// AES, CFB-128, and MD5 for the Swift core that is replacing the C++ one, ported to C from the
+// OpenSSL-derived code MMKV ships, and MMKV's CRC-32. Its symbols are prefixed in source. See its
+// README.md.
+let cryptoTarget: Target = .target(
+  name: "CSwiftMMKVCrypto",
+  exclude: ["LICENSE.TXT", "README.md"],
+  // For `crc32`, as the C++ core uses it.
+  linkerSettings: [.linkedLibrary("z")]
+)
+
+// The Swift implementation of MMKV's core that is replacing CSwiftMMKVCore. See
+// Docs/swift-core-migration.md.
+let swiftCoreTarget: Target = .target(
+  name: "_SwiftMMKVCore",
+  dependencies: ["CSwiftMMKVCrypto"],
+  swiftSettings: [.enableExperimentalFeature("Lifetimes")]
+)
+
 let libraryTarget: Target = .target(
   name: "SwiftMMKV",
   dependencies: [
     "CSwiftMMKVCore",
+    "_SwiftMMKVCore",
     .target(name: "_SwiftMMKVFoundation", condition: .when(traits: ["Foundation"])),
     .product(name: "Sharing", package: "swift-sharing", condition: .when(traits: ["Sharing"])),
     .product(
@@ -121,6 +140,7 @@ let testTarget: Target = .testTarget(
     .product(name: "UUIDV7", package: "swift-uuidv7", condition: .when(traits: ["UUIDV7"])),
     .product(name: "Tagged", package: "swift-tagged", condition: .when(traits: ["Tagged"]))
   ],
+  exclude: ["Upstream/MANIFEST.md"],
   swiftSettings: [
     .enableExperimentalFeature("Lifetimes"),
     .define("Foundation", .when(traits: ["Foundation"])),
@@ -129,6 +149,12 @@ let testTarget: Target = .testTarget(
     .define("UUIDV7", .when(traits: ["UUIDV7"])),
     .define("Tagged", .when(traits: ["Tagged"]))
   ]
+)
+
+// Tests of the Swift core's internals, which the store-level tests in SwiftMMKVTests cannot reach.
+let coreTestTarget: Target = .testTarget(
+  name: "SwiftMMKVCoreTests",
+  dependencies: ["_SwiftMMKVCore", "CSwiftMMKVCrypto", "CSwiftMMKVCore", "SwiftMMKV"]
 )
 
 let package = Package(
@@ -185,11 +211,14 @@ let package = Package(
   ],
   targets: [
     coreTarget,
+    cryptoTarget,
+    swiftCoreTarget,
     foundationTarget,
     libraryTarget,
     cInterfaceHeaderTarget,
     cInterfaceTarget,
-    testTarget
+    testTarget,
+    coreTestTarget
   ],
   swiftLanguageModes: [.v6],
   cxxLanguageStandard: .cxx20
