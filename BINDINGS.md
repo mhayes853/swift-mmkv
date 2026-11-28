@@ -12,7 +12,7 @@ binding may differ for a reason it states in its own README.
    its comments define every behaviour below.
 2. The sections of the [README](README.md) on values, typed keys, change listeners, and the
    exclusive lock. They show the shape the idiomatic layer follows.
-3. An existing binding under `Bindings/`, when there is one.
+3. An existing binding, when there is one: [`python/`](python).
 
 ## Foundations
 
@@ -128,8 +128,9 @@ A binding **must** have tests for each of these.
 
 ## Layout and release
 
-- A binding in this repository lives in `Bindings/<language>/`, with its own README, tests, and
-  CI job. Its version is the package's version.
+- A binding in this repository lives in a directory named after its language at the root,
+  such as `python/`, with its own README, tests, and CI job. Its version is the package's
+  version.
 - Its README **must** cover installation, a first example, each row of the table above, and
   every place it departs from a **should** in this document.
 
