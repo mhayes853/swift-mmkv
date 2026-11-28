@@ -325,8 +325,8 @@ extension MMKVStore {
 extension MMKVStore {
   /// Removes `key` and its value.
   ///
-  /// - Returns: Whether the store accepted the removal. MMKV also reports success for a key
-  ///   that had no value.
+  /// - Returns: Whether there was a value to remove. That is `false` for a key that had no
+  ///   value, and when the store turns the removal away as it does a write.
   @discardableResult
   public func removeValue(forKey key: String) -> Bool {
     let (didRemove, didExist) = self.core.locked {
@@ -473,6 +473,21 @@ extension MMKVStore {
     _ body: (MMKVStore) throws(E) -> R
   ) throws(E) -> R {
     try self.core.locked { () throws(E) -> R in try body(self) }
+  }
+
+  /// Takes exclusive access to the store as ``withExclusiveLock(_:)`` does, until a matching
+  /// ``unlockExclusive()`` on the same thread.
+  ///
+  /// This is for the package's C interface, which serves languages whose scopes are not
+  /// closures. It is not public because nothing stops a caller from leaving it unbalanced.
+  package func lockExclusive() {
+    self.core.lockExclusive()
+  }
+
+  /// Gives up what the calling thread's last unmatched ``lockExclusive()`` took, and tells
+  /// listeners about the keys that were changed once the thread has given up all it took.
+  package func unlockExclusive() {
+    self.core.unlockExclusive()
   }
 }
 

@@ -213,6 +213,13 @@ void swiftmmkv_configuration_set_id(
   swiftmmkv_configuration *_Nonnull configuration, const char *_Nonnull id);
 void swiftmmkv_configuration_set_directory(
   swiftmmkv_configuration *_Nonnull configuration, const char *_Nonnull directory);
+/// Copies the path of the configuration's directory and a terminator into `buffer`, as
+/// "Buffers" describes, which is how to learn the directory that
+/// `swiftmmkv_configuration_create_temporary` made. `out_length` receives the path's length in
+/// bytes without its terminator, so the path was copied if the length is less than `capacity`.
+void swiftmmkv_configuration_directory(
+  const swiftmmkv_configuration *_Nonnull configuration, char *_Nullable buffer,
+  size_t capacity, size_t *_Nonnull out_length);
 void swiftmmkv_configuration_set_mode(
   swiftmmkv_configuration *_Nonnull configuration, swiftmmkv_mode mode);
 /// Sets whether writes are rejected.
@@ -387,8 +394,9 @@ void swiftmmkv_store_keys_under(
 
 // MARK: - Removal
 
-/// Removes `key` and its value, and returns whether the store accepted the removal. MMKV also
-/// reports success for a key that had no value.
+/// Removes `key` and its value, and returns whether there was a value to remove. That is
+/// false for a key that had no value, and when the store turns the removal away as it does a
+/// write.
 bool swiftmmkv_store_remove(swiftmmkv_store *_Nonnull store, const char *_Nonnull key);
 /// Removes the values of the keys in a packed list of `size` bytes, all at once. `keys` may be
 /// NULL when `size` is zero. What `swiftmmkv_store_keys` wrote can be passed straight back.
@@ -425,6 +433,24 @@ typedef void (*swiftmmkv_locked_callback)(
 void swiftmmkv_store_with_exclusive_lock(
   swiftmmkv_store *_Nonnull store, void *_Nullable context,
   swiftmmkv_locked_callback _Nonnull body);
+
+/// Takes exclusive access to the store, as `swiftmmkv_store_with_exclusive_lock` does for the
+/// length of its body, and keeps it until `swiftmmkv_store_unlock_exclusive` is called on the
+/// same thread. For a language whose scopes are not functions, such as a `with` block or a
+/// guard that unlocks when it is dropped. Prefer `swiftmmkv_store_with_exclusive_lock`
+/// otherwise, which cannot be left unbalanced.
+///
+/// The lock is recursive, so a thread that holds it may take it again, and gives it up once
+/// for each time it took it. While the store is suspended, and once it is closed, this takes
+/// nothing, and every operation that follows is turned away.
+void swiftmmkv_store_lock_exclusive(swiftmmkv_store *_Nonnull store);
+/// Gives up the exclusive access the calling thread last took with
+/// `swiftmmkv_store_lock_exclusive`. Listeners are told about the keys that were changed in
+/// between once the thread has given up all it took, each key once.
+///
+/// This does nothing on a thread that holds no exclusive access, which is how it balances a
+/// `swiftmmkv_store_lock_exclusive` that took nothing.
+void swiftmmkv_store_unlock_exclusive(swiftmmkv_store *_Nonnull store);
 
 // MARK: - Changes
 
@@ -511,7 +537,8 @@ void swiftmmkv_store_check_for_external_changes(swiftmmkv_store *_Nonnull store)
 
 bool swiftmmkv_store_is_suspended(swiftmmkv_store *_Nonnull store);
 /// Turns new operations away, waits for those under way, and returns once nothing holds the
-/// store's file lock. Do not call this from inside `swiftmmkv_store_with_exclusive_lock`.
+/// store's file lock. Do not call this from inside `swiftmmkv_store_with_exclusive_lock`, or
+/// while the thread holds `swiftmmkv_store_lock_exclusive`.
 void swiftmmkv_store_suspend(swiftmmkv_store *_Nonnull store);
 /// Lets the store take its file lock again, and tells listeners of an external change.
 void swiftmmkv_store_resume(swiftmmkv_store *_Nonnull store);
@@ -535,7 +562,8 @@ bool swiftmmkv_store_is_closed(swiftmmkv_store *_Nonnull store);
 /// now reads as missing, and are told nothing after that, so each listener's context is
 /// released then. Their subscriptions are still released with `swiftmmkv_subscription_cancel`.
 ///
-/// Do not call this from inside `swiftmmkv_store_with_exclusive_lock`.
+/// Do not call this from inside `swiftmmkv_store_with_exclusive_lock`, or while the thread
+/// holds `swiftmmkv_store_lock_exclusive`.
 void swiftmmkv_store_close(swiftmmkv_store *_Nonnull store);
 
 // MARK: - Maintenance
@@ -555,8 +583,6 @@ void swiftmmkv_store_release_memory(swiftmmkv_store *_Nonnull store);
 /// memory-mapped file by itself, even if the process crashes, so this only matters when the
 /// device may lose power.
 void swiftmmkv_store_sync(swiftmmkv_store *_Nonnull store);
-/// Re-encrypts the store with `encryption` and `key`, or decrypts it with
-/// `SWIFTMMKV_ENCRYPTION_NONE`.
 /// Whether the store's file records when each key expires, which it does from the first write
 /// that expires until `swiftmmkv_store_disable_expiry`. A suspended store answers false.
 bool swiftmmkv_store_is_expiry_enabled(swiftmmkv_store *_Nonnull store);
@@ -566,6 +592,8 @@ bool swiftmmkv_store_is_expiry_enabled(swiftmmkv_store *_Nonnull store);
 /// Keys that have expired are dropped, and every other key is kept until it is removed,
 /// whatever expiry it was written with. The next write that expires switches the file back.
 swiftmmkv_status swiftmmkv_store_disable_expiry(swiftmmkv_store *_Nonnull store);
+/// Re-encrypts the store with `encryption` and `key`, or decrypts it with
+/// `SWIFTMMKV_ENCRYPTION_NONE`.
 swiftmmkv_status swiftmmkv_store_rekey(
   swiftmmkv_store *_Nonnull store, swiftmmkv_encryption encryption,
   const void *_Nullable key, size_t key_count);

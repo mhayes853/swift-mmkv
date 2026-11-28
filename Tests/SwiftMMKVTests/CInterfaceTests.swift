@@ -38,6 +38,57 @@ import Testing
     #expect(swiftmmkv_store_count(store) == 1)
   }
 
+  /// The first `length` bytes of `buffer`, which must be followed by a terminator.
+  private func string(_ buffer: [CChar], _ length: Int) -> String? {
+    guard length < buffer.count, buffer[length] == 0 else { return nil }
+    return String(decoding: buffer[..<length].map { UInt8(bitPattern: $0) }, as: UTF8.self)
+  }
+
+  @Test func `A Configuration's Directory Is Copied Into A Buffer It Fits`() {
+    let configuration = swiftmmkv_configuration_create(
+      "/stores/first",
+      SWIFTMMKV_MODE_SINGLE_PROCESS
+    )
+    defer { swiftmmkv_configuration_destroy(configuration) }
+
+    var length = 0
+    swiftmmkv_configuration_directory(configuration, nil, 64, &length)
+    #expect(length == "/stores/first".utf8.count)
+
+    // A buffer the path fits without its terminator is left as it was.
+    var exact = [CChar](repeating: 0x55, count: length)
+    swiftmmkv_configuration_directory(configuration, &exact, exact.count, &length)
+    #expect(length == exact.count)
+    #expect(exact.allSatisfy { $0 == 0x55 })
+
+    var buffer = [CChar](repeating: 0x55, count: length + 2)
+    swiftmmkv_configuration_directory(configuration, &buffer, buffer.count, &length)
+    #expect(string(buffer, length) == "/stores/first")
+    #expect(buffer[length + 1] == 0x55)
+
+    swiftmmkv_configuration_set_directory(configuration, "/stores/second")
+    swiftmmkv_configuration_directory(configuration, &buffer, buffer.count, &length)
+    #expect(string(buffer, length) == "/stores/second")
+  }
+
+  @Test func `A Temporary Configuration Tells Which Directory It Made`() throws {
+    let configuration = swiftmmkv_configuration_create_temporary()
+    defer { swiftmmkv_configuration_destroy(configuration) }
+    var length = 0
+    swiftmmkv_configuration_directory(configuration, nil, 0, &length)
+    var buffer = [CChar](repeating: 0, count: length + 1)
+    swiftmmkv_configuration_directory(configuration, &buffer, buffer.count, &length)
+    let directory = try #require(string(buffer, length))
+    #expect(!directory.isEmpty)
+    #expect(swiftmmkv_directory_contains_store(directory, "mmkv.default") == false)
+
+    var handle: OpaquePointer?
+    #expect(swiftmmkv_store_open(configuration, &handle) == SWIFTMMKV_OK)
+    defer { swiftmmkv_store_destroy(handle) }
+
+    #expect(swiftmmkv_directory_contains_store(directory, "mmkv.default") == true)
+  }
+
   @Test func `A Store Opened Twice Shares Its Contents`() throws {
     let directory = temporaryRootDirectory()
     let first = try CStore(id: "shared", directory: directory)
@@ -777,6 +828,16 @@ import Testing
     #expect(store.keys() == [])
   }
 
+  @Test func `Removing A Key Reports Whether It Had A Value`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == true)
+
+    #expect(swiftmmkv_store_remove(store.handle, "flag") == true)
+    #expect(swiftmmkv_store_remove(store.handle, "flag") == false)
+    #expect(swiftmmkv_store_remove(store.handle, "missing") == false)
+  }
+
   @Test func `Keys That Do Not Fit Are Sized And Not Copied`() throws {
     let store = try CStore()
     defer { store.destroy() }
@@ -932,6 +993,114 @@ import Testing
     }
 
     #expect(recorder.events == ["body done", "key:a,key:b"])
+  }
+
+  @Test func `Runs A Read Modify Write Between A Lock And An Unlock`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+
+    for _ in 0..<3 {
+      swiftmmkv_store_lock_exclusive(store.handle)
+      var count: Int32 = 0
+      _ = swiftmmkv_store_get_int32(store.handle, "count", &count)
+      _ = swiftmmkv_store_set_int32(store.handle, "count", count + 1, 0)
+      // The lock is recursive, and can be taken inside the callback form and around it.
+      swiftmmkv_store_lock_exclusive(store.handle)
+      swiftmmkv_store_with_exclusive_lock(store.handle, nil) { _, nested in
+        _ = swiftmmkv_store_set_bool(nested, "nested", true, 0)
+      }
+      swiftmmkv_store_unlock_exclusive(store.handle)
+      swiftmmkv_store_unlock_exclusive(store.handle)
+    }
+
+    var count: Int32 = 0
+    #expect(swiftmmkv_store_get_int32(store.handle, "count", &count) == true)
+    #expect(count == 3)
+    #expect(swiftmmkv_store_contains(store.handle, "nested") == true)
+  }
+
+  @Test func `Listeners Hear Of What A Lock Covered Once All Of It Is Given Up`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    let recorder = CCallbackRecorder()
+    let subscription = swiftmmkv_store_subscribe(
+      store.handle,
+      recorder.context,
+      CCallbackRecorder.onChange,
+      CCallbackRecorder.release
+    )
+    defer { swiftmmkv_subscription_cancel(subscription) }
+
+    swiftmmkv_store_lock_exclusive(store.handle)
+    _ = swiftmmkv_store_set_int32(store.handle, "a", 1, 0)
+    swiftmmkv_store_lock_exclusive(store.handle)
+    _ = swiftmmkv_store_set_int32(store.handle, "a", 2, 0)
+    _ = swiftmmkv_store_set_int32(store.handle, "b", 1, 0)
+    swiftmmkv_store_unlock_exclusive(store.handle)
+    recorder.record("inner unlocked")
+    _ = swiftmmkv_store_set_int32(store.handle, "c", 1, 0)
+    swiftmmkv_store_unlock_exclusive(store.handle)
+
+    #expect(recorder.events == ["inner unlocked", "key:a,key:b,key:c"])
+  }
+
+  @Test func `Another Thread Waits For The Lock To Be Given Up`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    let recorder = CCallbackRecorder()
+    let context = CReadingContext(store: store.handle, recorder: recorder)
+
+    swiftmmkv_store_lock_exclusive(store.handle)
+    let writer = Thread {
+      _ = swiftmmkv_store_set_bool(context.store, "flag", true, 0)
+      context.recorder.record("wrote")
+    }
+    writer.start()
+    usleep(100_000)
+    recorder.record("unlocking")
+    swiftmmkv_store_unlock_exclusive(store.handle)
+    for _ in 0..<5000 where recorder.events.count < 2 {
+      usleep(1000)
+    }
+
+    #expect(recorder.events == ["unlocking", "wrote"])
+  }
+
+  @Test func `An Unlock Without A Lock Does Nothing`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+
+    swiftmmkv_store_unlock_exclusive(store.handle)
+
+    #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == true)
+    swiftmmkv_store_lock_exclusive(store.handle)
+    swiftmmkv_store_unlock_exclusive(store.handle)
+    swiftmmkv_store_unlock_exclusive(store.handle)
+    #expect(swiftmmkv_store_contains(store.handle, "flag") == true)
+  }
+
+  @Test func `A Lock On A Suspended Or Closed Store Takes Nothing`() throws {
+    let store = try CStore(
+      id: "lock-\(UUID().uuidString)",
+      mode: SWIFTMMKV_MODE_MULTI_PROCESS
+    )
+    defer { store.destroy() }
+
+    swiftmmkv_store_suspend(store.handle)
+    swiftmmkv_store_lock_exclusive(store.handle)
+    #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == false)
+    // Nothing was taken, so resuming does not wait for the lock, and the unlock that
+    // balances it gives nothing up.
+    swiftmmkv_store_resume(store.handle)
+    swiftmmkv_store_lock_exclusive(store.handle)
+    #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == true)
+    swiftmmkv_store_unlock_exclusive(store.handle)
+    swiftmmkv_store_unlock_exclusive(store.handle)
+
+    swiftmmkv_store_close(store.handle)
+    swiftmmkv_store_lock_exclusive(store.handle)
+    #expect(swiftmmkv_store_contains(store.handle, "flag") == false)
+    swiftmmkv_store_unlock_exclusive(store.handle)
   }
 
   // MARK: - Changes

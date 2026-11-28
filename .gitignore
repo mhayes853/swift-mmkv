@@ -3,3 +3,12 @@
 .swiftpm/
 .DS_Store
 Package.resolved
+
+# The Python binding
+python/src/swiftmmkv/_lib/
+python/dist/
+python/.venv/
+python/uv.lock
+__pycache__/
+.pytest_cache/
+.mypy_cache/

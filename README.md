@@ -1132,7 +1132,11 @@ either way. The trait does not need the `Foundation` trait.
 
 Other languages can use the package through a C interface. The `SwiftMMKVC` product implements
 the functions that [`swiftmmkv.h`](Sources/CSwiftMMKV/include/swiftmmkv.h) declares, and the
-header documents each of them.
+header documents each of them. `SwiftMMKVCDynamic` is the same interface as a shared library,
+for a language that loads it at run time.
+
+[`python`](python) holds a binding for Python that is built on it, and
+[`BINDINGS.md`](BINDINGS.md) says what a binding in another language provides.
 
 ```c
 #include "swiftmmkv.h"
@@ -1200,7 +1204,7 @@ the header declares is implemented.
 | macOS, iOS simulator | Built and tested |
 | iOS, tvOS, watchOS, visionOS devices | Built |
 | Android (arm64, x86_64) | Built |
-| Linux | Expected to work, not yet built or tested |
+| Linux (x86_64) | Built and tested |
 
 ## Known gaps
 

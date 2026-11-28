@@ -25,3 +25,10 @@
 #define _openssl_aes_arm_decrypt _swiftmmkv_openssl_aes_arm_decrypt
 
 #include "mmkv/aes/openssl/openssl_aesv8-armx.S"
+
+// An object without this section makes the linker ask for an executable stack for whatever
+// it is linked into. That is what this file is on every architecture but ARMv8, where it is
+// empty, and glibc refuses to load a shared library that asks for one.
+#if defined(__ELF__)
+.section .note.GNU-stack,"",%progbits
+#endif
