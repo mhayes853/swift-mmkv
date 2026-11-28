@@ -828,6 +828,16 @@ import Testing
     #expect(store.keys() == [])
   }
 
+  @Test func `Removing A Key Reports Whether It Had A Value`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == true)
+
+    #expect(swiftmmkv_store_remove(store.handle, "flag") == true)
+    #expect(swiftmmkv_store_remove(store.handle, "flag") == false)
+    #expect(swiftmmkv_store_remove(store.handle, "missing") == false)
+  }
+
   @Test func `Keys That Do Not Fit Are Sized And Not Copied`() throws {
     let store = try CStore()
     defer { store.destroy() }

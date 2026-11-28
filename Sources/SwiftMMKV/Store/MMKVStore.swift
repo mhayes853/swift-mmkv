@@ -325,8 +325,8 @@ extension MMKVStore {
 extension MMKVStore {
   /// Removes `key` and its value.
   ///
-  /// - Returns: Whether the store accepted the removal. MMKV also reports success for a key
-  ///   that had no value.
+  /// - Returns: Whether there was a value to remove. That is `false` for a key that had no
+  ///   value, and when the store turns the removal away as it does a write.
   @discardableResult
   public func removeValue(forKey key: String) -> Bool {
     let (didRemove, didExist) = self.core.locked {

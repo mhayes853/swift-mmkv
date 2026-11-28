@@ -394,8 +394,9 @@ void swiftmmkv_store_keys_under(
 
 // MARK: - Removal
 
-/// Removes `key` and its value, and returns whether the store accepted the removal. MMKV also
-/// reports success for a key that had no value.
+/// Removes `key` and its value, and returns whether there was a value to remove. That is
+/// false for a key that had no value, and when the store turns the removal away as it does a
+/// write.
 bool swiftmmkv_store_remove(swiftmmkv_store *_Nonnull store, const char *_Nonnull key);
 /// Removes the values of the keys in a packed list of `size` bytes, all at once. `keys` may be
 /// NULL when `size` is zero. What `swiftmmkv_store_keys` wrote can be passed straight back.
