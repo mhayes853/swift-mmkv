@@ -44,3 +44,10 @@ filterwarnings = ["error"]
 [tool.mypy]
 strict = true
 files = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "UP", "I"]

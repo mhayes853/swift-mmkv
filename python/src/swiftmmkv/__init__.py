@@ -53,12 +53,14 @@ from ._logging import (
     IntegrityFailureKind,
     LogLevel,
     LogMessage,
-    install as _install_logging,
     log_level,
     logger,
     on_integrity_failure,
     set_log_handler,
     set_log_level,
+)
+from ._logging import (
+    install as _install_logging,
 )
 from ._store import Plain, Store, open, open_temporary
 

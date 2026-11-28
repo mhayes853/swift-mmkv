@@ -119,9 +119,7 @@ class Directory(os.PathLike[str]):
         """
         removed = c_bool(False)
         check(
-            _raw.swiftmmkv_directory_remove_store(
-                self._c_path, _raw.c_string(id), byref(removed)
-            )
+            _raw.swiftmmkv_directory_remove_store(self._c_path, _raw.c_string(id), byref(removed))
         )
         return removed.value
 
@@ -152,9 +150,7 @@ class Directory(os.PathLike[str]):
         number backed up. Raises `MMKVError` with `Status.STORES_NOT_BACKED_UP` if some
         could not be, after the others were."""
         count = c_size_t(0)
-        check(
-            _raw.swiftmmkv_directory_back_up_all_stores(self._c_path, _c_path(to), byref(count))
-        )
+        check(_raw.swiftmmkv_directory_back_up_all_stores(self._c_path, _c_path(to), byref(count)))
         return count.value
 
     def restore_store(self, id: StoreID | str, /, backup: StrPath) -> bool:
@@ -175,9 +171,7 @@ class Directory(os.PathLike[str]):
         `Status.STORES_NOT_RESTORED` if some could not be, after the others were."""
         count = c_size_t(0)
         check(
-            _raw.swiftmmkv_directory_restore_all_stores(
-                self._c_path, _c_path(backup), byref(count)
-            )
+            _raw.swiftmmkv_directory_restore_all_stores(self._c_path, _c_path(backup), byref(count))
         )
         return count.value
 

@@ -9,7 +9,7 @@ import weakref
 from collections.abc import AsyncIterator, Buffer, Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 from ctypes import byref, c_bool, c_size_t, c_void_p
-from typing import Any, Final, Self, final, overload
+from typing import Any, Self, final, overload
 
 from . import _changes, _raw
 from ._changes import ChangeBatch, Subscription, name_of
@@ -29,9 +29,7 @@ from ._configuration import (
 from ._converters import Reader, TypeSpec, Writer, converter_for_value, converter_of
 from ._directory import Directory
 from ._errors import check
-from ._keys import DefaultedKey, Key
-
-_MISSING: Final = object()
+from ._keys import MISSING, DefaultedKey, Key
 
 #: The values a write stores without being told their type.
 type Plain = bool | int | float | str | Buffer | Sequence[str]
@@ -219,7 +217,7 @@ class Store:
         self,
         key: Any,
         value: Any,
-        type: Any = _MISSING,
+        type: Any = MISSING,
         /,
         *,
         expiry: ExpiryLike | None = None,
@@ -254,13 +252,13 @@ class Store:
         hold, and `ValueError` for a key that contains U+0000.
         """
         if isinstance(key, Key):
-            if type is not _MISSING:
+            if type is not MISSING:
                 raise TypeError("A typed key already says how its value is stored.")
             name, c_key = key.name, key._c_name
             converter = key.converter
         else:
             name, c_key = name_of(key)
-            converter = converter_for_value(value) if type is _MISSING else converter_of(type)
+            converter = converter_for_value(value) if type is MISSING else converter_of(type)
         return bool(converter.write(Writer(self, name, c_key, expiry_bits(expiry)), value))
 
     # MARK: - Reads
@@ -275,7 +273,7 @@ class Store:
     def get[T](self, key: str, type: TypeSpec[T], /) -> T | None: ...
     @overload
     def get[T, D](self, key: str, type: TypeSpec[T], /, *, default: D) -> T | D: ...
-    def get(self, key: Any, type: Any = _MISSING, /, *, default: Any = _MISSING) -> Any:
+    def get(self, key: Any, type: Any = MISSING, /, *, default: Any = MISSING) -> Any:
         """The value of `key`, or `None` if it has none.
 
         ::
@@ -292,30 +290,30 @@ class Store:
         A key has no value while the store is suspended, and once it is closed. An expired
         key has none either.
 
-        The store records no types, so read a key as the type it was written as: another
-        type reads as nonsense, and not as `None`. What a converter raises, such as
-        `json.JSONDecodeError` from `swiftmmkv.JSON`, is raised from here.
+        The store records no types, so read a key as the type it was written as. Another
+        type reads as a wrong value or as `None`, and not as an error. What a converter
+        raises, such as `json.JSONDecodeError` from `swiftmmkv.JSON`, is raised from here.
         """
         return self._get(key, type, default)
 
     def _get(self, key: Any, type: Any, default: Any) -> Any:
         if isinstance(key, Key):
-            if type is not _MISSING:
+            if type is not MISSING:
                 raise TypeError("A typed key already says how its value is read.")
             value = key.converter.read(Reader(self, key.name, key._c_name))
             if value is not None:
                 return value
-            if default is not _MISSING:
+            if default is not MISSING:
                 return default
             return key.default if isinstance(key, DefaultedKey) else None
-        if type is _MISSING:
+        if type is MISSING:
             raise TypeError(
                 "A read names the type of its value, as in store.get(key, str), because a "
                 "store's file records no types."
             )
         name, c_key = name_of(key)
         value = converter_of(type).read(Reader(self, name, c_key))
-        if value is None and default is not _MISSING:
+        if value is None and default is not MISSING:
             return default
         return value
 
@@ -344,7 +342,7 @@ class Store:
                 "A subscript takes a typed key, because a store's file records no types. "
                 "Read a string key with store.get(key, type)."
             )
-        value = self._get(key, _MISSING, _MISSING)
+        value = self._get(key, MISSING, MISSING)
         if value is None:
             raise KeyError(key.name)
         return value
@@ -359,7 +357,7 @@ class Store:
         self.set(key, value)
 
     def __delitem__(self, key: str | Key[Any], /) -> None:
-        """Removes `key`. A key that has no value is not an error, as it is not to MMKV."""
+        """Removes `key`. Unlike a `dict`, a key that has no value is not an error."""
         self.remove(key)
 
     # MARK: - Keys
@@ -368,7 +366,11 @@ class Store:
         """Whether `key`, a string or a typed key, has a value."""
         if not isinstance(key, str | Key):
             return False
-        _, c_key = name_of(key)
+        try:
+            _, c_key = name_of(key)
+        except ValueError:
+            # A name with U+0000 in it, which no key of a store has.
+            return False
         contains: bool = _raw.swiftmmkv_store_contains(self._handle, c_key)
         return contains
 
@@ -414,8 +416,10 @@ class Store:
     # MARK: - Removal
 
     def remove(self, key: str | Key[Any], /) -> bool:
-        """Removes `key` and its value, and returns whether the store accepted the removal.
-        MMKV also reports success for a key that had no value."""
+        """Removes `key` and its value, and returns whether there was a value to remove.
+
+        The result is `False` for a key that had no value, and when the store turns the
+        removal away, as it does a write."""
         _, c_key = name_of(key)
         removed: bool = _raw.swiftmmkv_store_remove(self._handle, c_key)
         return removed
@@ -496,7 +500,7 @@ class Store:
     def set_many(
         self,
         values: Mapping[str, Any],
-        type: Any = _MISSING,
+        type: Any = MISSING,
         /,
         *,
         expiry: ExpiryLike | None = None,
@@ -516,7 +520,7 @@ class Store:
         stored = True
         with self.locked():
             for key, value in values.items():
-                if type is _MISSING:
+                if type is MISSING:
                     stored = self.set(key, value, expiry=expiry) and stored
                 else:
                     stored = self.set(key, value, type, expiry=expiry) and stored
@@ -694,7 +698,7 @@ class Store:
     def values[T](self, key: Key[T], /) -> AsyncIterator[T | None]: ...
     @overload
     def values[T](self, key: str, type: TypeSpec[T], /) -> AsyncIterator[T | None]: ...
-    def values(self, key: Any, type: Any = _MISSING, /) -> AsyncIterator[Any]:
+    def values(self, key: Any, type: Any = MISSING, /) -> AsyncIterator[Any]:
         """The values of one key over time, as an async iterator: the value the store holds
         now, and then its value after each operation that may have changed it.
 
@@ -714,15 +718,15 @@ class Store:
         The key is followed until the iterator is let go of, or its `aclose` is awaited.
         """
         if isinstance(key, Key):
-            if type is not _MISSING:
+            if type is not MISSING:
                 raise TypeError("A typed key already says how its value is read.")
             converter = key.converter
-            default = key.default if isinstance(key, DefaultedKey) else _MISSING
+            default = key.default if isinstance(key, DefaultedKey) else MISSING
         else:
-            if type is _MISSING:
+            if type is MISSING:
                 raise TypeError("values takes a key and the type of its value.")
             converter = converter_of(type)
-            default = _MISSING
+            default = MISSING
         name, c_key = name_of(key)
         return _changes.Values(
             self, key, lambda: converter.read(Reader(self, name, c_key)), default
@@ -768,8 +772,8 @@ class Store:
 
     @property
     def byte_size(self) -> int:
-        """The size of the store's file in bytes. The file grows as values are written and
-        does not shrink by itself: see `trim`."""
+        """The size of the store's file in bytes. The file grows as values are written, and
+        removing a value does not shrink it: see `trim`."""
         size: int = _raw.swiftmmkv_store_byte_size(self._handle)
         return size
 
@@ -819,9 +823,7 @@ class Store:
         """Re-encrypts the store with `encryption`, or decrypts it with `None`. Raises
         `MMKVError` if it cannot, for example because the store is read-only."""
         if encryption is None:
-            check(
-                _raw.swiftmmkv_store_rekey(self._handle, _raw.SWIFTMMKV_ENCRYPTION_NONE, None, 0)
-            )
+            check(_raw.swiftmmkv_store_rekey(self._handle, _raw.SWIFTMMKV_ENCRYPTION_NONE, None, 0))
         else:
             key = encryption.key
             check(_raw.swiftmmkv_store_rekey(self._handle, int(encryption.cipher), key, len(key)))

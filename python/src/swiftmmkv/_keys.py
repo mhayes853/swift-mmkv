@@ -10,7 +10,8 @@ from ._converters import Converter, TypeSpec, converter_of
 if TYPE_CHECKING:
     from ._store import Store
 
-_MISSING: Final = object()
+#: What a parameter is when nothing was passed for it. Every module uses this one.
+MISSING: Final = object()
 
 
 class HasStore(Protocol):
@@ -66,19 +67,19 @@ class Key[T]:
     def __new__(cls, name: str, type: TypeSpec[T], /) -> Key[T]: ...
     @overload
     def __new__(cls, name: str, type: TypeSpec[T], /, *, default: T) -> DefaultedKey[T]: ...
-    def __new__(cls, name: str, type: TypeSpec[T], /, *, default: Any = _MISSING) -> Any:
+    def __new__(cls, name: str, type: TypeSpec[T], /, *, default: Any = MISSING) -> Any:
         if not isinstance(name, str):
             # `type` is the parameter here, and not the built-in.
             raise TypeError(f"A key's name is a str, and not {name.__class__.__name__!r}.")
-        if default is not _MISSING and not issubclass(cls, DefaultedKey):
+        if default is not MISSING and not issubclass(cls, DefaultedKey):
             cls = DefaultedKey
-        elif default is _MISSING and issubclass(cls, DefaultedKey):
+        elif default is MISSING and issubclass(cls, DefaultedKey):
             raise TypeError("A DefaultedKey needs a default.")
         self = object.__new__(cls)
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "converter", converter_of(type))
         object.__setattr__(self, "_c_name", _raw.c_string(name))
-        if default is not _MISSING:
+        if default is not MISSING:
             object.__setattr__(self, "default", default)
         return self
 

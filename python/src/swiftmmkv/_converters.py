@@ -68,7 +68,7 @@ class Reader:
     A `Converter` is given one for the length of its `read`. Each method returns `None`
     when the key has no value, which is also what it returns while the store is suspended
     and once it is closed. The store records no types, so read a key in the form it was
-    written in: another form reads as nonsense, and not as `None`.
+    written in. Another form reads as a wrong value or as `None`, and not as an error.
     """
 
     __slots__ = ("_c_key", "_key", "_store")
@@ -167,9 +167,7 @@ def _integer(value: object, bits: int, signed: bool) -> int:
         try:
             value = operator.index(value)  # type: ignore[arg-type]
         except TypeError:
-            raise TypeError(
-                f"An integer was expected, and not {type(value).__name__!r}."
-            ) from None
+            raise TypeError(f"An integer was expected, and not {type(value).__name__!r}.") from None
     assert isinstance(value, int)
     low, high = (-(1 << (bits - 1)), (1 << (bits - 1)) - 1) if signed else (0, (1 << bits) - 1)
     if not low <= value <= high:
@@ -354,9 +352,7 @@ float64: Final[Converter[float]] = _Form("float64", Reader.read_float64, Writer.
 _bool: Final[Converter[bool]] = _Form("_bool", Reader.read_bool, Writer.write_bool)
 _str: Final[Converter[str]] = _Form("_str", Reader.read_str, Writer.write_str)
 _bytes: Final[Converter[bytes]] = _Form("_bytes", Reader.read_bytes, Writer.write_bytes)
-_strings: Final[Converter[list[str]]] = _Form(
-    "_strings", Reader.read_strings, Writer.write_strings
-)
+_strings: Final[Converter[list[str]]] = _Form("_strings", Reader.read_strings, Writer.write_strings)
 
 # MARK: - Converters built on the forms
 
@@ -377,7 +373,13 @@ class _Number:
         return int(value)
 
     def write(self, writer: Writer, value: int, /) -> bool:
-        value = _integer(value, 128, True)
+        if type(value) is not int:
+            try:
+                value = operator.index(value)
+            except TypeError:
+                raise TypeError(
+                    f"An integer was expected, and not {type(value).__name__!r}."
+                ) from None
         if abs(value) > _EXACT_IN_FLOAT64:
             return False
         return writer.write_float64(float(value))
@@ -427,9 +429,7 @@ class _Coded[T]:
         return f"swiftmmkv.{kind}_converter({self._encode!r}, {self._decode!r})"
 
 
-def text_converter[T](
-    encode: Callable[[T], str], decode: Callable[[str], T], /
-) -> Converter[T]:
+def text_converter[T](encode: Callable[[T], str], decode: Callable[[str], T], /) -> Converter[T]:
     """A converter that stores a value as the string `encode` makes of it, and reads it back
     with `decode`.
 
@@ -506,13 +506,15 @@ class _Subclass[T]:
 
     def write(self, writer: Writer, value: T, /) -> bool:
         if not isinstance(value, self._type):  # type: ignore[arg-type]
-            raise TypeError(
-                f"{self._type!r} was expected, and not {type(value).__name__!r}."
-            )
+            raise TypeError(f"{self._type!r} was expected, and not {type(value).__name__!r}.")
         return self._form.write(writer, value)
 
     def __repr__(self) -> str:
         return f"<converter of {self._type!r}>"
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # There is one for each class, which `converter_of` finds again.
+        return (converter_of, (self._type,))
 
 
 # MARK: - From a type to its converter
@@ -608,4 +610,3 @@ def converter_for_value(value: object) -> Converter[Any]:
         f"swiftmmkv cannot tell how to store {cls.__name__!r}. Name its type or a "
         "converter, as in store.set(key, value, type)."
     )
-

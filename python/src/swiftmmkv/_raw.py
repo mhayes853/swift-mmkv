@@ -394,15 +394,11 @@ swiftmmkv_store_with_exclusive_lock = _bind(
     swiftmmkv_locked_callback,
 )
 swiftmmkv_store_lock_exclusive = _bind("swiftmmkv_store_lock_exclusive", None, swiftmmkv_store)
-swiftmmkv_store_unlock_exclusive = _bind(
-    "swiftmmkv_store_unlock_exclusive", None, swiftmmkv_store
-)
+swiftmmkv_store_unlock_exclusive = _bind("swiftmmkv_store_unlock_exclusive", None, swiftmmkv_store)
 
 # MARK: - Changes
 
-swiftmmkv_subscription_cancel = _bind(
-    "swiftmmkv_subscription_cancel", None, swiftmmkv_subscription
-)
+swiftmmkv_subscription_cancel = _bind("swiftmmkv_subscription_cancel", None, swiftmmkv_subscription)
 swiftmmkv_store_subscribe = _bind(
     "swiftmmkv_store_subscribe",
     swiftmmkv_subscription,
@@ -448,9 +444,7 @@ swiftmmkv_store_close = _bind("swiftmmkv_store_close", None, swiftmmkv_store)
 # MARK: - Maintenance
 
 swiftmmkv_store_byte_size = _bind("swiftmmkv_store_byte_size", c_size_t, swiftmmkv_store)
-swiftmmkv_store_used_byte_size = _bind(
-    "swiftmmkv_store_used_byte_size", c_size_t, swiftmmkv_store
-)
+swiftmmkv_store_used_byte_size = _bind("swiftmmkv_store_used_byte_size", c_size_t, swiftmmkv_store)
 swiftmmkv_store_trim = _bind("swiftmmkv_store_trim", None, swiftmmkv_store)
 swiftmmkv_store_release_memory = _bind("swiftmmkv_store_release_memory", None, swiftmmkv_store)
 swiftmmkv_store_sync = _bind("swiftmmkv_store_sync", None, swiftmmkv_store)
@@ -557,9 +551,7 @@ def c_string(text: str) -> bytes:
     return encoded
 
 
-def read_sized(
-    read: Callable[[Any, int, Any], bool], *, terminated: bool = False
-) -> bytes | None:
+def read_sized(read: Callable[[Any, int, Any], bool], *, terminated: bool = False) -> bytes | None:
     """Makes a read of no fixed size, as "Buffers" in the header describes.
 
     `read` is given a buffer, its capacity, and where to report the size of the value, and

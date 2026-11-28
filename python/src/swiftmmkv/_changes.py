@@ -12,12 +12,11 @@ from typing import TYPE_CHECKING, Any, Final, Self, final, overload
 
 from . import _raw
 from ._converters import TypeSpec
-from ._keys import DefaultedKey, Key
+from ._keys import MISSING, DefaultedKey, Key
 
 if TYPE_CHECKING:
     from ._store import Store
 
-_MISSING: Final = object()
 
 # MARK: - Callbacks
 #
@@ -51,7 +50,7 @@ def free_released() -> None:
             subscription = _released.popleft()
         except IndexError:
             return
-        subscription.cancel()
+        subscription._free()
 
 
 def _change(context: int | None, batch: Any) -> None:
@@ -131,11 +130,11 @@ class Subscription:
     def _attach(self, handle: int) -> None:
         """Gives the subscription the handle the library made for it."""
         with self._lock:
-            if not self._cancelled:
-                self._handle = handle
-                return
-        # Cancelled from its own listener, before subscribing had returned.
-        _raw.swiftmmkv_subscription_cancel(handle)
+            self._handle = handle
+            is_cancelled = self._cancelled
+        if is_cancelled:
+            # Cancelled from its own listener, before subscribing had returned.
+            self._free()
 
     def cancel(self) -> None:
         """Stops the listener from being called. Cancelling twice does nothing more.
@@ -144,6 +143,11 @@ class Subscription:
         """
         with self._lock:
             self._cancelled = True
+        self._free()
+
+    def _free(self) -> None:
+        """Gives the handle back to the library, which is how the library cancels."""
+        with self._lock:
             handle, self._handle = self._handle, None
         if handle is not None:
             _raw.swiftmmkv_subscription_cancel(handle)
@@ -167,9 +171,7 @@ class Subscription:
         return f"<swiftmmkv.Subscription{' cancelled' if self._cancelled else ''}>"
 
 
-def subscribe(
-    deliver: Callable[..., object], attach: Callable[[int], int]
-) -> Subscription:
+def subscribe(deliver: Callable[..., object], attach: Callable[[int], int]) -> Subscription:
     """Makes a subscription whose listener is `deliver`.
 
     `attach` is given the context to subscribe with, and returns the handle of what it
@@ -217,9 +219,7 @@ def subscribe_to_changes(
                 store._handle, c_under, c_separator, context, _on_change, _on_release
             )
         else:
-            handle = _raw.swiftmmkv_store_subscribe(
-                store._handle, context, _on_change, _on_release
-            )
+            handle = _raw.swiftmmkv_store_subscribe(store._handle, context, _on_change, _on_release)
         return handle
 
     return subscribe(deliver, attach)
@@ -311,7 +311,7 @@ class ChangeBatch:
     def get[T](self, key: str, type: TypeSpec[T], /) -> T | None: ...
     @overload
     def get[T, D](self, key: str, type: TypeSpec[T], /, *, default: D) -> T | D: ...
-    def get(self, key: Any, type: Any = _MISSING, /, *, default: Any = _MISSING) -> Any:
+    def get(self, key: Any, type: Any = MISSING, /, *, default: Any = MISSING) -> Any:
         """Reads a value from the store the batch came from, as `Store.get` does."""
         return self._store._get(key, type, default)
 
@@ -464,7 +464,7 @@ class Values[T]:
     ) -> None:
         self._store = store
         self._read = read
-        #: What a missing value is produced as, or `_MISSING` to produce `None`.
+        #: What a missing value is produced as, or `MISSING` to produce `None`.
         self._default = default
         self._has_ended = False
         self._wakeup = _Wakeup()
@@ -502,7 +502,7 @@ class Values[T]:
             if value is None and self._store.suspended:
                 # Nothing can be read while the store is suspended. Resuming wakes this.
                 continue
-            if value is None and self._default is not _MISSING:
+            if value is None and self._default is not MISSING:
                 return self._default  # type: ignore[no-any-return]
             return value  # type: ignore[return-value]
 

@@ -84,7 +84,12 @@ class Encryption:
     key: bytes = field(repr=False)
 
     def __post_init__(self) -> None:
-        key = self.key.encode("utf-8") if isinstance(self.key, str) else bytes(self.key)
+        key: object = self.key
+        if isinstance(key, str):
+            key = key.encode("utf-8")
+        elif not isinstance(key, bytes):
+            # Anything else with a buffer. `bytes(5)` would be five zero bytes.
+            key = memoryview(key).tobytes()  # type: ignore[arg-type]
         object.__setattr__(self, "key", key)
 
     @classmethod
@@ -163,8 +168,10 @@ class Expiry:
 
     MMKV records the second a key expires at, by the machine's clock, so changing the clock
     moves every expiry with it. An expiry is rounded up to a whole second, and the shortest
-    is one second. A value written after the moment it expires at is kept for one second,
-    and a moment later than MMKV can record, which is in 2106, means never.
+    is one second. MMKV counts whole seconds of the clock, so a value that is written late
+    in a second goes up to a second before its expiry has passed. A value written after the
+    moment it expires at is kept for one second, and a moment later than MMKV can record,
+    which is in 2106, means never.
 
     An expiry is immutable and hashable, and two are equal when they say the same thing.
     """
@@ -205,9 +212,7 @@ class Expiry:
     @staticmethod
     def at(*, seconds_since_1970: float) -> Expiry: ...
     @staticmethod
-    def at(
-        moment: datetime | None = None, /, *, seconds_since_1970: float | None = None
-    ) -> Expiry:
+    def at(moment: datetime | None = None, /, *, seconds_since_1970: float | None = None) -> Expiry:
         """The value is kept until `moment`.
 
         The moment is an aware `datetime`, or a number of seconds since the start of 1970 in
@@ -389,9 +394,7 @@ def make_configuration_handle(configuration: Configuration) -> int:
             handle, _size(configuration.expected_capacity, "expected_capacity")
         )
         _raw.swiftmmkv_configuration_set_recovery(handle, int(configuration.recovery))
-        _raw.swiftmmkv_configuration_set_file_protection(
-            handle, int(configuration.file_protection)
-        )
+        _raw.swiftmmkv_configuration_set_file_protection(handle, int(configuration.file_protection))
         _raw.swiftmmkv_configuration_set_compare_before_set(
             handle, bool(configuration.compare_before_set)
         )
