@@ -1105,7 +1105,7 @@ import Testing
     swiftmmkv_subscription_cancel(subscription)
   }
 
-  @Test func `A Batch Has No Keys For A Change From Outside`() throws {
+  @Test func `A Change From Outside Is A Whole-Store Batch On The C++ Engine`() throws {
     let (first, second) = try makeLinkedStores(mode: .multiProcess)
     let configuration = first.configuration
     let store = try CStore(
@@ -1143,6 +1143,34 @@ import Testing
 
     #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == true)
 
+    swiftmmkv_subscription_cancel(subscription)
+  }
+
+  @Test func `A Batch Says Which Keys It May Have Changed`() throws {
+    let store = try CStore()
+    defer { store.destroy() }
+    let recorder = CCallbackRecorder()
+    let subscription = swiftmmkv_store_subscribe(
+      store.handle,
+      recorder.context,
+      { context, batch in
+        let candidates = [
+          swiftmmkv_change_batch_has_change_candidate(batch, "settings.theme"),
+          swiftmmkv_change_batch_has_change_candidates_under(batch, "settings", nil),
+          swiftmmkv_change_batch_has_change_candidates_under(batch, "settings", "/"),
+          swiftmmkv_change_batch_has_change_candidate(batch, "other")
+        ]
+        CCallbackRecorder.from(context)
+          .record(candidates.map { $0 ? "yes" : "no" }.joined(separator: ","))
+      },
+      nil
+    )
+
+    #expect(swiftmmkv_store_set_bool(store.handle, "settings.theme", true, 0) == true)
+    swiftmmkv_store_close(store.handle)
+
+    // A whole-store batch may have changed any key.
+    #expect(recorder.events == ["yes,yes,no,no", "yes,yes,yes,yes"])
     swiftmmkv_subscription_cancel(subscription)
   }
 
@@ -1314,7 +1342,7 @@ import Testing
     swiftmmkv_store_close(store.handle)
     #expect(swiftmmkv_store_set_bool(store.handle, "flag", true, 0) == false)
 
-    #expect(recorder.events == ["external"])
+    #expect(recorder.events == ["closed"])
     #expect(recorder.releases == 1)
     swiftmmkv_subscription_cancel(subscription)
     #expect(recorder.releases == 1)

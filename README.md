@@ -263,7 +263,7 @@ observable as one:
 store.keys(underKey: "settings")  // ["settings.theme", "settings.sync.isEnabled"]
 
 let subscription = store.subscribe(underKey: "settings") { batch in
-  print("changed:", batch.keys)  // only the keys at or under "settings"
+  // A batch names only the keys at or under "settings".
   settings = try? batch.decode(Settings.self, fromKeysUnder: "settings")
 }
 ```
@@ -611,29 +611,45 @@ try directory.restoreAllStores(from: backups)
 
 ```swift
 let subscription = store.subscribe { batch in
-  for key in batch.keys {
-    print("changed:", key, batch.value(forKey: key, as: String.self) ?? "removed")
+  switch batch.kind {
+  case .localKeys(let keys): upload(keys)
+  case .externalKeys(let keys): refresh(keys)
+  case .wholeStore(.closed): stopObserving()
+  case .wholeStore: reloadEverything()
   }
-  if batch.isExternal { print("changed by another process or copy of MMKV") }
 }
 subscription.cancel()
 ```
 
-A listener is given one batch for each operation that changes the store. An operation is one
-call, or everything the body of a `withExclusiveLock` does, so a body that writes three keys is
-one batch of three, delivered after all three are written. `keys` holds the keys that were
-written or removed through this package in this process, each once.
+A listener is given one batch for each change, and a batch is one of three kinds:
 
-`isExternal` says another process, or another copy of MMKV, changed the store. Such a change
-carries no keys, so any key may have changed. A store only notices one when it is next used or
-when `checkForExternalChanges()` is called.
+- `localKeys` holds the keys one operation set or removed through this package, in this process,
+  each once. An operation is one call, or everything the body of a `withExclusiveLock` does, so
+  a body that writes three keys is one batch of three, delivered after all three are written.
+- `externalKeys` holds the keys another process, or another copy of MMKV, set or removed. A
+  store only notices such a change when it is next used or when `checkForExternalChanges()` is
+  called, and the changes it notices together come as one batch, before the batch of the
+  operation that noticed them.
+- `wholeStore` says any key may read differently, with a reason: an external change whose keys
+  the store couldn't tell (`.externalChange`), or the store being resumed, restored from a
+  backup, or closed. Closing gives the last batch a listener receives.
+
+Only multi-process stores on the Swift engine tell which keys another process changed. They
+start once something subscribes to them, since telling takes a hash of each value. The keys are
+read from what the other process wrote to the files, so that process can run either engine, or
+another app's copy of MMKV. A store on the C++ engine reports every external change as
+`.wholeStore(.externalChange)`.
+
+`isExternal` says whether the change came from elsewhere, and `hasChangeCandidate(forKey:)` and
+`hasChangeCandidates(underKey:)` whether a batch may have changed a key, or the keys under a
+prefix: it names them, or is a whole-store batch.
 
 A batch reads the store it came from, with `value(forKey:as:)`, `value(for:)` for any kind of
 [typed key](#typed-keys), and `decode` for `Codable` values. Each read gives what the store
 holds when it is made, which is what the operation wrote unless something has written since.
 
 `subscribe(forKey:)` and `subscribe(underKey:)` give the batches that may have changed one key,
-or the keys under a prefix, with `keys` narrowed to those:
+or the keys under a prefix, with their keys narrowed to those:
 
 ```swift
 let subscription = store.subscribe(forKey: "token") { batch in
@@ -664,12 +680,13 @@ for try await settings in store.values(forKey: "settings", as: Settings.self, wi
 ```
 
 `changes` gives the same batches as an `AsyncSequence`, the counterpart of `subscribe(_:)`. A
-consumer that falls behind misses no key, but receives the batches that are waiting as one, with
-each key once.
+consumer that falls behind misses no key, but receives the batches that are waiting merged by
+kind: one of local keys and one of external keys, each key once, and one whole-store batch for
+each reason. A waiting whole-store batch takes the place of waiting external keys.
 
 ```swift
 for await batch in store.changes {
-  print("changed:", batch.keys)
+  print("changed:", batch.kind)
 }
 ```
 
@@ -696,8 +713,8 @@ let subscription = store.subscribe(forKeys: ["width", "height"], as: Double.self
 
 The decoding form, `subscribe(forKeys:as:with:)`, gives each key a `Result` of its own.
 
-Both can deliver the value they last delivered. They run whenever the key is written, even with
-the same value, and on every external change, which does not say which keys it touched. To see
+Both can deliver the value they last delivered. They run whenever the key is written, here or
+elsewhere, even with the same value, and on every whole-store change. To see
 only actual changes, drop the repeats, for instance with `removeDuplicates()` from
 [swift-async-algorithms](https://github.com/apple/swift-async-algorithms).
 

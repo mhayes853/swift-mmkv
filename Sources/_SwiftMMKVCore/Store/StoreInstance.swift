@@ -30,11 +30,14 @@ package final class StoreInstance: Sendable {
   /// process's changes.
   @inline(__always)
   func withState<R>(_ body: (inout StoreState) -> R) -> R {
-    let (result, handler) = self.state.withLock { state in
+    let (result, pending) = self.state.withLock { state in
       let result = body(&state)
-      return (result, state.takePendingContentChangedHandler())
+      state.buildChangeTrackerIfNeeded()
+      return (result, state.takePendingContentChange())
     }
-    handler?()
+    if let pending {
+      pending.handler(pending.change)
+    }
     return result
   }
 
@@ -53,10 +56,35 @@ package final class StoreInstance: Sendable {
   }
 
   /// Called just after an operation that noticed that another process, or another copy of MMKV,
-  /// changed the store's files (`onContentChangedByOuterProcess`). The C++ core calls it with its
-  /// lock held; this calls it once the lock is released.
-  package func setContentChangedHandler(_ handler: (@Sendable () -> Void)?) {
+  /// changed the store's files (`onContentChangedByOuterProcess`), with what it changed. The C++
+  /// core calls it with its lock held, and says nothing of what changed; this calls it once the
+  /// lock is released.
+  ///
+  /// The keys are only told while ``trackChangedKeys()`` is in effect. Otherwise every change is
+  /// ``ContentChange/unknown``.
+  package func setContentChangedHandler(_ handler: (@Sendable (ContentChange) -> Void)?) {
     self.withState { $0.contentChangedHandler = handler }
+  }
+
+  /// Starts telling the content-changed handler which keys another process changed, for a
+  /// multi-process store.
+  ///
+  /// This keeps a hash of each value until ``clearMemoryCache()`` or the instance's files are
+  /// released, and builds the hashes again at the next operation after that.
+  ///
+  /// - Parameter loading: Whether to load the store and build the hashes now, which takes the
+  ///   file lock, so that the next change can be told. Otherwise they are built at the end of
+  ///   the next operation, and a change that operation notices is ``ContentChange/unknown``.
+  package func trackChangedKeys(loading: Bool) {
+    guard self.isMultiProcess else { return }
+    guard loading else {
+      self.state.withLock { $0.tracksChangedKeys = true }
+      return
+    }
+    self.withState { state in
+      state.tracksChangedKeys = true
+      state.checkLoadData()
+    }
   }
 }
 
@@ -122,10 +150,14 @@ struct StoreState: ~Copyable {
   var expiredInSeconds: UInt32 = 0
   var enableCompareBeforeSet = false
 
-  var contentChangedHandler: (@Sendable () -> Void)?
-  /// Whether an operation noticed another process's changes, which ``StoreInstance`` reports once
+  var contentChangedHandler: (@Sendable (ContentChange) -> Void)?
+  /// What operations noticed of another process's changes, which ``StoreInstance`` reports once
   /// the operation ends.
-  var hasPendingContentChange = false
+  var pendingContentChange: ContentChange?
+  /// Whether to tell which keys another process changed. See StoreInstance+ChangeTracking.swift.
+  var tracksChangedKeys = false
+  /// The hashes of the values, while ``tracksChangedKeys`` is set and they are built.
+  var changeTracker: ChangeTracker?
 
   /// The position and size of the output, as `CodedOutputData` keeps them. The size is fixed when
   /// the output is created, as the C++ one is.
@@ -219,15 +251,22 @@ struct StoreState: ~Copyable {
     }
   }
 
-  mutating func notifyContentChanged() {
-    self.hasPendingContentChange = true
+  mutating func notifyContentChanged(_ change: ContentChange) {
+    if self.pendingContentChange == nil {
+      self.pendingContentChange = change
+    } else {
+      self.pendingContentChange!.merge(change)
+    }
   }
 
-  /// The handler to call for changes noticed since this was last asked, if any.
-  mutating func takePendingContentChangedHandler() -> (@Sendable () -> Void)? {
-    guard self.hasPendingContentChange else { return nil }
-    self.hasPendingContentChange = false
-    return self.contentChangedHandler
+  /// The handler to call for changes noticed since this was last asked, and what they changed,
+  /// if any.
+  mutating func takePendingContentChange() -> (
+    handler: @Sendable (ContentChange) -> Void, change: ContentChange
+  )? {
+    guard let change = self.pendingContentChange else { return nil }
+    self.pendingContentChange = nil
+    return self.contentChangedHandler.map { ($0, change) }
   }
 
   var isFileValid: Bool {
@@ -710,7 +749,10 @@ extension StoreInstance {
   /// Lets go of the in-memory copy of the contents and of the mapping of the data file, so that
   /// the next operation loads the file again (`clearMemoryCache`).
   package func clearMemoryCache() {
-    self.withState { $0.clearMemoryCache() }
+    self.withState { state in
+      state.clearMemoryCache()
+      state.changeTracker = nil
+    }
   }
 
   /// Removes every key, shrinking the file back to the expected capacity unless `keepSpace`

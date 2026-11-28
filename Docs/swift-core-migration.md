@@ -142,6 +142,17 @@ whatever it writes. It differs where the C++ core loses data. Each difference ha
 - **`clearAll` records the empty store before it shrinks the file**, and `keys` and `contains`
   hold the shared file lock while they read keys out of the mapping.
 
+It also reports more than the C++ core, without writing anything more to the files:
+
+- **It tells which keys another process changed.** The C++ core reports that a store changed,
+  and not what. Once something subscribes to a multi-process store, the Swift core reads the
+  keys of the records another process appended, and after another process rewrites the whole
+  file it compares each value with a hash of the one it last saw. It keeps those hashes up to
+  date as it appends records of its own, and builds them again after it rewrites the file
+  itself. Since the keys come from the files, the other process can run either core. See
+  `StoreInstance+ChangeTracking.swift`, and `Tests/SwiftMMKVTests/MMKVStoreExternalKeysTests.swift`
+  and the differential tests.
+
 ## Phases
 
 Each engine phase is done when the upstream tests for its area pass against both cores, the

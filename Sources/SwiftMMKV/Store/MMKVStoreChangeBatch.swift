@@ -1,57 +1,168 @@
 // MARK: - ChangeBatch
 
 extension MMKVStore {
-  /// What one operation changed in a store, as ``MMKVStore/subscribe(_:)`` and
-  /// ``MMKVStore/changes`` report it.
+  /// One change to a store, as ``MMKVStore/subscribe(_:)`` and ``MMKVStore/changes`` report
+  /// it: the keys one operation set or removed, the keys another process set or removed, or a
+  /// change that may have touched any key.
   ///
   /// An operation is one call, such as ``MMKVStore/set(_:forKey:expiry:)``, or everything the
   /// body of a ``MMKVStore/withExclusiveLock(_:)`` does.
   ///
   /// ```swift
   /// let subscription = store.subscribe { batch in
-  ///   for key in batch.keys {
-  ///     print(key, batch.value(forKey: key, as: String.self) ?? "removed")
+  ///   switch batch.kind {
+  ///   case .localKeys(let keys): upload(keys)
+  ///   case .externalKeys(let keys): refresh(keys)
+  ///   case .wholeStore(.closed): stopObserving()
+  ///   case .wholeStore: reloadEverything()
   ///   }
   /// }
   /// ```
   ///
+  /// A batch is only ever one kind of change. An operation that notices another process's
+  /// changes before making its own is reported as two batches: the external one first, and
+  /// then its own.
+  ///
   /// ## Reading values
   ///
   /// A batch reads from the store it came from, in every way the store itself is read. Each
-  /// read gives the value the store holds when it is made. That is the value the operation
-  /// wrote unless something has written the key since, which another thread or process may
-  /// have done by the time a listener runs.
+  /// read gives the value the store holds when it is made. That is the value the change wrote
+  /// unless something has written the key since, which another thread or process may have done
+  /// by the time a listener runs.
   public struct ChangeBatch: Sendable {
     private let store: MMKVStore
 
-    /// The keys that were set or removed through this package, in this process. Each key is
-    /// here once, however often the operation changed it.
-    ///
-    /// The batch of a subscription to one key, or to the keys under a prefix, holds only the
-    /// keys that subscription observes. It is empty when only an external change was noticed.
-    public let keys: [String]
+    /// What changed.
+    public let kind: Kind
 
-    /// Whether another process, or another copy of MMKV in this process, changed the store.
-    /// Which keys it changed is not known, so any key may have changed and not only ``keys``.
-    ///
-    /// A store only notices such a change when it is next read or written, or when
-    /// ``MMKVStore/checkForExternalChanges()`` is called. Several such changes may be reported
-    /// as one. A store that is resumed, closed or restored from a backup also reports one,
-    /// because any of its values may read differently afterwards.
-    public let isExternal: Bool
-
-    /// Creates a batch, as a store does for its listeners.
-    ///
-    /// This is of use for calling a listener directly, for instance in a test.
-    ///
-    /// - Parameters:
-    ///   - store: The store the batch reads values from.
-    ///   - keys: The keys that were set or removed.
-    ///   - isExternal: Whether the store was changed from outside this package.
-    public init(store: MMKVStore, keys: [String], isExternal: Bool = false) {
+    package init(store: MMKVStore, kind: Kind) {
       self.store = store
-      self.keys = keys
-      self.isExternal = isExternal
+      self.kind = kind
+    }
+  }
+}
+
+// MARK: - Kind
+
+extension MMKVStore.ChangeBatch {
+  /// What a ``MMKVStore/ChangeBatch`` changed.
+  public enum Kind: Hashable, Sendable {
+    /// One operation set or removed these keys, through this package, in this process. Each
+    /// key is here once, in the order it first changed.
+    case localKeys([String])
+
+    /// Another process, or another copy of MMKV in this process, set or removed these keys.
+    /// Each key is here once.
+    ///
+    /// Only stores on the Swift engine report this. A store only notices such a change when it
+    /// is next read or written, or when ``MMKVStore/checkForExternalChanges()`` is called, and
+    /// the changes it notices together are reported together. The keys are those that may read
+    /// differently: every key another process wrote since the store last looked, or, when that
+    /// process rewrote the whole file, every key whose value is now different.
+    case externalKeys([String])
+
+    /// Any key may read differently, and the store can't say which.
+    case wholeStore(WholeStoreReason)
+
+    /// Whether the change came from another process, or another copy of MMKV in this process,
+    /// rather than through this package.
+    public var isExternal: Bool {
+      switch self {
+      case .localKeys: false
+      case .externalKeys: true
+      case .wholeStore(let reason): reason.isExternal
+      }
+    }
+  }
+
+  /// Why every key of a store may read differently, in a ``Kind/wholeStore(_:)`` batch.
+  public struct WholeStoreReason: RawRepresentable, Hashable, Sendable {
+    public let rawValue: String
+
+    public init(rawValue: String) {
+      self.rawValue = rawValue
+    }
+
+    /// Another process, or another copy of MMKV in this process, changed keys this store
+    /// couldn't identify. A store on the C++ engine reports every external change this way.
+    public static let externalChange = Self(rawValue: "external-change")
+
+    /// The store was resumed. Reads were turned away while it was suspended, and another
+    /// process may have changed it in the meantime.
+    public static let resumed = Self(rawValue: "resumed")
+
+    /// The store was overwritten with its copy in a backup.
+    public static let restoredFromBackup = Self(rawValue: "restored-from-backup")
+
+    /// The store was closed, so every value now reads as missing. This is the last batch a
+    /// listener is given.
+    public static let closed = Self(rawValue: "closed")
+
+    /// Whether the reason is a change from outside this package: ``externalChange`` and
+    /// ``resumed``.
+    public var isExternal: Bool {
+      self == .externalChange || self == .resumed
+    }
+  }
+}
+
+// MARK: - Candidates
+
+extension MMKVStore.ChangeBatch {
+  /// Whether the change came from another process, or another copy of MMKV in this process,
+  /// rather than through this package.
+  public var isExternal: Bool {
+    self.kind.isExternal
+  }
+
+  /// Whether this batch may have changed the value of `key`: it names `key`, or it is a
+  /// whole-store change.
+  public func hasChangeCandidate(forKey key: String) -> Bool {
+    self.kind.hasChangeCandidate(forKey: key)
+  }
+
+  /// Whether this batch may have changed the value of `prefix` or of any key under it: it
+  /// names such a key, or it is a whole-store change.
+  ///
+  /// A key is under `prefix` when it starts with `prefix` and `separator`, as for
+  /// ``MMKVStore/subscribe(underKey:separator:_:)``. An empty `prefix` has every key under it.
+  public func hasChangeCandidates(underKey prefix: String, separator: String = ".") -> Bool {
+    self.kind.hasChangeCandidates(underKey: prefix, separator: separator)
+  }
+}
+
+extension MMKVStore.ChangeBatch.Kind {
+  /// ``MMKVStore/ChangeBatch/hasChangeCandidate(forKey:)``, for the C interface.
+  package func hasChangeCandidate(forKey key: String) -> Bool {
+    self.hasChangeCandidate(where: { $0 == key })
+  }
+
+  /// ``MMKVStore/ChangeBatch/hasChangeCandidates(underKey:separator:)``, for the C interface.
+  package func hasChangeCandidates(underKey prefix: String, separator: String) -> Bool {
+    let names = KeyNames(separator: separator)
+    return self.hasChangeCandidate(where: { names.isAtOrUnder($0, prefix) })
+  }
+
+  /// Whether the change names a key that satisfies `isCandidate`, or is a whole-store change.
+  func hasChangeCandidate(where isCandidate: (String) -> Bool) -> Bool {
+    switch self {
+    case .localKeys(let keys), .externalKeys(let keys): keys.contains(where: isCandidate)
+    case .wholeStore: true
+    }
+  }
+
+  /// The change with only the keys that satisfy `isIncluded`, or `nil` if it names keys and
+  /// none of them does. A whole-store change is kept as it is.
+  func narrowed(to isIncluded: (String) -> Bool) -> Self? {
+    switch self {
+    case .localKeys(let keys):
+      let narrowed = keys.filter(isIncluded)
+      return narrowed.isEmpty ? nil : .localKeys(narrowed)
+    case .externalKeys(let keys):
+      let narrowed = keys.filter(isIncluded)
+      return narrowed.isEmpty ? nil : .externalKeys(narrowed)
+    case .wholeStore:
+      return self
     }
   }
 }

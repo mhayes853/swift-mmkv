@@ -4,7 +4,8 @@
 /// An engine is one open instance of a store. Every read and write here is a single operation on
 /// that instance; nothing notifies listeners, which is left to ``MMKVStore``. An engine reports a
 /// change it notices in the store's file, made by another process or another copy of MMKV, with
-/// ``MMKVStoreState/markExternalChange(instance:)`` while it holds its locks.
+/// ``MMKVStoreState/markExternalChange(instance:keys:)`` or
+/// ``MMKVStoreState/markExternalChange(id:)`` while it holds its locks.
 protocol MMKVEngine: Sendable {
   /// Identifies the underlying instance. Two engines over the same instance have the same value,
   /// so that every ``MMKVStore`` over it shares one ``MMKVStoreState``.
@@ -93,6 +94,15 @@ protocol MMKVEngine: Sendable {
   var actualSize: Int { get }
 
   func checkContentChanged()
+
+  /// Starts reporting which keys another process changes, where the engine can tell. Only the
+  /// Swift engine can, and only for a multi-process store. Until this is called, and for any
+  /// change an engine cannot tell the keys of, it reports a change to any key.
+  ///
+  /// - Parameter loading: Whether to load the store now, which takes its file lock, so that the
+  ///   next change can be told. Otherwise it is loaded with the next operation.
+  func trackChangedKeys(loading: Bool)
+
   func trim()
   func sync()
 

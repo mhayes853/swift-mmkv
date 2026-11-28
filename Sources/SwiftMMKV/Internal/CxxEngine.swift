@@ -250,6 +250,9 @@ extension CxxEngine {
     mmkv_check_content_changed(self.handle)
   }
 
+  /// The C++ core says that a store changed, and not what changed.
+  func trackChangedKeys(loading: Bool) {}
+
   func trim() {
     mmkv_trim(self.handle)
   }

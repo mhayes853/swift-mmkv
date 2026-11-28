@@ -64,19 +64,38 @@ import Testing
     second.checkForExternalChanges()
 
     let batch = try #require(await batches.next())
-    #expect(batch.keys.isEmpty)
+    #expect(batch.changes == externalChange("a"))
     #expect(batch.isExternal)
   }
 
-  @Test func `Produces A Waiting External Change With The Waiting Keys`() async throws {
+  @Test func `Produces Waiting Local And External Changes As A Batch Of Each`() async throws {
     let (first, second) = try makeLinkedStores(mode: .multiProcess)
+    var batches = second.changes.makeAsyncIterator()
+
+    second.set("mine", forKey: "b")
+    second.set("mine", forKey: "c")
+    first.set("changed", forKey: "a")
+    second.checkForExternalChanges()
+    second.set("mine again", forKey: "b")
+
+    #expect(await batches.next()?.changes == [.key("b"), .key("c")])
+    #expect(await batches.next()?.changes == externalChange("a"))
+  }
+
+  @Test(.requires(.store, .multiProcess, .externalKeys))
+  func `A Waiting Whole-Store Change Takes The Place Of Waiting External Keys`() async throws {
+    let (first, second) = try makeLinkedStores(mode: .multiProcess)
+    _ = second.count
     var batches = second.changes.makeAsyncIterator()
 
     second.set("mine", forKey: "b")
     first.set("changed", forKey: "a")
     second.checkForExternalChanges()
+    second.suspend()
+    second.resume()
 
-    #expect(await batches.next()?.changes == [.key("b"), .external])
+    #expect(await batches.next()?.changes == [.key("b")])
+    #expect(await batches.next()?.changes == [.wholeStore(.resumed)])
   }
 
   @Test func `Produces The Keys Of A Locked Body As One Batch`() async throws {

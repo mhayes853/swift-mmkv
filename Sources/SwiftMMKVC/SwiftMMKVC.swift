@@ -813,23 +813,81 @@ private func withCBatch(
   _ batch: MMKVStore.ChangeBatch,
   _ body: (UnsafePointer<swiftmmkv_change_batch>) -> Void
 ) {
+  var value = swiftmmkv_change_batch()
+  value.whole_store_reason = SWIFTMMKV_WHOLE_STORE_REASON_NONE
+  value.is_external = batch.isExternal
+  let keys: [String]
+  switch batch.kind {
+  case .localKeys(let names):
+    value.kind = UInt32(SWIFTMMKV_CHANGE_LOCAL_KEYS)
+    keys = names
+  case .externalKeys(let names):
+    value.kind = UInt32(SWIFTMMKV_CHANGE_EXTERNAL_KEYS)
+    keys = names
+  case .wholeStore(let reason):
+    value.kind = UInt32(SWIFTMMKV_CHANGE_WHOLE_STORE)
+    value.whole_store_reason = reason.cValue
+    keys = []
+  }
   // Every key in one allocation, each ending in a NUL, and where each starts.
   var characters = [CChar]()
   var starts = [Int]()
-  for key in batch.keys {
+  for key in keys {
     starts.append(characters.count)
     characters.append(contentsOf: key.utf8CString)
   }
   characters.withUnsafeBufferPointer { characters in
     let keys = starts.map { characters.baseAddress! + $0 }
     keys.withUnsafeBufferPointer { keys in
-      var value = swiftmmkv_change_batch()
       value.keys = keys.isEmpty ? nil : keys.baseAddress
       value.key_count = keys.count
-      value.is_external = batch.isExternal
       withUnsafePointer(to: value, body)
     }
   }
+}
+
+extension MMKVStore.ChangeBatch.WholeStoreReason {
+  /// The `SWIFTMMKV_WHOLE_STORE_REASON_*` constant of the reason.
+  fileprivate var cValue: Int32 {
+    switch self {
+    case .resumed: SWIFTMMKV_WHOLE_STORE_REASON_RESUMED
+    case .restoredFromBackup: SWIFTMMKV_WHOLE_STORE_REASON_RESTORED_FROM_BACKUP
+    case .closed: SWIFTMMKV_WHOLE_STORE_REASON_CLOSED
+    default: SWIFTMMKV_WHOLE_STORE_REASON_EXTERNAL_CHANGE
+    }
+  }
+}
+
+extension MMKVStore.ChangeBatch.Kind {
+  /// The kind of a batch C was given. Its reason is only told apart as far as the candidate
+  /// checks need.
+  fileprivate init(_ batch: UnsafePointer<swiftmmkv_change_batch>) {
+    let batch = batch.pointee
+    let keys = batch.keys.map { keys in (0..<batch.key_count).map { String(cString: keys[$0]) } }
+    switch batch.kind {
+    case UInt32(SWIFTMMKV_CHANGE_LOCAL_KEYS): self = .localKeys(keys ?? [])
+    case UInt32(SWIFTMMKV_CHANGE_EXTERNAL_KEYS): self = .externalKeys(keys ?? [])
+    default: self = .wholeStore(.externalChange)
+    }
+  }
+}
+
+@c @implementation
+public func swiftmmkv_change_batch_has_change_candidate(
+  _ batch: UnsafePointer<swiftmmkv_change_batch>,
+  _ key: UnsafePointer<CChar>
+) -> Bool {
+  MMKVStore.ChangeBatch.Kind(batch).hasChangeCandidate(forKey: String(cString: key))
+}
+
+@c @implementation
+public func swiftmmkv_change_batch_has_change_candidates_under(
+  _ batch: UnsafePointer<swiftmmkv_change_batch>,
+  _ prefix: UnsafePointer<CChar>,
+  _ separator: UnsafePointer<CChar>?
+) -> Bool {
+  MMKVStore.ChangeBatch.Kind(batch)
+    .hasChangeCandidates(underKey: String(cString: prefix), separator: makeSeparator(separator))
 }
 
 @c @implementation

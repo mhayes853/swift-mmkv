@@ -1,8 +1,7 @@
 /// Waits for changes to a store, for the async sequence over all of a store's changes.
 ///
-/// The batches that arrive between waits are merged into one, which keeps each key once, in the
-/// order it first changed. So a slow consumer misses no key, and holds at most one entry per
-/// key of the store.
+/// The batches that arrive between waits are merged by kind, as ``ChangeQueue`` merges them. So
+/// a slow consumer misses no key, and holds at most two entries per key of the store.
 struct PendingChanges {
   private let store: MMKVStore
   private let waiting = Waiting()
@@ -17,7 +16,7 @@ struct PendingChanges {
     self.store = store
     // A closed store tells its listeners so once, and nothing after that.
     self.subscription = store.subscribe { [waiting] batch in
-      waiting.add(keys: batch.keys, isExternal: batch.isExternal)
+      waiting.add(batch.kind)
       continuation.yield()
       if store.isClosed {
         continuation.finish()
@@ -50,41 +49,22 @@ struct PendingChanges {
   }
 
   private func takeWaiting() -> MMKVStore.ChangeBatch? {
-    let changes = self.waiting.take()
-    guard !changes.isEmpty else { return nil }
-    return MMKVStore.ChangeBatch(
-      store: self.store,
-      keys: changes.keys,
-      isExternal: changes.isExternal
-    )
+    guard let kind = self.waiting.take() else { return nil }
+    return MMKVStore.ChangeBatch(store: self.store, kind: kind)
   }
 }
 
 extension PendingChanges {
   private final class Waiting: Sendable {
-    private struct State {
-      var changes = StoreChanges(keys: [], isExternal: false)
-      /// The keys of `changes`, for telling whether a key is already among them.
-      var keys = Set<String>()
+    private let queue = Lock(ChangeQueue())
+
+    func add(_ kind: MMKVStore.ChangeBatch.Kind) {
+      self.queue.withLock { $0.add(kind) }
     }
 
-    private let state = Lock(State())
-
-    func add(keys: [String], isExternal: Bool) {
-      self.state.withLock { state in
-        for key in keys where state.keys.insert(key).inserted {
-          state.changes.keys.append(key)
-        }
-        state.changes.isExternal = state.changes.isExternal || isExternal
-      }
-    }
-
-    /// Removes and returns everything that is waiting.
-    func take() -> StoreChanges {
-      self.state.withLock { state in
-        defer { state = State() }
-        return state.changes
-      }
+    /// Removes and returns the batch that has waited longest.
+    func take() -> MMKVStore.ChangeBatch.Kind? {
+      self.queue.withLock { $0.removeFirst() }
     }
   }
 }

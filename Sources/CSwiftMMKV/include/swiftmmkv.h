@@ -45,7 +45,7 @@ extern "C" {
 
 /// The version of this interface. It changes when a function or constant is removed or changes
 /// meaning, and not when one is added.
-#define SWIFTMMKV_ABI_VERSION 1
+#define SWIFTMMKV_ABI_VERSION 2
 
 /// The `SWIFTMMKV_ABI_VERSION` of the library that is linked, to compare with that of the
 /// header a binding was built against.
@@ -431,25 +431,75 @@ void swiftmmkv_store_with_exclusive_lock(
 
 // MARK: - Changes
 
-/// What one operation changed in a store. An operation is one call, such as
-/// `swiftmmkv_store_remove_under`, or everything the body of a
+// The kinds of `swiftmmkv_change_batch`.
+
+/// One operation set or removed `keys` through this package, in this process. An operation is
+/// one call, such as `swiftmmkv_store_remove_under`, or everything the body of a
 /// `swiftmmkv_store_with_exclusive_lock` does.
+#define SWIFTMMKV_CHANGE_LOCAL_KEYS 0
+/// Another process, or another copy of MMKV in this process, set or removed `keys`. Only stores
+/// on the Swift engine report this. The keys are those that may read differently: every key the
+/// other process wrote since the store last looked, or, when it rewrote the whole file, every
+/// key whose value is now different.
+#define SWIFTMMKV_CHANGE_EXTERNAL_KEYS 1
+/// Any key may read differently, and the store can't say which. `whole_store_reason` says why.
+#define SWIFTMMKV_CHANGE_WHOLE_STORE 2
+
+// Why a `SWIFTMMKV_CHANGE_WHOLE_STORE` batch says any key may read differently. More reasons may
+// be added, so treat an unknown one like `SWIFTMMKV_WHOLE_STORE_REASON_EXTERNAL_CHANGE`.
+
+/// The `whole_store_reason` of a batch of any other kind.
+#define SWIFTMMKV_WHOLE_STORE_REASON_NONE (-1)
+/// Another process, or another copy of MMKV in this process, changed keys the store couldn't
+/// identify. A store on the C++ engine reports every external change this way.
+#define SWIFTMMKV_WHOLE_STORE_REASON_EXTERNAL_CHANGE 0
+/// The store was resumed. Reads were turned away while it was suspended, and another process may
+/// have changed it in the meantime.
+#define SWIFTMMKV_WHOLE_STORE_REASON_RESUMED 1
+/// The store was overwritten with its copy in a backup.
+#define SWIFTMMKV_WHOLE_STORE_REASON_RESTORED_FROM_BACKUP 2
+/// The store was closed, so every value now reads as missing. This is the last batch a callback
+/// is given.
+#define SWIFTMMKV_WHOLE_STORE_REASON_CLOSED 3
+
+/// One change to a store: the keys one operation set or removed here, the keys another process
+/// set or removed, or a change that may have touched any key.
+///
+/// A batch is only ever one kind of change. An operation that notices another process's changes
+/// before making its own is reported as two batches: the external one first, and then its own.
 ///
 /// A batch and its keys are valid only until the callback that was given it returns. The
 /// library may add fields to the end of this struct, so read it through the pointer a callback
 /// is given, and do not create or copy one.
 typedef struct swiftmmkv_change_batch {
-  /// The keys that were set or removed through this package, in this process, each once.
-  /// NULL when `key_count` is 0.
+  /// A `SWIFTMMKV_CHANGE_*` kind.
+  uint32_t kind;
+  /// A `SWIFTMMKV_WHOLE_STORE_REASON_*` reason for a whole-store batch, and
+  /// `SWIFTMMKV_WHOLE_STORE_REASON_NONE` for any other.
+  int32_t whole_store_reason;
+  /// Whether the change came from another process, or another copy of MMKV in this process,
+  /// rather than through this package: true for external keys, and for a whole-store batch
+  /// whose reason is an external change or a resume.
+  bool is_external;
+  /// The keys of a local or external batch, each once, in the order they first changed. NULL
+  /// when `key_count` is 0, which it always is for a whole-store batch.
   const char *_Nonnull const *_Nullable keys;
   /// The number of `keys`.
   size_t key_count;
-  /// Whether another process, or another copy of MMKV in this process, changed the store.
-  /// Which keys it changed is not known, so any key may have changed and not only `keys`.
-  bool is_external;
 } swiftmmkv_change_batch;
 
-/// Receives what one operation changed in a store.
+/// Whether `batch` may have changed the value of `key`: it names `key`, or it is a whole-store
+/// batch.
+bool swiftmmkv_change_batch_has_change_candidate(
+  const swiftmmkv_change_batch *_Nonnull batch, const char *_Nonnull key);
+/// Whether `batch` may have changed the value of `prefix` or of any key under it: it names such
+/// a key, or it is a whole-store batch. Which keys are under `prefix` is as for
+/// `swiftmmkv_store_subscribe_under`, and a NULL `separator` is ".".
+bool swiftmmkv_change_batch_has_change_candidates_under(
+  const swiftmmkv_change_batch *_Nonnull batch, const char *_Nonnull prefix,
+  const char *_Nullable separator);
+
+/// Receives one change to a store.
 ///
 /// It runs on the thread that made or noticed the change, after the operation has returned,
 /// and may read and write the store. The values of the keys are read from the store, with the
@@ -470,23 +520,22 @@ typedef struct swiftmmkv_subscription swiftmmkv_subscription;
 /// context's release function runs once no call can be.
 void swiftmmkv_subscription_cancel(swiftmmkv_subscription *_Nullable subscription);
 
-/// Calls `on_change` once for each operation that changes the store's contents, until the
-/// subscription is cancelled.
+/// Calls `on_change` once for each change to the store's contents, until the subscription is
+/// cancelled.
 swiftmmkv_subscription *_Nonnull swiftmmkv_store_subscribe(
   swiftmmkv_store *_Nonnull store, void *_Nullable context,
   swiftmmkv_change_callback _Nonnull on_change, swiftmmkv_context_release _Nullable release);
-/// Calls `on_change` once for each operation that may have changed the value of `key`, until
-/// the subscription is cancelled. That is each operation that sets or removes `key`, and each
-/// external change, since such a change does not say which keys it touched. The batch holds
-/// `key` alone, or no key when only an external change was noticed.
+/// Calls `on_change` once for each change that may have changed the value of `key`, until the
+/// subscription is cancelled. That is each batch that sets or removes `key`, here or in another
+/// process, which then holds `key` alone, and each whole-store batch.
 swiftmmkv_subscription *_Nonnull swiftmmkv_store_subscribe_key(
   swiftmmkv_store *_Nonnull store, const char *_Nonnull key, void *_Nullable context,
   swiftmmkv_change_callback _Nonnull on_change, swiftmmkv_context_release _Nullable release);
 /// Calls `on_change` once for each operation that may have changed `prefix` or a key under
 /// it, until the subscription is cancelled, which makes a value spread over several keys
-/// observable as one. That is each operation that sets or removes such a key, however many of
-/// them it changes, and each external change. The batch holds only the keys at or under
-/// `prefix`.
+/// observable as one. That is each batch that sets or removes such a key, here or in another
+/// process, however many of them it changes, which then holds only the keys at or under
+/// `prefix`, and each whole-store batch.
 ///
 /// So a value that is written into several keys inside the body of a
 /// `swiftmmkv_store_with_exclusive_lock` can be read back whole, once, from `on_change`.
@@ -498,7 +547,7 @@ swiftmmkv_subscription *_Nonnull swiftmmkv_store_subscribe_under(
   swiftmmkv_change_callback _Nonnull on_change, swiftmmkv_context_release _Nullable release);
 
 /// Checks whether another process, or another copy of MMKV, changed the store, reloading it
-/// and notifying listeners if so. Reads and writes make the same check, so this is only needed
+/// and telling listeners what changed if so. Reads and writes make the same check, so this is only needed
 /// while the store is otherwise idle.
 void swiftmmkv_store_check_for_external_changes(swiftmmkv_store *_Nonnull store);
 
@@ -516,7 +565,8 @@ bool swiftmmkv_store_is_suspended(swiftmmkv_store *_Nonnull store);
 /// Turns new operations away, waits for those under way, and returns once nothing holds the
 /// store's file lock. Do not call this from inside `swiftmmkv_store_with_exclusive_lock`.
 void swiftmmkv_store_suspend(swiftmmkv_store *_Nonnull store);
-/// Lets the store take its file lock again, and tells listeners of an external change.
+/// Lets the store take its file lock again. If it was suspended, listeners are given a
+/// whole-store batch for `SWIFTMMKV_WHOLE_STORE_REASON_RESUMED`.
 void swiftmmkv_store_resume(swiftmmkv_store *_Nonnull store);
 
 // MARK: - Closing
@@ -534,9 +584,9 @@ bool swiftmmkv_store_is_closed(swiftmmkv_store *_Nonnull store);
 /// are closed. Closing twice does nothing more.
 ///
 /// Every handle that was opened over the same files is closed with this one, since they share
-/// the open files. Listeners are told once more, of an external change, because every value
-/// now reads as missing, and are told nothing after that, so each listener's context is
-/// released then. Their subscriptions are still released with `swiftmmkv_subscription_cancel`.
+/// the open files. Listeners are given one more batch, a whole-store batch for
+/// `SWIFTMMKV_WHOLE_STORE_REASON_CLOSED`, because every value now reads as missing, and are
+/// told nothing after that, so each listener's context is released then. Their subscriptions are still released with `swiftmmkv_subscription_cancel`.
 ///
 /// Do not call this from inside `swiftmmkv_store_with_exclusive_lock`.
 void swiftmmkv_store_close(swiftmmkv_store *_Nonnull store);

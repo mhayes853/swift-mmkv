@@ -164,7 +164,7 @@ final class CCallbackRecorder: Sendable {
     self.lock.withLock { self.recordedEvents.append(event) }
   }
 
-  private static func from(_ context: UnsafeMutableRawPointer?) -> CCallbackRecorder {
+  static func from(_ context: UnsafeMutableRawPointer?) -> CCallbackRecorder {
     Unmanaged<CCallbackRecorder>.fromOpaque(context!).takeUnretainedValue()
   }
 
@@ -173,20 +173,35 @@ final class CCallbackRecorder: Sendable {
     recorder.lock.withLock { recorder.recordedReleases += 1 }
   }
 
-  /// Records one event for each batch: `key:<name>` for each of its keys and `external` if it
-  /// is external, joined with commas.
+  /// Records one event for each batch, its parts joined with commas: `key:<name>` for each key of
+  /// a local batch, `external-key:<name>` for each key of an external one, and for a whole-store
+  /// batch `external`, `resumed`, `restored` or `closed`. A batch whose fields disagree with its
+  /// kind records `unexpected`.
   static let onChange: swiftmmkv_change_callback = { context, batch in
     let batch = batch.pointee
-    var parts = [String]()
-    if batch.key_count > 0, let keys = batch.keys {
-      parts = (0..<batch.key_count).map { "key:\(String(cString: keys[$0]))" }
-    } else if batch.key_count > 0 || batch.keys != nil {
-      parts = ["unexpected"]
+    let keys = batch.keys.map { keys in (0..<batch.key_count).map { String(cString: keys[$0]) } }
+    let event: String
+    switch Int32(batch.kind) {
+    case SWIFTMMKV_CHANGE_LOCAL_KEYS
+    where batch.whole_store_reason == SWIFTMMKV_WHOLE_STORE_REASON_NONE && !batch.is_external
+      && batch.key_count > 0:
+      event = (keys ?? []).map { "key:\($0)" }.joined(separator: ",")
+    case SWIFTMMKV_CHANGE_EXTERNAL_KEYS
+    where batch.whole_store_reason == SWIFTMMKV_WHOLE_STORE_REASON_NONE && batch.is_external
+      && batch.key_count > 0:
+      event = (keys ?? []).map { "external-key:\($0)" }.joined(separator: ",")
+    case SWIFTMMKV_CHANGE_WHOLE_STORE where batch.key_count == 0 && batch.keys == nil:
+      switch (batch.whole_store_reason, batch.is_external) {
+      case (SWIFTMMKV_WHOLE_STORE_REASON_EXTERNAL_CHANGE, true): event = "external"
+      case (SWIFTMMKV_WHOLE_STORE_REASON_RESUMED, true): event = "resumed"
+      case (SWIFTMMKV_WHOLE_STORE_REASON_RESTORED_FROM_BACKUP, false): event = "restored"
+      case (SWIFTMMKV_WHOLE_STORE_REASON_CLOSED, false): event = "closed"
+      default: event = "unexpected"
+      }
+    default:
+      event = "unexpected"
     }
-    if batch.is_external {
-      parts.append("external")
-    }
-    CCallbackRecorder.from(context).record(parts.joined(separator: ","))
+    CCallbackRecorder.from(context).record(event)
   }
 
   /// Records `<level> <file>:<line> <function> <text>`.

@@ -116,7 +116,7 @@ import Testing
 
     try MMKVDirectory(path: rootDirectory).restoreStore(id: id, from: backup)
 
-    #expect(changes.all == [.external])
+    #expect(changes.all == [.wholeStore(.restoredFromBackup)])
   }
 
   @Test func `A Backup Onto The Store's Directory Is Refused`() throws {

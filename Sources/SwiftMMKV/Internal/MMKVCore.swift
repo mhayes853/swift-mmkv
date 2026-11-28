@@ -200,6 +200,20 @@ extension MMKVCore {
     self.perform { $0.checkContentChanged() }
   }
 
+  /// Starts reporting which keys another process changes, which a store does once something
+  /// listens to it. A suspended store starts at its next operation once it is resumed.
+  ///
+  /// Loading the store can notice another process's changes, which the listeners it already has
+  /// are told about straight away.
+  func trackChangedKeys() {
+    guard self.perform({ $0.trackChangedKeys(loading: true) }) == nil else {
+      self.operationDidFinish()
+      return
+    }
+    guard !self.isClosed else { return }
+    self.engine.trackChangedKeys(loading: false)
+  }
+
   func trim() {
     self.perform { $0.trim() }
   }
