@@ -127,6 +127,19 @@ final class StoreGate: @unchecked Sendable {
     self.leave(pass)
   }
 
+  /// What ``enterScope()`` handed back for the innermost scope the calling thread is in, or
+  /// `nil` if it is in none.
+  ///
+  /// For a scope that is entered and left by two calls, which cannot keep the pass between
+  /// them. A thread's outermost scope is the one that was counted.
+  var passOfInnermostScope: Pass? {
+    switch ThreadGateScopes.current.depth(in: self) {
+    case 0: nil
+    case 1: .counted
+    default: .inside
+    }
+  }
+
   /// Takes back the count of an operation that was turned away.
   private func uncount() {
     mmkv_atomic_add(self.underWay, -1)
@@ -236,6 +249,11 @@ private final class ThreadGateScopes {
 
   func isInside(_ gate: StoreGate) -> Bool {
     self.index(of: gate) != nil
+  }
+
+  /// How many scopes deep the thread is in `gate`.
+  func depth(in gate: StoreGate) -> Int {
+    self.index(of: gate).map { self.depths[$0].depth } ?? 0
   }
 
   func enter(_ gate: StoreGate) {

@@ -474,6 +474,21 @@ extension MMKVStore {
   ) throws(E) -> R {
     try self.core.locked { () throws(E) -> R in try body(self) }
   }
+
+  /// Takes exclusive access to the store as ``withExclusiveLock(_:)`` does, until a matching
+  /// ``unlockExclusive()`` on the same thread.
+  ///
+  /// This is for the package's C interface, which serves languages whose scopes are not
+  /// closures. It is not public because nothing stops a caller from leaving it unbalanced.
+  package func lockExclusive() {
+    self.core.lockExclusive()
+  }
+
+  /// Gives up what the calling thread's last unmatched ``lockExclusive()`` took, and tells
+  /// listeners about the keys that were changed once the thread has given up all it took.
+  package func unlockExclusive() {
+    self.core.unlockExclusive()
+  }
 }
 
 // MARK: - Changes

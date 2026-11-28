@@ -333,6 +333,24 @@ public func swiftmmkv_configuration_set_directory(
 }
 
 @c @implementation
+public func swiftmmkv_configuration_directory(
+  _ configuration: OpaquePointer,
+  _ buffer: UnsafeMutablePointer<CChar>?,
+  _ capacity: Int,
+  _ outLength: UnsafeMutablePointer<Int>
+) {
+  var path = configuration.configuration.value.directory.path
+  path.withUTF8 { utf8 in
+    outLength.pointee = utf8.count
+    // The path is copied only with its terminator, so only if it is shorter than the buffer.
+    guard let buffer, utf8.count < capacity else { return }
+    UnsafeMutableRawBufferPointer(start: buffer, count: utf8.count)
+      .copyMemory(from: UnsafeRawBufferPointer(utf8))
+    buffer[utf8.count] = 0
+  }
+}
+
+@c @implementation
 public func swiftmmkv_configuration_set_mode(_ configuration: OpaquePointer, _ mode: swiftmmkv_mode)
 {
   configuration.configuration.set(\.mode, to: makeMode(mode))
@@ -764,6 +782,16 @@ public func swiftmmkv_store_with_exclusive_lock(
   _ body: swiftmmkv_locked_callback
 ) {
   store.store.withExclusiveLock { _ in body(context, store) }
+}
+
+@c @implementation
+public func swiftmmkv_store_lock_exclusive(_ store: OpaquePointer) {
+  store.store.lockExclusive()
+}
+
+@c @implementation
+public func swiftmmkv_store_unlock_exclusive(_ store: OpaquePointer) {
+  store.store.unlockExclusive()
 }
 
 // MARK: - Callbacks

@@ -356,17 +356,42 @@ extension MMKVCore {
   /// While the store is suspended, and once it is closed, `body` runs without the lock, and
   /// every operation in it is turned away.
   func locked<R, E: Error>(_ body: () throws(E) -> R) throws(E) -> R {
-    let gate = self.state.gate
-    guard let pass = gate.enterScope() else { return try body() }
+    guard let pass = self.lock() else { return try body() }
+    defer { self.unlock(pass) }
+    return try body()
+  }
+
+  /// Takes the instance's recursive lock, and begins holding changes back from listeners.
+  ///
+  /// - Returns: What to hand to ``unlock(_:)``, or `nil` if the store is suspended or closed,
+  ///   in which case nothing was taken.
+  private func lock() -> StoreGate.Pass? {
+    guard let pass = self.state.gate.enterScope() else { return nil }
     mmkv_lock(self.handle)
     self.state.beginDeferringChanges()
-    defer {
-      self.state.endDeferringChanges()
-      mmkv_unlock(self.handle)
-      gate.leaveScope(pass)
-      self.state.deliverPendingChanges()
-    }
-    return try body()
+    return pass
+  }
+
+  private func unlock(_ pass: StoreGate.Pass) {
+    self.state.endDeferringChanges()
+    mmkv_unlock(self.handle)
+    self.state.gate.leaveScope(pass)
+    self.state.deliverPendingChanges()
+  }
+
+  /// Takes the lock as ``locked(_:)`` does, until a matching ``unlockExclusive()`` on the same
+  /// thread. While the store is suspended, and once it is closed, this takes nothing.
+  func lockExclusive() {
+    _ = self.lock()
+  }
+
+  /// Gives up what the calling thread's last unmatched ``lockExclusive()`` took.
+  ///
+  /// A thread that is in no scope has nothing to give up: either its ``lockExclusive()`` took
+  /// nothing, or there was none.
+  func unlockExclusive() {
+    guard let pass = self.state.gate.passOfInnermostScope else { return }
+    self.unlock(pass)
   }
 
   var totalSize: Int {

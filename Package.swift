@@ -142,7 +142,10 @@ let package = Package(
   ],
   products: [
     .library(name: "SwiftMMKV", targets: ["SwiftMMKV"]),
-    .library(name: "SwiftMMKVC", targets: ["SwiftMMKVC"])
+    .library(name: "SwiftMMKVC", targets: ["SwiftMMKVC"]),
+    // The same interface as a shared library, for a binding that loads it at run time, as the
+    // Python one does.
+    .library(name: "SwiftMMKVCDynamic", type: .dynamic, targets: ["SwiftMMKVC"])
   ],
   traits: [
     .default(enabledTraits: ["Foundation"]),
