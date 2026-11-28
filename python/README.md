@@ -16,9 +16,9 @@ store = swiftmmkv.open("/var/lib/app/mmkv", mode=Mode.SINGLE_PROCESS)
 store.set("username", "blob")
 store.set("volume", 0.8)
 
-store.get("username", str)               # "blob"
+store.get("username", str)  # "blob"
 store.get("volume", float, default=1.0)  # 0.8
-store.get("theme", str)                  # None
+store.get("theme", str)  # None
 ```
 
 ## Installation
@@ -123,8 +123,8 @@ out:
 with swiftmmkv.open("/var/lib/app/mmkv", mode=Mode.SINGLE_PROCESS) as store:
     store.set("username", "blob")
 
-store.closed                   # True
-store.get("username", str)     # None
+store.closed  # True
+store.get("username", str)  # None
 store.set("username", "blob")  # False
 ```
 
@@ -276,11 +276,11 @@ String keys work everywhere. A store is also a collection of its keys:
 
 ```python
 "username" in store  # True
-len(store)           # the number of keys
+len(store)  # the number of keys
 for key in store:
     print(key)
 
-store.keys()                  # frozenset of every key, in no particular order
+store.keys()  # frozenset of every key, in no particular order
 store.keys(under="settings")  # "settings" and the keys under it, such as "settings.theme"
 ```
 
@@ -326,7 +326,7 @@ def draft(post_id: int) -> Key[str]:
 
 store[USERNAME] = "blob"
 store.get(USERNAME)  # "blob", typed as str | None
-store[VOLUME]        # 0.5 until a volume is stored
+store[VOLUME]  # 0.5 until a volume is stored
 store.set(draft(42), "Hello")
 ```
 
@@ -678,7 +678,7 @@ subscription.cancel()  # does nothing
 
 with store.subscribe(on_change):
     store.set("username", "blob")  # on_change is called
-store.set("username", "blob2")     # on_change is not called
+store.set("username", "blob2")  # on_change is not called
 ```
 
 A subscription runs until it is cancelled or its store is closed. Letting go of it does not cancel
@@ -724,7 +724,7 @@ even if every `Store` object over it has since been let go of:
 ```python
 store.close()
 directory.remove_store("session")  # True if there were files to remove
-directory.remove_all_stores()      # the number removed
+directory.remove_all_stores()  # the number removed
 ```
 
 `remove_store` raises `MMKVError` with `Status.STORE_IS_OPEN` for an open store, so close it
