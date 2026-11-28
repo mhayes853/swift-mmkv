@@ -64,6 +64,8 @@ extension StoreInstance {
   func releaseFiles() {
     self.state.withLock { state in
       state.contentChangedHandler = nil
+      state.tracksChangedKeys = false
+      state.changeTracker = nil
       state.clearMemoryCache()
       // An instance that has not loaded yet skips that, but may have mapped the file.
       state.file.clearMemoryCache()

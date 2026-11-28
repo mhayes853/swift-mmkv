@@ -325,7 +325,7 @@ import Testing
     let reopened = try makeStore(id: "close-listeners-0", rootDirectory: rootDirectory)
     reopened.set("light", forKey: "theme")
 
-    #expect(recorder.all == [.key("theme"), .external])
+    #expect(recorder.all == [.key("theme"), .wholeStore(.closed)])
     subscription.cancel()
   }
 
@@ -365,7 +365,7 @@ import Testing
       store.set("light", forKey: "theme")
     }
 
-    #expect(recorder.all == [.external])
+    #expect(recorder.all == [.wholeStore(.closed)])
     subscription.cancel()
   }
 
@@ -386,7 +386,7 @@ import Testing
     store.set("dark", forKey: "theme")
     store.close()
 
-    #expect(await task.value == [.key("theme"), .external])
+    #expect(await task.value == [.key("theme"), .wholeStore(.closed)])
   }
 
   @Test func `The Sequence Of Changes Of A Closed Store Is Empty`() async throws {

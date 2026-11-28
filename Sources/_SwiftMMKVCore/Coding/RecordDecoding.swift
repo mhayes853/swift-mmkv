@@ -134,6 +134,29 @@ package enum RecordDecoding {
     return count
   }
 
+  /// Calls `body` with the key of each record in `data`, from `position` as for
+  /// ``decode(_:from:into:greedy:)``, whether the record sets the key or removes it.
+  ///
+  /// - Returns: Whether every record could be read.
+  package static func forEachKey(
+    _ data: UnsafeRawBufferPointer,
+    from position: Int,
+    _ body: (UnsafeRawBufferPointer) -> Void
+  ) -> Bool {
+    do throws(CodingError) {
+      var input = try Self.input(data, from: position)
+      while !input.isAtEnd {
+        let keyRange = try input.readLengthDelimited()
+        guard !keyRange.isEmpty else { continue }
+        _ = try input.readLengthDelimited()
+        body(input.bytes(in: keyRange))
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
   private static func decodeRecords(
     _ data: UnsafeRawBufferPointer,
     from position: Int,

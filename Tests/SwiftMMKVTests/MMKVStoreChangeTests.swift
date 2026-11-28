@@ -171,7 +171,7 @@ import Testing
     #expect(recorder.all.isEmpty)
 
     #expect(second.value(forKey: "a", as: String.self) == "changed")
-    #expect(recorder.all == [.external])
+    #expect(recorder.all == externalChange("a"))
     subscription.cancel()
   }
 
@@ -189,7 +189,7 @@ import Testing
     second.checkForExternalChanges()
     second.checkForExternalChanges()
 
-    #expect(recorder.all == [.external])
+    #expect(recorder.all == externalChange("a"))
     subscription.cancel()
   }
 
@@ -225,7 +225,7 @@ import Testing
       #expect(recorder.all.isEmpty)
     }
 
-    #expect(recorder.all == [.external])
+    #expect(recorder.all == externalChange("a"))
     subscription.cancel()
   }
 

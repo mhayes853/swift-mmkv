@@ -428,7 +428,7 @@
       #expect(recorder.all == [[1, 2, 3], nil, nil])
       #expect(throws: DecodingError.self) {
         store.set("not JSON", forKey: "numbers")
-        return try MMKVStore.ChangeBatch(store: store, keys: [])
+        return try MMKVStore.ChangeBatch(store: store, kind: .localKeys([]))
           .decode([Int].self, forKey: "numbers")
       }
       subscription.cancel()

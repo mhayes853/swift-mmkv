@@ -153,7 +153,7 @@ import Testing
     #expect(changes.all.isEmpty)
 
     store.resume()
-    #expect(changes.all == [.external])
+    #expect(changes.all == [.wholeStore(.resumed)])
     #expect(values.all == [0.5, 0.5])
     subscription.cancel()
     keySubscription.cancel()

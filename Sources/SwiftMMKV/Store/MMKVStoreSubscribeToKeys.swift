@@ -17,7 +17,7 @@ extension MMKVStore {
   /// `onChange` once, after all of them are written.
   ///
   /// `onChange` may be given the values it was last given: it runs whenever one of the keys is
-  /// written, and whenever an external change is noticed, since such a change does not say
+  /// written, here or in another process, and for every whole-store change, which does not say
   /// which keys it touched. In other respects this behaves like ``subscribe(_:)``.
   ///
   /// - Parameters:
@@ -266,7 +266,7 @@ extension MMKVStore {
     _ onChange: @escaping @Sendable () -> Void
   ) -> MMKVSubscription {
     let subscription = self.subscribe { batch in
-      if batch.isExternal || batch.keys.contains(where: names.contains) {
+      if batch.kind.hasChangeCandidate(where: names.contains) {
         onChange()
       }
     }

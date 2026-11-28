@@ -348,7 +348,7 @@ extension MMKVStorage {
     var restored = [MMKVStoreState]()
     defer {
       for state in restored {
-        state.notifyExternalChange()
+        state.notifyWholeStore(.restoredFromBackup)
       }
     }
     let didRestore = try Self.entering(openStore.map { [$0] } ?? [], overwriting: true) { states in
@@ -406,7 +406,7 @@ extension MMKVStorage {
     var restored = [MMKVStoreState]()
     defer {
       for state in restored {
-        state.notifyExternalChange()
+        state.notifyWholeStore(.restoredFromBackup)
       }
     }
     let count = try Self.entering(self.openStores, overwriting: true) { states in

@@ -480,19 +480,25 @@ extension MMKVStore {
 // MARK: - Changes
 
 extension MMKVStore {
-  /// Calls `onChange` once for each operation that changes the store's contents, until the
-  /// returned subscription is cancelled or released.
+  /// Calls `onChange` once for each change to the store's contents, until the returned
+  /// subscription is cancelled or released.
   ///
   /// ```swift
   /// let subscription = store.subscribe { batch in
-  ///   if batch.isExternal { print("changed elsewhere") }
-  ///   for key in batch.keys { print("changed:", key) }
+  ///   switch batch.kind {
+  ///   case .localKeys(let keys): print("changed here:", keys)
+  ///   case .externalKeys(let keys): print("changed elsewhere:", keys)
+  ///   case .wholeStore(let reason): print("anything may have changed:", reason.rawValue)
+  ///   }
   /// }
   /// ```
   ///
-  /// An operation is one call, such as ``set(_:forKey:expiry:)`` or ``removeValues(forKeys:)``,
-  /// or everything the body of a ``withExclusiveLock(_:)`` does. So a body that writes three
-  /// keys runs `onChange` once, after all three are written, with a batch of the three.
+  /// Each operation that sets or removes keys gives one ``ChangeBatch/Kind/localKeys(_:)``
+  /// batch. An operation is one call, such as ``set(_:forKey:expiry:)`` or
+  /// ``removeValues(forKeys:)``, or everything the body of a ``withExclusiveLock(_:)`` does. So
+  /// a body that writes three keys runs `onChange` once, after all three are written, with a
+  /// batch of the three. Changes another process made are batches of their own, delivered
+  /// before the batch of the operation that noticed them.
   ///
   /// The listener is shared with every ``MMKVStore`` opened over the same files in this process.
   /// It runs on the thread that made or noticed the change, after the operation has returned,
@@ -503,18 +509,18 @@ extension MMKVStore {
   public func subscribe(
     _ onChange: @escaping @Sendable (ChangeBatch) -> Void
   ) -> MMKVSubscription {
-    self.core.state.subscribe { changes in
-      onChange(ChangeBatch(store: self, keys: changes.keys, isExternal: changes.isExternal))
+    self.core.trackChangedKeys()
+    return self.core.state.subscribe { kind in
+      onChange(ChangeBatch(store: self, kind: kind))
     }
   }
 
-  /// Calls `onChange` once for each operation that may have changed the value of `key`, until
+  /// Calls `onChange` once for each change that may have changed the value of `key`, until
   /// the returned subscription is cancelled or released.
   ///
-  /// That is each operation that sets or removes `key` through this package, and each external
-  /// change that is noticed, since such a change does not say which keys it touched. The
-  /// batch's ``ChangeBatch/keys`` holds `key` alone, or nothing when only an external change
-  /// was noticed. In other respects this behaves like ``subscribe(_:)``.
+  /// That is each batch that sets or removes `key`, here or in another process, which then
+  /// names `key` alone, and each whole-store batch. In other respects this behaves like
+  /// ``subscribe(_:)``.
   ///
   /// - Parameters:
   ///   - key: The key to observe.
@@ -523,10 +529,10 @@ extension MMKVStore {
     forKey key: String,
     _ onChange: @escaping @Sendable (ChangeBatch) -> Void
   ) -> MMKVSubscription {
-    self.core.state.subscribe { changes in
-      let keys = changes.keys.contains(key) ? [key] : []
-      guard !keys.isEmpty || changes.isExternal else { return }
-      onChange(ChangeBatch(store: self, keys: keys, isExternal: changes.isExternal))
+    self.core.trackChangedKeys()
+    return self.core.state.subscribe { kind in
+      guard let kind = kind.narrowed(to: { $0 == key }) else { return }
+      onChange(ChangeBatch(store: self, kind: kind))
     }
   }
 
@@ -539,9 +545,8 @@ extension MMKVStore {
   /// }
   /// ```
   ///
-  /// That is each operation that sets or removes such a key through this package, and each
-  /// external change that is noticed, since such a change does not say which keys it touched.
-  /// The batch's ``ChangeBatch/keys`` holds only the keys at or under `prefix`. An
+  /// That is each batch that sets or removes such a key, here or in another process, which
+  /// then names only the keys at or under `prefix`, and each whole-store batch. An
   /// ``encode(_:intoKeysUnder:removingOtherKeys:expiry:options:)`` that writes three keys runs
   /// `onChange` once, after all three are written, and so does a ``withExclusiveLock(_:)``
   /// whose body writes them one at a time. In other respects this behaves like
@@ -563,10 +568,10 @@ extension MMKVStore {
     _ onChange: @escaping @Sendable (ChangeBatch) -> Void
   ) -> MMKVSubscription {
     let names = KeyNames(separator: separator)
-    return self.core.state.subscribe { changes in
-      let keys = changes.keys.filter { names.isAtOrUnder($0, prefix) }
-      guard !keys.isEmpty || changes.isExternal else { return }
-      onChange(ChangeBatch(store: self, keys: keys, isExternal: changes.isExternal))
+    self.core.trackChangedKeys()
+    return self.core.state.subscribe { kind in
+      guard let kind = kind.narrowed(to: { names.isAtOrUnder($0, prefix) }) else { return }
+      onChange(ChangeBatch(store: self, kind: kind))
     }
   }
 
@@ -582,7 +587,7 @@ extension MMKVStore {
   ///
   /// The value is `nil` when the store has no value for `key`, or when its value is not a
   /// valid `V`. `onChange` may be given the value it was last given: it runs whenever `key` is
-  /// written, and whenever an external change is noticed, since such a change does not say
+  /// written, here or in another process, and for every whole-store change, which does not say
   /// which keys it touched. In other respects this behaves like ``subscribe(_:)``.
   ///
   /// - Parameters:
@@ -641,7 +646,7 @@ extension MMKVStore {
   }
 
   /// Checks whether another process, or another copy of MMKV, changed the store, reloading it
-  /// and telling listeners of an external change if so.
+  /// and telling listeners what changed if so.
   ///
   /// Reads and writes make the same check, so this is only needed to notice a change while the
   /// store is otherwise idle. It does nothing for a single-process store.
@@ -703,14 +708,16 @@ extension MMKVStore {
 
   /// Lets the store take its file lock again.
   ///
-  /// Listeners are told of an external change if the store was suspended, because reads were
-  /// turned away in the meantime and another process may have changed the store.
+  /// If the store was suspended, listeners are given a
+  /// ``ChangeBatch/Kind/wholeStore(_:)`` batch for ``ChangeBatch/WholeStoreReason/resumed``,
+  /// because reads were turned away in the meantime and another process may have changed the
+  /// store.
   public func resume() {
     guard self.core.isSuspended else { return }
     let didResume = self.core.state.observationRegistrar
       .withMutation(of: self, keyPath: \.isSuspended) { self.core.resume() }
     if didResume {
-      self.core.state.notifyExternalChange()
+      self.core.state.notifyWholeStore(.resumed)
     }
   }
 
@@ -765,9 +772,9 @@ extension MMKVStore {
   /// Every ``MMKVStore`` over the same files is closed together, including one that is made
   /// while this is waiting. Closing twice has no further effect.
   ///
-  /// Listeners are told once more, of an external change, because every value now reads as
-  /// `nil`. They are told nothing after that, and ``changes`` and the sequences of a key's
-  /// values end.
+  /// Listeners are given one more batch, a ``ChangeBatch/Kind/wholeStore(_:)`` batch for
+  /// ``ChangeBatch/WholeStoreReason/closed``, because every value now reads as `nil`. They are
+  /// told nothing after that, and ``changes`` and the sequences of a key's values end.
   ///
   /// An operation that is under way finishes first, so a value another thread is in the
   /// middle of encoding into several keys is written whole. That holds for the calling thread
@@ -925,7 +932,8 @@ extension MMKVStore {
   /// Replaces the store's contents with those of its copy in `backup`.
   ///
   /// Every ``MMKVStore`` over the same files reads the restored values afterwards, and the
-  /// store's listeners are told of an external change. See
+  /// store's listeners are given a ``ChangeBatch/Kind/wholeStore(_:)`` batch for
+  /// ``ChangeBatch/WholeStoreReason/restoredFromBackup``. See
   /// ``MMKVDirectory/restoreStore(id:from:)``.
   ///
   /// - Returns: Whether `backup` held a copy of the store.

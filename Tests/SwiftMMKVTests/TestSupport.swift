@@ -37,6 +37,9 @@ enum EngineFeature: String, CaseIterable, CustomStringConvertible {
   /// The C interface in `swiftmmkv.h`, which opens its stores with the default engine. A test
   /// that also opens them with ``makeStore`` would have two cores on the same files.
   case cInterface
+  /// Telling which keys another process, or another copy of MMKV, changed. Only the Swift core
+  /// can, since the C++ core only says that a store changed.
+  case externalKeys
 
   var description: String { self.rawValue }
 }
@@ -45,11 +48,11 @@ extension MMKVConfiguration.Engine {
   /// The features this engine has so far.
   var features: Set<EngineFeature> {
     switch self {
-    case .cxx: Set(EngineFeature.allCases).subtracting([.encryptionKeyCheck])
+    case .cxx: Set(EngineFeature.allCases).subtracting([.encryptionKeyCheck, .externalKeys])
     case .swift:
       [
         .store, .readOnly, .expiry, .importing, .multiProcess, .encryption, .encryptionKeyCheck,
-        .integrityFailures
+        .integrityFailures, .externalKeys
       ]
     }
   }
@@ -117,7 +120,8 @@ func makeStore(
 /// identifier alone, so pairs with the same identifiers in tests running in parallel would
 /// report each other's changes.
 func makeLinkedStores(
-  mode: MMKVConfiguration.Mode
+  mode: MMKVConfiguration.Mode,
+  encryption: MMKVConfiguration.Encryption? = nil
 ) throws -> (first: MMKVStore, second: MMKVStore) {
   let rootDirectory = temporaryRootDirectory()
   // The core reports an outside change by identifier alone, so identifiers shared between
@@ -127,7 +131,8 @@ func makeLinkedStores(
   let first = try makeStore(
     id: MMKVStore.ID(rawValue: real),
     rootDirectory: rootDirectory,
-    mode: mode
+    mode: mode,
+    encryption: encryption
   )
   // The files are created when the store is first used.
   _ = first.count
@@ -138,7 +143,13 @@ func makeLinkedStores(
     )
   }
   return (
-    first, try makeStore(id: MMKVStore.ID(rawValue: link), rootDirectory: rootDirectory, mode: mode)
+    first,
+    try makeStore(
+      id: MMKVStore.ID(rawValue: link),
+      rootDirectory: rootDirectory,
+      mode: mode,
+      encryption: encryption
+    )
   )
 }
 
@@ -174,14 +185,39 @@ func makeUnopenedStoreFiles(at path: String) throws {
 
 /// One part of a ``MMKVStore/ChangeBatch``, in a form that can be compared.
 enum Change: Hashable, Sendable {
+  /// A key set or removed through this package, in this process.
   case key(String)
-  case external
+  /// A key another process, or another copy of MMKV, set or removed.
+  case externalKey(String)
+  case wholeStore(MMKVStore.ChangeBatch.WholeStoreReason)
 }
 
 extension MMKVStore.ChangeBatch {
-  /// The keys of the batch in order, followed by whether it is external.
+  /// The keys of the batch in order, or its whole-store change.
   var changes: [Change] {
-    self.keys.map(Change.key) + (self.isExternal ? [.external] : [])
+    switch self.kind {
+    case .localKeys(let keys): keys.map(Change.key)
+    case .externalKeys(let keys): keys.map(Change.externalKey)
+    case .wholeStore(let reason): [.wholeStore(reason)]
+    }
+  }
+
+  /// The keys the batch names, whatever its kind.
+  var keys: [String] {
+    switch self.kind {
+    case .localKeys(let keys), .externalKeys(let keys): keys
+    case .wholeStore: []
+    }
+  }
+}
+
+/// What a store on the engine under test reports when another process sets or removes `keys`:
+/// the keys themselves on the Swift engine, and a change to any key on the C++ engine, which
+/// cannot tell which keys changed.
+func externalChange(_ keys: String...) -> [Change] {
+  switch engineUnderTest {
+  case .swift: keys.map(Change.externalKey)
+  case .cxx: [.wholeStore(.externalChange)]
   }
 }
 

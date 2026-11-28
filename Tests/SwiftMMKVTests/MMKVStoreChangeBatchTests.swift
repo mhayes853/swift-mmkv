@@ -1,4 +1,4 @@
-import SwiftMMKV
+@_spi(Engines) import SwiftMMKV
 import Testing
 
 private struct Settings: Codable, Equatable, Sendable {
@@ -125,7 +125,7 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
     subscription.cancel()
   }
 
-  @Test func `An External Change Is A Batch With No Keys`() throws {
+  @Test func `An External Change Is A Batch Of Its Own`() throws {
     let (first, second) = try makeLinkedStores(mode: .multiProcess)
     first.set("initial", forKey: "a")
     _ = second.value(forKey: "a", as: String.self)
@@ -135,7 +135,7 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
     first.set("changed", forKey: "a")
     second.checkForExternalChanges()
 
-    #expect(recorder.all.map(\.keys) == [[]])
+    #expect(recorder.all.map(\.changes) == [externalChange("a")])
     #expect(recorder.all.map(\.isExternal) == [true])
     subscription.cancel()
   }
@@ -197,7 +197,7 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
     subscription.cancel()
   }
 
-  @Test func `A Key's Batch Has No Keys For An External Change`() throws {
+  @Test func `A Key's Batch Hears Of An External Change It Cannot Rule Out`() throws {
     let (first, second) = try makeLinkedStores(mode: .multiProcess)
     first.set("initial", forKey: "b")
     _ = second.value(forKey: "b", as: String.self)
@@ -207,7 +207,8 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
     first.set("changed", forKey: "b")
     second.checkForExternalChanges()
 
-    #expect(recorder.batches == [[.external]])
+    // The Swift engine tells that only "b" changed. The C++ engine cannot tell which keys did.
+    #expect(recorder.batches == (engineUnderTest == .swift ? [] : [[.wholeStore(.externalChange)]]))
     subscription.cancel()
   }
 
@@ -261,10 +262,41 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
     subscription.cancel()
   }
 
+  @Test func `Says Whether It Came From Elsewhere`() throws {
+    let store = try makeStore()
+    func isExternal(_ kind: MMKVStore.ChangeBatch.Kind) -> Bool {
+      MMKVStore.ChangeBatch(store: store, kind: kind).isExternal
+    }
+
+    #expect(!isExternal(.localKeys(["a"])))
+    #expect(isExternal(.externalKeys(["a"])))
+    #expect(isExternal(.wholeStore(.externalChange)))
+    #expect(isExternal(.wholeStore(.resumed)))
+    #expect(!isExternal(.wholeStore(.restoredFromBackup)))
+    #expect(!isExternal(.wholeStore(.closed)))
+  }
+
+  @Test func `Says Which Keys It May Have Changed`() throws {
+    let store = try makeStore()
+    let local = MMKVStore.ChangeBatch(store: store, kind: .localKeys(["settings.theme"]))
+    let external = MMKVStore.ChangeBatch(store: store, kind: .externalKeys(["settings/theme"]))
+    let wholeStore = MMKVStore.ChangeBatch(store: store, kind: .wholeStore(.closed))
+
+    #expect(local.hasChangeCandidate(forKey: "settings.theme"))
+    #expect(!local.hasChangeCandidate(forKey: "settings"))
+    #expect(local.hasChangeCandidates(underKey: "settings"))
+    #expect(!local.hasChangeCandidates(underKey: "settings", separator: "/"))
+    #expect(local.hasChangeCandidates(underKey: ""))
+    #expect(external.hasChangeCandidates(underKey: "settings", separator: "/"))
+    #expect(!external.hasChangeCandidate(forKey: "settings.theme"))
+    #expect(wholeStore.hasChangeCandidate(forKey: "anything"))
+    #expect(wholeStore.hasChangeCandidates(underKey: "anything"))
+  }
+
   @Test func `Reads Any Key Of The Store, And The Value It Holds Now`() throws {
     let store = try makeStore()
     store.set("dark", forKey: "theme")
-    let batch = MMKVStore.ChangeBatch(store: store, keys: ["username"])
+    let batch = MMKVStore.ChangeBatch(store: store, kind: .localKeys(["username"]))
 
     store.set("light", forKey: "theme")
 
@@ -276,7 +308,7 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
 
   @Test func `Reads Typed Keys`() throws {
     let store = try makeStore()
-    let batch = MMKVStore.ChangeBatch(store: store, keys: [], isExternal: true)
+    let batch = MMKVStore.ChangeBatch(store: store, kind: .wholeStore(.externalChange))
     #expect(batch.isExternal)
     #expect(batch.value(for: .username) == nil)
     #expect(batch.value(for: .volume) == 0.5)
@@ -290,7 +322,7 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
 
   @Test func `Reads Coded Keys`() throws {
     let store = try makeStore()
-    let batch = MMKVStore.ChangeBatch(store: store, keys: [])
+    let batch = MMKVStore.ChangeBatch(store: store, kind: .localKeys([]))
     #expect(try batch.value(for: .count) == nil)
     #expect(try batch.value(for: .lives) == 3)
 
@@ -303,7 +335,7 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
 
   @Test func `Throws What A Coded Key's Decoder Throws`() throws {
     let store = try makeStore()
-    let batch = MMKVStore.ChangeBatch(store: store, keys: [])
+    let batch = MMKVStore.ChangeBatch(store: store, kind: .localKeys([]))
     store.set("not a number", forKey: "count")
     store.set("not a number", forKey: "lives")
 
@@ -343,7 +375,7 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
   @Test func `Decodes From The Keys Under A Prefix With Options`() throws {
     let store = try makeStore()
     let options = MMKVKeyCodingOptions(separator: "/")
-    let batch = MMKVStore.ChangeBatch(store: store, keys: [])
+    let batch = MMKVStore.ChangeBatch(store: store, kind: .localKeys([]))
 
     try store.encode(
       Settings(fontSize: 16, theme: "dark"),
@@ -363,7 +395,7 @@ extension MMKVStore.DefaultedCodedKey where Value == Int {
   @Test func `Reads Of A Closed Store Are Turned Away`() throws {
     let store = try makeStore()
     store.set("blob", forKey: "username")
-    let batch = MMKVStore.ChangeBatch(store: store, keys: ["username"])
+    let batch = MMKVStore.ChangeBatch(store: store, kind: .localKeys(["username"]))
 
     store.close()
 

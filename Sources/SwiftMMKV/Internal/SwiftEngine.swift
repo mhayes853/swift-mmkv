@@ -33,8 +33,11 @@ struct SwiftEngine: MMKVEngine {
       }
     }
     let instance = self.instance
-    store.setContentChangedHandler {
-      MMKVStoreState.markExternalChange(instance: instance)
+    store.setContentChangedHandler { change in
+      switch change {
+      case .keys(let keys): MMKVStoreState.markExternalChange(instance: instance, keys: keys)
+      case .unknown: MMKVStoreState.markExternalChange(instance: instance, keys: nil)
+      }
     }
   }
 
@@ -223,6 +226,10 @@ extension SwiftEngine {
 
   func checkContentChanged() {
     self.store.checkContentChanged()
+  }
+
+  func trackChangedKeys(loading: Bool) {
+    self.store.trackChangedKeys(loading: loading)
   }
 
   func trim() {

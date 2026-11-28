@@ -309,13 +309,55 @@ import Testing
 
     cxx.set(1.0, forKey: "from-cxx")
     swift.checkForExternalChanges()
-    #expect(swiftChanges.all == [.external])
+    #expect(swiftChanges.all == [.externalKey("from-cxx")])
     #expect(swift.value(forKey: "from-cxx", as: Double.self) == 1)
 
     swift.set(2.0, forKey: "from-swift")
     cxx.checkForExternalChanges()
-    #expect(cxxChanges.all.contains(.external))
+    #expect(cxxChanges.all.contains(.wholeStore(.externalChange)))
     #expect(cxx.value(forKey: "from-swift", as: Double.self) == 2)
+  }
+
+  /// The Swift core tells which keys the C++ core changed, from what the C++ core writes to the
+  /// files: the records it appends, and the values it leaves after rewriting the whole file.
+  @Test(arguments: [nil, MMKVConfiguration.Encryption.aes128(key: "secret")])
+  func `The Swift Core Tells Which Keys The C++ Core Changed`(
+    encryption: MMKVConfiguration.Encryption?
+  ) throws {
+    let directory = temporaryRootDirectory()
+    let cxx = try makeStore(
+      id: "keys",
+      rootDirectory: directory,
+      mode: .multiProcess,
+      encryption: encryption,
+      engine: .cxx
+    )
+    let swift = try makeStore(
+      id: "keys",
+      rootDirectory: directory,
+      mode: .multiProcess,
+      encryption: encryption,
+      engine: .swift
+    )
+    cxx.set("same", forKey: "kept")
+    cxx.set("old", forKey: "changed")
+    cxx.set("old", forKey: "removed")
+    let changes = ChangeRecorder()
+    let subscription = swift.subscribe(changes.record)
+    defer { subscription.cancel() }
+
+    cxx.set("new", forKey: "appended")
+    cxx.removeValue(forKey: "kept")
+    cxx.set("same", forKey: "kept")
+    swift.checkForExternalChanges()
+    #expect(changes.batches == [[.externalKey("appended"), .externalKey("kept")]])
+
+    cxx.set("new", forKey: "changed")
+    // The C++ core rewrites the whole file to remove several keys.
+    cxx.removeValues(forKeys: ["removed", "absent"])
+    swift.checkForExternalChanges()
+    #expect(changes.batches.last == [.externalKey("changed"), .externalKey("removed")])
+    #expect(swift.value(forKey: "changed", as: String.self) == "new")
   }
 
   /// Threads writing through both cores at once, which must exclude each other through the file

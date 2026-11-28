@@ -109,8 +109,11 @@ extension StoreState {
 
   /// Reads only what another process appended since the last load (`partialLoadFromFile`), or
   /// loads everything again if the appended data does not match the checksum.
-  mutating func partialLoadFromFile() {
-    guard self.file.isFileValid else { return }
+  ///
+  /// - Returns: Whether only the appended data was read.
+  @discardableResult
+  mutating func partialLoadFromFile() -> Bool {
+    guard self.file.isFileValid else { return false }
     self.metaInfo = MetaInfo(reading: self.metaFile.memory!)
     let oldActualSize = self.actualSize
     self.actualSize = self.readActualSize()
@@ -132,7 +135,7 @@ extension StoreState {
         }
         self.output?.position += addedSize
         self.hasFullWriteback = false
-        return
+        return true
       }
       Log.error(
         "m_crcDigest[\(self.crcDigest)] != m_metaInfo->m_crcDigest[\(self.metaInfo.crcDigest)]"
@@ -141,6 +144,7 @@ extension StoreState {
     // Something is wrong: load everything.
     self.clearMemoryCache()
     self.loadFromFile()
+    return false
   }
 
   /// Loads the files on first use, and in a multi-process store reloads them if another process
@@ -154,6 +158,8 @@ extension StoreState {
       self.lockProcess(.shared)
       defer { self.unlockProcess(.shared) }
       self.needLoadFromFile = false
+      // What changed while nothing was loaded is not reported, so the hashes start again.
+      self.changeTracker = nil
       self.loadFromFile()
       return
     }
@@ -163,17 +169,26 @@ extension StoreState {
     let metaInfo = MetaInfo.Summary(reading: self.metaFile.memory!)
     if self.metaInfo.sequence != metaInfo.sequence {
       // Another process rewrote the file.
+      let tracker = self.changeTracker
+      self.changeTracker = nil
       self.clearMemoryCache()
       self.loadFromFile()
-      self.notifyContentChanged()
+      self.notifyContentChanged(tracker.map { .keys(self.trackRewrite(from: $0)) } ?? .unknown)
       return
     }
     if self.metaInfo.crcDigest != metaInfo.crcDigest
       || self.metaInfo.actualSize != metaInfo.actualSize
     {
       // Another process appended to it.
-      self.partialLoadFromFile()
-      self.notifyContentChanged()
+      let position = self.actualSize
+      let tracker = self.changeTracker
+      if self.partialLoadFromFile() {
+        let keys = self.trackAppendedRecords(from: position)
+        self.notifyContentChanged(keys.map { .keys($0) } ?? .unknown)
+      } else {
+        // The appended data did not match its checksum, and everything was loaded again.
+        self.notifyContentChanged(tracker.map { .keys(self.trackRewrite(from: $0)) } ?? .unknown)
+      }
     }
     if checkingFileSize {
       self.remapIfFileShrunk()

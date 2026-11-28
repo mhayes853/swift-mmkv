@@ -201,6 +201,32 @@ extension StoreState {
     }
   }
 
+  /// Calls `body` with the decrypted key of each record from the reader's position, whether
+  /// the record sets the key or removes it. The values are not decrypted.
+  ///
+  /// - Returns: Whether every record could be read.
+  static func forEachCryptKey(
+    _ reader: inout DecryptingReader,
+    _ body: (UnsafeRawBufferPointer) -> Void
+  ) -> Bool {
+    do throws(CodingError) {
+      if reader.position == 0 {
+        _ = try reader.readUInt32()
+      }
+      while !reader.isAtEnd {
+        let keyRange = try reader.readLengthDelimited()
+        guard keyRange.count <= keySizeLimit else { throw .entryTooLarge }
+        guard !keyRange.isEmpty else { continue }
+        reader.decrypt(keyRange, reservingAfter: 10)
+        _ = try reader.readLengthDelimited()
+        body(reader.bytes(in: keyRange))
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
   // MARK: - Writing
 
   /// Writes `data` as `key`'s value in an encrypted store (the encrypted branch of

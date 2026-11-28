@@ -1,4 +1,4 @@
-import SwiftMMKV
+@_spi(Engines) import SwiftMMKV
 import Testing
 
 @Suite(.requires(.store)) struct MMKVStoreKeySubscriptionTests {
@@ -62,7 +62,8 @@ import Testing
     other.set("blob", forKey: "username")
     store.checkForExternalChanges()
 
-    #expect(recorder.all == [nil, nil, "blob"])
+    // The Swift engine tells that the first change was to another key. The C++ engine cannot.
+    #expect(recorder.all == (engineUnderTest == .swift ? [nil, "blob"] : [nil, nil, "blob"]))
     subscription.cancel()
   }
 

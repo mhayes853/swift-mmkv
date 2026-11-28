@@ -274,8 +274,8 @@ extension MMKVStore {
   ///
   /// `onChange` runs once for each operation that changes such keys, with the value all of the
   /// operation's writes left behind, and never with a value that is only partly written. It
-  /// may be given the value it was last given: it runs whenever such a key is written, and
-  /// whenever an external change is noticed, since such a change does not say which keys it
+  /// may be given the value it was last given: it runs whenever such a key is written, here or
+  /// in another process, and for every whole-store change, which does not say which keys it
   /// touched. In other respects this behaves like ``subscribe(_:)``.
   ///
   /// - Parameters:

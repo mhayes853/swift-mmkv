@@ -219,6 +219,14 @@ extension StoreState {
     }
     let offset = self.actualSize
     let pointer = self.file.memory! + fixed32Size + self.actualSize
+    // The value ends the record.
+    self.trackAppend(
+      key: key,
+      value: UnsafeRawBufferPointer(
+        start: pointer + (entry.totalSize - entry.valueLength),
+        count: entry.valueLength
+      )
+    )
     self.crypter?.encrypt(pointer, pointer, count: entry.totalSize)
     self.actualSize += entry.totalSize
     self.updateCRCDigest(UnsafeRawBufferPointer(start: pointer, count: entry.totalSize))
@@ -577,6 +585,7 @@ extension StoreState {
       needsFullWrite = true
     }
     if increaseSequence {
+      self.invalidateChangeTracker()
       self.metaInfo.sequence &+= 1
       self.metaInfo.lastActualSize = UInt32(truncatingIfNeeded: size)
       self.metaInfo.lastCRCDigest = crcDigest

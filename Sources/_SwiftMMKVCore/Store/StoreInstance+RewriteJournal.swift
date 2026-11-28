@@ -36,6 +36,7 @@ extension StoreState {
     else {
       return nil
     }
+    self.invalidateChangeTracker()
     self.metaInfo.sequence &+= 1
     self.metaInfo.writeSequence(to: meta)
     if self.journalDescriptor < 0 {

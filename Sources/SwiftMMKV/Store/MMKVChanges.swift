@@ -1,12 +1,15 @@
 // MARK: - Sequence
 
 extension MMKVStore {
-  /// What each operation changes in the store over time, as ``subscribe(_:)`` reports it.
+  /// The changes to the store over time, as ``subscribe(_:)`` reports them.
   ///
   /// ```swift
   /// for await batch in store.changes {
-  ///   if batch.isExternal { print("changed elsewhere") }
-  ///   for key in batch.keys { print("changed:", key) }
+  ///   switch batch.kind {
+  ///   case .localKeys(let keys): print("changed here:", keys)
+  ///   case .externalKeys(let keys): print("changed elsewhere:", keys)
+  ///   case .wholeStore(let reason): print("anything may have changed:", reason.rawValue)
+  ///   }
   /// }
   /// ```
   ///
@@ -19,9 +22,13 @@ extension MMKVStore {
   ///
   /// ## Falling behind
   ///
-  /// A consumer that falls behind misses no key, but receives the batches that are waiting as
-  /// one: its ``ChangeBatch/keys`` holds every key they changed, each once and in the order it
-  /// first changed, and it is external if any of them was.
+  /// A consumer that falls behind misses no key, but receives the batches that are waiting
+  /// merged by kind: one ``ChangeBatch/Kind/localKeys(_:)`` batch with every local key, one
+  /// ``ChangeBatch/Kind/externalKeys(_:)`` batch with every external key, each key once and in
+  /// the order it first changed, and one ``ChangeBatch/Kind/wholeStore(_:)`` batch for each
+  /// reason. A waiting whole-store batch takes the place of waiting external keys, since it
+  /// already says any key may have changed. Local keys are always delivered. The merged batches
+  /// arrive in the order the first of each did.
   public var changes: MMKVChanges {
     MMKVChanges(store: self)
   }
