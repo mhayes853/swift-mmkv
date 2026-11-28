@@ -117,6 +117,142 @@ jobs:
             -scheme swift-mmkv-Package \
             -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
 
+  # The Python binding, built into a wheel and tested from it. The Swift tests and the Python
+  # tests also read a store the other wrote, which BINDINGS.md asks of every binding.
+  python-linux:
+    name: Python (Linux)
+    runs-on: ubuntu-latest
+    container: swift:6.3.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install zlib, and what uv and auditwheel need
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends zlib1g-dev curl ca-certificates binutils patchelf
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Name the directory the two languages share stores in
+        run: echo "SWIFTMMKV_INTEROP_DIRECTORY=$RUNNER_TEMP/swiftmmkv-interop" >> "$GITHUB_ENV"
+
+      - name: Write stores from Swift for Python to read
+        run: swift test --filter BindingInteropTests
+
+      # The build hook builds the SwiftMMKVCDynamic product and puts it in the wheel.
+      - name: Build the wheel
+        run: uv build --wheel python --out-dir dist
+
+      # A user installs the wheel and nothing else, so the library in it must carry the Swift
+      # runtime. auditwheel also names the oldest glibc the wheel runs on in its tag.
+      - name: Check the wheel needs nothing but the system's libraries
+        run: |
+          uvx auditwheel repair dist/*.whl --wheel-dir wheelhouse
+          ldd python/src/swiftmmkv/_lib/libswiftmmkv.so
+          if ldd python/src/swiftmmkv/_lib/libswiftmmkv.so | grep -i swift; then
+            echo "The library needs a Swift runtime that the wheel does not carry." >&2
+            exit 1
+          fi
+
+      - name: Check types
+        working-directory: python
+        run: uvx --python 3.12 mypy
+
+      # The wheel has no extension module, so one wheel serves every version of Python.
+      - name: Test the wheel
+        working-directory: python
+        run: |
+          for python in 3.12 3.13 3.14 3.14t; do
+            uv venv --python "$python" "$RUNNER_TEMP/venv-$python"
+            uv pip install --python "$RUNNER_TEMP/venv-$python" ../wheelhouse/*.whl pytest
+            "$RUNNER_TEMP/venv-$python/bin/python" -m pytest
+          done
+
+      - name: Read the stores Python wrote from Swift
+        env:
+          SWIFTMMKV_INTEROP_BINDING_STORES: written-by-python
+        run: swift test --filter BindingInteropTests
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel-linux
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  # The wheel on a machine that has never had Swift on it.
+  python-wheel-linux:
+    name: Python wheel (Linux without Swift)
+    needs: python-linux
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-wheel-linux
+          path: wheelhouse
+
+      - name: Install what uv needs
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends curl ca-certificates
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Test the wheel
+        working-directory: python
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv" ../wheelhouse/*.whl pytest
+          "$RUNNER_TEMP/venv/bin/python" -m pytest
+
+  python-macos:
+    name: Python (macOS)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Name the directory the two languages share stores in
+        run: echo "SWIFTMMKV_INTEROP_DIRECTORY=$RUNNER_TEMP/swiftmmkv-interop" >> "$GITHUB_ENV"
+
+      - name: Write stores from Swift for Python to read
+        run: swift test --filter BindingInteropTests
+
+      - name: Build the wheel
+        run: uv build --wheel python --out-dir dist
+
+      # macOS has the Swift runtime, so the library may use what is in /usr/lib and nothing
+      # that only a machine with Xcode has.
+      - name: Check the wheel needs nothing but the system's libraries
+        run: |
+          library=python/src/swiftmmkv/_lib/libswiftmmkv.dylib
+          otool -L "$library"
+          if otool -L "$library" | tail -n +3 | grep -v -E '^[[:space:]]*/(usr/lib|System)/'; then
+            echo "The library needs a library that macOS does not provide." >&2
+            exit 1
+          fi
+
+      - name: Test the wheel
+        working-directory: python
+        run: |
+          for python in 3.12 3.13 3.14 3.14t; do
+            uv venv --python "$python" "$RUNNER_TEMP/venv-$python"
+            uv pip install --python "$RUNNER_TEMP/venv-$python" ../dist/*.whl pytest
+            "$RUNNER_TEMP/venv-$python/bin/python" -m pytest
+          done
+
+      - name: Read the stores Python wrote from Swift
+        env:
+          SWIFTMMKV_INTEROP_BINDING_STORES: written-by-python
+        run: swift test --filter BindingInteropTests
+
   build-android:
     name: Android (aarch64)
     runs-on: ubuntu-latest
