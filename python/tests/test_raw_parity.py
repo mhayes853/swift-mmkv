@@ -60,7 +60,8 @@ def declared_functions() -> dict[str, tuple[str, list[str]]]:
 
 def declared_callbacks() -> dict[str, tuple[str, list[str]]]:
     pattern = re.compile(
-        r"typedef (?P<result>[a-z_ ]+?) ?\(\*(?P<name>swiftmmkv_[a-z0-9_]+)\)\((?P<parameters>[^;]*?)\);",
+        r"typedef (?P<result>[a-z_ ]+?) ?\(\*(?P<name>swiftmmkv_[a-z0-9_]+)\)"
+        r"\((?P<parameters>[^;]*?)\);",
         re.DOTALL,
     )
     return {
